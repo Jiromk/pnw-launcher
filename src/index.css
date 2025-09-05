@@ -1,0 +1,10 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root{
+  --glass: rgba(255,255,255,.06);
+  --ring: rgba(126,205,242,.45);
+}
+*{box-sizing:border-box}
+html,body,#root{height:100%}

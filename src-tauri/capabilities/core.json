@@ -1,0 +1,8 @@
+{
+  "identifier": "main-core",
+  "description": "Permissions de base pour la fenêtre principale.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default"
+  ]
+}
