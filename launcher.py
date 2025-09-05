@@ -1,631 +1,334 @@
-#!/usr/bin/env python3
-"""
-Pokemon New World Launcher
-Launcher avec mise à jour automatique
-"""
-
-import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
-import json
-import hashlib
-import os
-import sys
-import requests
-import threading
-import zipfile
-import subprocess
-from pathlib import Path
-import configparser
+# launcher.py — Python 3.10+ | pip install PySide6 requests
+import sys, zipfile, shutil, tempfile, subprocess, requests, configparser
 from datetime import datetime
-import shutil
-import tempfile
+from pathlib import Path
+from PySide6 import QtCore, QtGui, QtWidgets
 
-class PokemonNewWorldLauncher:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("Pokemon New World Launcher")
-        self.root.geometry("900x650")
-        self.root.resizable(False, False)
-        
-        # Configuration
-        self.config_file = "launcher_config.ini"
-        self.version_file = "launcher_version.txt"
-        self.launcher_version = "1.0.0"
-        self.game_exe = "Game.exe"  # Nom de l'exécutable du jeu
-        
-        # URLs
-        self.github_repo = "Jiromk/pnw-launcher"
-        self.manifest_url = f"https://raw.githubusercontent.com/{self.github_repo}/main/latest.json"
-        
-        # Paths
-        self.game_path = self.load_game_path()
-        self.current_version = self.get_current_version()
-        
-        # Variables d'état
-        self.is_downloading = False
-        self.is_checking = False
-        self.download_cancelled = False
-        self.total_size = 0
-        self.downloaded_size = 0
-        
-        # Configuration de style
-        self.setup_styles()
-        
-        # Interface
-        self.setup_ui()
-        
-        # Vérification automatique au démarrage
-        self.root.after(500, self.check_updates_silent)
-    
-    def setup_styles(self):
-        """Configure les styles de l'interface"""
-        style = ttk.Style()
-        style.theme_use('clam')
-        
-        # Couleurs personnalisées
-        self.colors = {
-            'bg': '#2b2b2b',
-            'fg': '#ffffff',
-            'button': '#4a90e2',
-            'button_hover': '#357abd',
-            'success': '#5cb85c',
-            'danger': '#d9534f',
-            'warning': '#f0ad4e',
-            'text_bg': '#3c3c3c'
-        }
-        
-        self.root.configure(bg=self.colors['bg'])
-    
-    def load_game_path(self):
-        """Charge le chemin du jeu depuis la configuration"""
-        config = configparser.ConfigParser()
-        if os.path.exists(self.config_file):
-            config.read(self.config_file)
-            return config.get('Game', 'path', fallback='game')
-        return 'game'
-    
-    def save_game_path(self, path):
-        """Sauvegarde le chemin du jeu"""
-        config = configparser.ConfigParser()
-        config['Game'] = {'path': path}
-        with open(self.config_file, 'w') as f:
-            config.write(f)
-        self.game_path = path
-    
-    def get_current_version(self):
-        """Récupère la version actuelle du jeu"""
-        version_file = os.path.join(self.game_path, 'version.txt')
-        if os.path.exists(version_file):
-            try:
-                with open(version_file, 'r') as f:
-                    return f.read().strip()
-            except:
-                pass
-        return "0.0.0"
-    
-    def set_current_version(self, version):
-        """Met à jour la version actuelle"""
-        self.current_version = version
-        version_file = os.path.join(self.game_path, 'version.txt')
-        os.makedirs(self.game_path, exist_ok=True)
-        with open(version_file, 'w') as f:
-            f.write(version)
-        self.version_label.config(text=f"Version installée : {version}")
-    
-    def setup_ui(self):
-        """Configuration de l'interface utilisateur"""
-        # Frame principal avec padding
-        main_frame = tk.Frame(self.root, bg=self.colors['bg'], padx=30, pady=20)
-        main_frame.pack(fill=tk.BOTH, expand=True)
-        
-        # Titre avec logo (si disponible)
-        title_frame = tk.Frame(main_frame, bg=self.colors['bg'])
-        title_frame.pack(fill=tk.X, pady=(0, 20))
-        
-        title_label = tk.Label(title_frame, text="Pokemon New World", 
-                              font=('Arial', 28, 'bold'),
-                              bg=self.colors['bg'], fg=self.colors['fg'])
-        title_label.pack()
-        
-        subtitle_label = tk.Label(title_frame, text="Launcher Officiel", 
-                                 font=('Arial', 12),
-                                 bg=self.colors['bg'], fg='#888888')
-        subtitle_label.pack()
-        
-        # Frame d'informations
-        info_frame = tk.Frame(main_frame, bg=self.colors['bg'])
-        info_frame.pack(fill=tk.X, pady=(0, 15))
-        
-        # Version actuelle
-        self.version_label = tk.Label(info_frame, 
-                                     text=f"Version installée : {self.current_version}",
-                                     font=('Arial', 11),
-                                     bg=self.colors['bg'], fg=self.colors['fg'])
-        self.version_label.pack(side=tk.LEFT)
-        
-        # Version disponible
-        self.available_version_label = tk.Label(info_frame, 
-                                               text="",
-                                               font=('Arial', 11),
-                                               bg=self.colors['bg'], fg=self.colors['success'])
-        self.available_version_label.pack(side=tk.LEFT, padx=(20, 0))
-        
-        # Statut
-        self.status_label = tk.Label(info_frame,
-                                    text="",
-                                    font=('Arial', 11),
-                                    bg=self.colors['bg'], fg=self.colors['warning'])
-        self.status_label.pack(side=tk.RIGHT)
-        
-        # Zone de changelog
-        changelog_frame = tk.Frame(main_frame, bg=self.colors['bg'])
-        changelog_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 15))
-        
-        changelog_label = tk.Label(changelog_frame, text="Notes de mise à jour :",
-                                  font=('Arial', 12, 'bold'),
-                                  bg=self.colors['bg'], fg=self.colors['fg'])
-        changelog_label.pack(anchor=tk.W, pady=(0, 5))
-        
-        # Frame pour le text widget avec bordure
-        text_frame = tk.Frame(changelog_frame, bg='#555555', bd=1)
-        text_frame.pack(fill=tk.BOTH, expand=True)
-        
-        # Textbox pour changelog
-        self.changelog_text = tk.Text(text_frame, height=15, width=80,
-                                     wrap=tk.WORD, 
-                                     bg=self.colors['text_bg'],
-                                     fg=self.colors['fg'],
-                                     font=('Consolas', 10),
-                                     bd=0, padx=10, pady=10)
-        self.changelog_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        
-        # Scrollbar pour changelog
-        scrollbar = ttk.Scrollbar(text_frame, orient=tk.VERTICAL,
-                                 command=self.changelog_text.yview)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        self.changelog_text.config(yscrollcommand=scrollbar.set)
-        
-        # Message par défaut
-        self.changelog_text.insert('1.0', "Bienvenue dans Pokemon New World !\n\n" +
-                                  "Cliquez sur 'Vérifier les mises à jour' pour commencer.")
-        self.changelog_text.config(state=tk.DISABLED)
-        
-        # Frame de progression
-        progress_frame = tk.Frame(main_frame, bg=self.colors['bg'])
-        progress_frame.pack(fill=tk.X, pady=(0, 15))
-        
-        # Label de progression
-        self.progress_label = tk.Label(progress_frame, text="",
-                                     font=('Arial', 10),
-                                     bg=self.colors['bg'], fg=self.colors['fg'])
-        self.progress_label.pack(anchor=tk.W)
-        
-        # Barre de progression
-        self.progress_bar = ttk.Progressbar(progress_frame, length=600,
-                                           mode='determinate',
-                                           style='TProgressbar')
-        
-        # Détails de téléchargement
-        self.download_details = tk.Label(progress_frame, text="",
-                                       font=('Arial', 9),
-                                       bg=self.colors['bg'], fg='#888888')
-        
-        # Frame des boutons
-        button_frame = tk.Frame(main_frame, bg=self.colors['bg'])
-        button_frame.pack(fill=tk.X)
-        
-        # Bouton Jouer
-        self.play_button = tk.Button(button_frame, 
-                                    text="JOUER",
-                                    font=('Arial', 14, 'bold'),
-                                    bg=self.colors['success'],
-                                    fg='white',
-                                    width=15, height=2,
-                                    command=self.launch_game,
-                                    relief=tk.FLAT,
-                                    cursor='hand2')
-        self.play_button.pack(side=tk.LEFT, padx=(0, 10))
-        
-        # Bouton Vérifier les mises à jour
-        self.update_button = tk.Button(button_frame,
-                                      text="Vérifier les\nmises à jour",
-                                      font=('Arial', 11),
-                                      bg=self.colors['button'],
-                                      fg='white',
-                                      width=15, height=2,
-                                      command=self.check_updates,
-                                      relief=tk.FLAT,
-                                      cursor='hand2')
-        self.update_button.pack(side=tk.LEFT, padx=(0, 10))
-        
-        # Bouton Paramètres
-        self.settings_button = tk.Button(button_frame,
-                                        text="Paramètres",
-                                        font=('Arial', 11),
-                                        bg='#555555',
-                                        fg='white',
-                                        width=12, height=2,
-                                        command=self.open_settings,
-                                        relief=tk.FLAT,
-                                        cursor='hand2')
-        self.settings_button.pack(side=tk.RIGHT)
-        
-        # Vérifier si le jeu est installé
-        self.check_game_installed()
-    
-    def check_game_installed(self):
-        """Vérifie si le jeu est installé"""
-        game_exe_path = os.path.join(self.game_path, self.game_exe)
-        if not os.path.exists(game_exe_path):
-            self.play_button.config(state=tk.DISABLED, 
-                                  text="INSTALLER",
-                                  bg='#888888')
-            self.status_label.config(text="⚠ Jeu non installé", fg=self.colors['warning'])
-        else:
-            self.play_button.config(state=tk.NORMAL)
-    
-    def check_updates_silent(self):
-        """Vérifie les mises à jour silencieusement au démarrage"""
-        threading.Thread(target=self._check_updates_thread, args=(True,), daemon=True).start()
-    
-    def check_updates(self):
-        """Lance la vérification des mises à jour"""
-        if self.is_checking or self.is_downloading:
-            return
-        
-        self.update_button.config(state=tk.DISABLED, text="Vérification...")
-        threading.Thread(target=self._check_updates_thread, args=(False,), daemon=True).start()
-    
-    def _check_updates_thread(self, silent=False):
-        """Thread de vérification des mises à jour"""
-        self.is_checking = True
-        
+APP_NAME         = "Pokémon New World"
+GITHUB_REPO      = "Jiromk/pnw-launcher"
+MANIFEST_URL     = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/latest.json"
+DEFAULT_GAME_EXE = "Game.exe"
+CONFIG_PATH      = "launcher_config.ini"
+LOGO_URL = ("https://images-ext-1.discordapp.net/external/"
+            "8aBjWgdfMWrEKmwjq_N3mavMjtYTAXRSk9ApxLbvMTA/%3Fcb%3D20231013130752%26path-prefix%3Dfr/"
+            "https/static.wikia.nocookie.net/pokemon-new-world-fr/images/e/e7/Ygdgydgzydz.png/"
+            "revision/latest?format=webp&width=1522&height=856")
+
+# Palette
+CLR_BG, CLR_BG_ELEV = "#0b1222", "#0f1a33"
+CLR_CARD, CLR_TEXT, CLR_MUTED = "#111a36", "#e8f0ff", "#9fb2d9"
+CLR_ACCENT, CLR_ACCENT_2, CLR_SUCCESS = "#2e59c6", "#7ecdf2", "#29c46d"
+RADIUS = 18
+
+def fmt_size(n:int)->str:
+    s=float(n); 
+    for u in ["B","KB","MB","GB","TB"]:
+        if s<1024: return f"{s:.1f} {u}"
+        s/=1024
+    return f"{s:.1f} PB"
+
+def compare_versions(v1:str,v2:str)->int:
+    try:
+        a=[int(x) for x in v1.split(".")]; b=[int(x) for x in v2.split(".")]
+        for i in range(max(len(a),len(b))):
+            x=a[i] if i<len(a) else 0; y=b[i] if i<len(b) else 0
+            if x>y: return 1
+            if x<y: return -1
+        return 0
+    except: return 0
+
+# ── Workers (réseau/IO en threads) ───────────────────────────────────────
+class ManifestWorker(QtCore.QObject):
+    finished = QtCore.Signal(dict, str)
+    @QtCore.Slot()
+    def run(self):
         try:
-            # Télécharger le manifest
-            response = requests.get(self.manifest_url, timeout=10)
-            response.raise_for_status()
-            manifest = response.json()
-            
-            latest_version = manifest.get('version', '0.0.0')
-            
-            # Comparer les versions
-            if self.compare_versions(latest_version, self.current_version) > 0:
-                if not silent:
-                    self.root.after(0, self._show_update_available, manifest)
-                else:
-                    self.root.after(0, lambda: self.available_version_label.config(
-                        text=f"✨ Version {latest_version} disponible"))
-            else:
-                if not silent:
-                    self.root.after(0, self._show_no_update)
-                    
-        except requests.RequestException as e:
-            if not silent:
-                self.root.after(0, lambda: messagebox.showerror(
-                    "Erreur", f"Impossible de vérifier les mises à jour:\n{str(e)}"))
+            r = requests.get(MANIFEST_URL, timeout=15); r.raise_for_status()
+            self.finished.emit(r.json(), "")
         except Exception as e:
-            if not silent:
-                self.root.after(0, lambda: messagebox.showerror(
-                    "Erreur", f"Erreur lors de la vérification:\n{str(e)}"))
-        finally:
-            self.is_checking = False
-            self.root.after(0, lambda: self.update_button.config(
-                state=tk.NORMAL, text="Vérifier les\nmises à jour"))
-    
-    def _show_update_available(self, manifest):
-        """Affiche qu'une mise à jour est disponible"""
-        version = manifest.get('version', 'inconnue')
-        changelog = manifest.get('changelog', {}).get('fr', 'Pas de notes de version')
-        size = manifest.get('downloadSize', 0)
-        
-        self.available_version_label.config(text=f"✨ Version {version} disponible")
-        
-        # Afficher le changelog
-        self.changelog_text.config(state=tk.NORMAL)
-        self.changelog_text.delete('1.0', tk.END)
-        self.changelog_text.insert('1.0', f"Nouvelle version disponible : {version}\n\n")
-        self.changelog_text.insert(tk.END, f"Taille du téléchargement : {self.format_size(size)}\n\n")
-        self.changelog_text.insert(tk.END, changelog)
-        self.changelog_text.config(state=tk.DISABLED)
-        
-        # Demander si on installe
-        if messagebox.askyesno("Mise à jour disponible",
-                              f"La version {version} est disponible.\n\n" +
-                              f"Taille : {self.format_size(size)}\n\n" +
-                              "Voulez-vous l'installer maintenant ?"):
-            self.download_update(manifest)
-    
-    def _show_no_update(self):
-        """Affiche qu'aucune mise à jour n'est disponible"""
-        self.status_label.config(text="✓ À jour", fg=self.colors['success'])
-        messagebox.showinfo("Pas de mise à jour", 
-                           "Votre jeu est déjà à jour !")
-    
-    def download_update(self, manifest):
-        """Télécharge et installe une mise à jour"""
-        if self.is_downloading:
-            return
-        
-        self.is_downloading = True
-        self.download_cancelled = False
-        
-        # Désactiver les boutons
-        self.play_button.config(state=tk.DISABLED)
-        self.update_button.config(state=tk.DISABLED, text="Annuler")
-        self.update_button.config(command=self.cancel_download, state=tk.NORMAL)
-        
-        # Afficher la progression
-        self.progress_label.config(text="Préparation du téléchargement...")
-        self.progress_label.pack()
-        self.progress_bar.pack(fill=tk.X, pady=(5, 0))
-        self.download_details.pack()
-        
-        # Lancer le téléchargement dans un thread
-        threading.Thread(target=self._download_thread, args=(manifest,), daemon=True).start()
-    
-    def _download_thread(self, manifest):
-        """Thread de téléchargement"""
+            self.finished.emit({}, str(e))
+
+class DownloadWorker(QtCore.QObject):
+    progress = QtCore.Signal(int,int)
+    stepinfo = QtCore.Signal(str)
+    done     = QtCore.Signal(str,str)
+    def __init__(self, manifest:dict, game_dir:Path):
+        super().__init__(); self.manifest=manifest; self.game_dir=game_dir; self._cancel=False
+    @QtCore.Slot() 
+    def cancel(self): self._cancel=True
+    @QtCore.Slot()
+    def run(self):
         try:
-            download_url = manifest.get('downloadUrl')
-            if not download_url:
-                raise Exception("URL de téléchargement non trouvée")
-            
-            # Créer le dossier du jeu s'il n'existe pas
-            os.makedirs(self.game_path, exist_ok=True)
-            
-            # Télécharger le fichier
-            temp_file = os.path.join(tempfile.gettempdir(), 'pnw_update.zip')
-            
-            self.root.after(0, lambda: self.progress_label.config(
-                text="Téléchargement en cours..."))
-            
-            response = requests.get(download_url, stream=True, timeout=30)
-            response.raise_for_status()
-            
-            total_size = int(response.headers.get('content-length', 0))
-            self.total_size = total_size
-            self.downloaded_size = 0
-            
-            with open(temp_file, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    if self.download_cancelled:
-                        raise Exception("Téléchargement annulé")
-                    
-                    if chunk:
-                        f.write(chunk)
-                        self.downloaded_size += len(chunk)
-                        
-                        # Mettre à jour la progression
-                        progress = (self.downloaded_size / total_size * 100) if total_size > 0 else 0
-                        self.root.after(0, self._update_progress, progress)
-            
-            if self.download_cancelled:
-                return
-            
-            # Extraire la mise à jour
-            self.root.after(0, lambda: self.progress_label.config(
-                text="Installation de la mise à jour..."))
-            
-            with zipfile.ZipFile(temp_file, 'r') as zip_ref:
-                # Créer un backup si demandé
-                if os.path.exists(os.path.join(self.game_path, self.game_exe)):
-                    self._create_backup()
-                
-                # Extraire les fichiers
-                total_files = len(zip_ref.namelist())
-                for i, file in enumerate(zip_ref.namelist(), 1):
-                    if self.download_cancelled:
-                        raise Exception("Installation annulée")
-                    
-                    # Ignorer le manifest.json dans l'archive
-                    if file == 'manifest.json':
-                        continue
-                    
-                    zip_ref.extract(file, self.game_path)
-                    progress = (i / total_files * 100)
-                    self.root.after(0, self._update_progress, progress)
-                    self.root.after(0, lambda f=file, i=i, t=total_files: 
-                                  self.download_details.config(
-                                      text=f"Extraction {i}/{t}: {os.path.basename(f)}"))
-            
-            # Mettre à jour la version
-            self.set_current_version(manifest.get('version'))
-            
-            # Nettoyer
-            os.remove(temp_file)
-            
-            # Succès
-            self.root.after(0, self._update_complete, manifest)
-            
+            url=self.manifest.get("downloadUrl")
+            if not url: raise RuntimeError("URL de téléchargement manquante.")
+            self.game_dir.mkdir(parents=True, exist_ok=True)
+
+            tmp_zip = Path(tempfile.gettempdir())/"pnw_update.zip"
+            self.stepinfo.emit("Téléchargement…")
+            with requests.get(url, stream=True, timeout=30) as r:
+                r.raise_for_status()
+                total=int(r.headers.get("content-length",0)); got=0
+                with open(tmp_zip,"wb") as f:
+                    for chunk in r.iter_content(chunk_size=1<<14):
+                        if self._cancel: raise RuntimeError("Téléchargement annulé.")
+                        if not chunk: continue
+                        f.write(chunk); got+=len(chunk); self.progress.emit(got,total)
+
+            self.stepinfo.emit("Installation…")
+            with zipfile.ZipFile(tmp_zip,"r") as zf:
+                # backup simple
+                bdir=self.game_dir/"backup"/datetime.now().strftime("%Y%m%d_%H%M%S")
+                bdir.mkdir(parents=True, exist_ok=True)
+                for f in ["Save1.rxdata","Save2.rxdata","Save3.rxdata","Save4.rxdata","Game.ini"]:
+                    src=self.game_dir/f
+                    if src.exists(): shutil.copy2(src, bdir/src.name)
+                names=zf.namelist(); total_files=max(1,len(names))
+                for i,n in enumerate(names,1):
+                    if self._cancel: raise RuntimeError("Installation annulée.")
+                    if n.endswith("/") or n=="manifest.json": continue
+                    zf.extract(n,self.game_dir); self.progress.emit(i,total_files)
+
+            (self.game_dir/"version.txt").write_text(self.manifest.get("version","0.0.0"),encoding="utf-8")
+            try: tmp_zip.unlink(missing_ok=True)
+            except: pass
+            self.done.emit(self.manifest.get("version",""), "")
         except Exception as e:
-            self.root.after(0, self._update_failed, str(e))
-        finally:
-            self.is_downloading = False
-            self.root.after(0, self._reset_ui)
-    
-    def _create_backup(self):
-        """Crée une sauvegarde avant la mise à jour"""
-        backup_dir = os.path.join(self.game_path, 'backup', 
-                                 datetime.now().strftime('%Y%m%d_%H%M%S'))
-        os.makedirs(backup_dir, exist_ok=True)
-        
-        # Copier les fichiers importants
-        important_files = ['Save1.rxdata', 'Save2.rxdata', 'Save3.rxdata', 
-                         'Save4.rxdata', 'Game.ini']
-        
-        for file in important_files:
-            src = os.path.join(self.game_path, file)
-            if os.path.exists(src):
-                dst = os.path.join(backup_dir, file)
-                shutil.copy2(src, dst)
-    
-    def _update_progress(self, progress):
-        """Met à jour la barre de progression"""
-        self.progress_bar['value'] = progress
-        if self.total_size > 0:
-            downloaded_mb = self.downloaded_size / 1024 / 1024
-            total_mb = self.total_size / 1024 / 1024
-            self.progress_label.config(
-                text=f"Téléchargement : {downloaded_mb:.1f} MB / {total_mb:.1f} MB ({progress:.1f}%)")
-    
-    def _update_complete(self, manifest):
-        """Mise à jour terminée avec succès"""
-        version = manifest.get('version')
-        messagebox.showinfo("Mise à jour terminée",
-                           f"Le jeu a été mis à jour vers la version {version} !")
-        self.status_label.config(text="✓ À jour", fg=self.colors['success'])
-        self.check_game_installed()
-    
-    def _update_failed(self, error):
-        """Échec de la mise à jour"""
-        messagebox.showerror("Erreur de mise à jour",
-                            f"La mise à jour a échoué :\n{error}")
-        self.status_label.config(text="✗ Échec", fg=self.colors['danger'])
-    
-    def _reset_ui(self):
-        """Réinitialise l'interface après le téléchargement"""
-        self.progress_bar.pack_forget()
-        self.progress_label.pack_forget()
-        self.download_details.pack_forget()
-        
-        self.play_button.config(state=tk.NORMAL)
-        self.update_button.config(state=tk.NORMAL, 
-                                text="Vérifier les\nmises à jour",
-                                command=self.check_updates)
-        
-        self.check_game_installed()
-    
-    def cancel_download(self):
-        """Annule le téléchargement en cours"""
-        if messagebox.askyesno("Annuler", "Voulez-vous vraiment annuler le téléchargement ?"):
-            self.download_cancelled = True
-    
-    def launch_game(self):
-        """Lance le jeu"""
-        game_exe_path = os.path.join(self.game_path, self.game_exe)
-        
-        if not os.path.exists(game_exe_path):
-            messagebox.showerror("Erreur", 
-                               "Le jeu n'est pas installé !\n" +
-                               "Cliquez sur 'Vérifier les mises à jour' pour l'installer.")
-            return
-        
+            self.done.emit("", str(e))
+
+class LogoWorker(QtCore.QObject):
+    finished = QtCore.Signal(QtGui.QPixmap)
+    def __init__(self,url:str): super().__init__(); self.url=url
+    @QtCore.Slot()
+    def run(self):
         try:
-            # Lancer le jeu
-            subprocess.Popen([game_exe_path], cwd=self.game_path)
-            
-            # Optionnel : fermer le launcher
-            if messagebox.askyesno("Fermer le launcher", 
-                                  "Voulez-vous fermer le launcher ?"):
-                self.root.quit()
-        except Exception as e:
-            messagebox.showerror("Erreur", f"Impossible de lancer le jeu :\n{str(e)}")
-    
-    def open_settings(self):
-        """Ouvre la fenêtre des paramètres"""
-        settings_window = tk.Toplevel(self.root)
-        settings_window.title("Paramètres")
-        settings_window.geometry("400x300")
-        settings_window.resizable(False, False)
-        settings_window.configure(bg=self.colors['bg'])
-        
-        # Frame principal
-        main_frame = tk.Frame(settings_window, bg=self.colors['bg'], padx=20, pady=20)
-        main_frame.pack(fill=tk.BOTH, expand=True)
-        
-        # Titre
-        title_label = tk.Label(main_frame, text="Paramètres",
-                              font=('Arial', 16, 'bold'),
-                              bg=self.colors['bg'], fg=self.colors['fg'])
-        title_label.pack(pady=(0, 20))
-        
-        # Chemin du jeu
-        path_label = tk.Label(main_frame, text="Dossier du jeu :",
-                            font=('Arial', 11),
-                            bg=self.colors['bg'], fg=self.colors['fg'])
-        path_label.pack(anchor=tk.W)
-        
-        path_frame = tk.Frame(main_frame, bg=self.colors['bg'])
-        path_frame.pack(fill=tk.X, pady=(5, 15))
-        
-        path_entry = tk.Entry(path_frame, font=('Arial', 10), width=35)
-        path_entry.pack(side=tk.LEFT, padx=(0, 10))
-        path_entry.insert(0, self.game_path)
-        
-        def browse_folder():
-            folder = filedialog.askdirectory(title="Sélectionner le dossier du jeu")
-            if folder:
-                path_entry.delete(0, tk.END)
-                path_entry.insert(0, folder)
-        
-        browse_button = tk.Button(path_frame, text="Parcourir",
-                                 command=browse_folder)
-        browse_button.pack(side=tk.LEFT)
-        
-        # Boutons
-        button_frame = tk.Frame(main_frame, bg=self.colors['bg'])
-        button_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=(20, 0))
-        
-        def save_settings():
-            new_path = path_entry.get()
-            if new_path != self.game_path:
-                self.save_game_path(new_path)
-                self.current_version = self.get_current_version()
-                self.version_label.config(text=f"Version installée : {self.current_version}")
-                self.check_game_installed()
-            settings_window.destroy()
-        
-        save_button = tk.Button(button_frame, text="Sauvegarder",
-                              bg=self.colors['success'], fg='white',
-                              command=save_settings, width=12)
-        save_button.pack(side=tk.LEFT, padx=(0, 10))
-        
-        cancel_button = tk.Button(button_frame, text="Annuler",
-                                bg='#555555', fg='white',
-                                command=settings_window.destroy, width=12)
-        cancel_button.pack(side=tk.LEFT)
-    
-    def compare_versions(self, v1, v2):
-        """Compare deux versions (format X.Y.Z)"""
-        try:
-            parts1 = [int(x) for x in v1.split('.')]
-            parts2 = [int(x) for x in v2.split('.')]
-            
-            for i in range(max(len(parts1), len(parts2))):
-                p1 = parts1[i] if i < len(parts1) else 0
-                p2 = parts2[i] if i < len(parts2) else 0
-                
-                if p1 > p2:
-                    return 1
-                elif p1 < p2:
-                    return -1
-            
-            return 0
+            r=requests.get(self.url, timeout=15); r.raise_for_status()
+            img=QtGui.QImage.fromData(r.content)
+            pix=QtGui.QPixmap.fromImage(img).scaledToHeight(160, QtCore.Qt.SmoothTransformation)
         except:
-            return 0
-    
-    def format_size(self, size_bytes):
-        """Formate une taille en bytes vers une forme lisible"""
-        for unit in ['B', 'KB', 'MB', 'GB']:
-            if size_bytes < 1024.0:
-                return f"{size_bytes:.1f} {unit}"
-            size_bytes /= 1024.0
-        return f"{size_bytes:.1f} TB"
+            pix=QtGui.QPixmap(160,160); pix.fill(QtGui.QColor(CLR_ACCENT))
+        self.finished.emit(pix)
 
+# ── UI ───────────────────────────────────────────────────────────────────
+class Card(QtWidgets.QFrame):
+    def __init__(self): 
+        super().__init__(); self.setObjectName("Card")
+        eff=QtWidgets.QGraphicsDropShadowEffect(blurRadius=24,xOffset=0,yOffset=8); eff.setColor(QtGui.QColor(0,0,0,160))
+        self.setGraphicsEffect(eff)
+
+class Launcher(QtWidgets.QMainWindow):
+    def __init__(self):
+        super().__init__(); self.setWindowTitle(f"{APP_NAME} — Launcher")
+        self.setMinimumSize(980,720); self.setStyleSheet(self._qss())
+        self.game_dir = Path(self._load_game_path()); self.cur_ver=self._read_version()
+        self._build_ui(); self._load_logo_async(LOGO_URL)
+        QtCore.QTimer.singleShot(600, self.check_updates_silent)
+
+    def _qss(self)->str:
+        return f"""
+        QWidget {{
+          background: qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 {CLR_BG}, stop:1 {CLR_BG_ELEV});
+          color:{CLR_TEXT}; font-family:"Outfit", Segoe UI, Roboto, Helvetica, Arial; font-size:14px;
+        }}
+        QLabel#SubTitle {{ color:{CLR_MUTED}; font-size:13px; }}
+        QLabel#CardTitle {{ font-weight:600; font-size:16px; color:{CLR_ACCENT_2}; }}
+        QFrame#Card {{ background:{CLR_CARD}; border:1px solid rgba(126,205,242,0.10); border-radius:{RADIUS}px; }}
+        QTextEdit#Changelog {{ background:rgba(255,255,255,0.04); border:1px solid rgba(126,205,242,0.12);
+                               border-radius:{RADIUS-6}px; padding:12px; }}
+        QPushButton {{ border:none; padding:12px 16px; border-radius:{RADIUS-6}px; font-weight:600; }}
+        QPushButton[big="true"] {{ padding:16px 22px; font-size:16px; }}
+        QPushButton[kind="accent"] {{ background:{CLR_ACCENT}; }}
+        QPushButton[kind="muted"]  {{ background:#1b2444; color:{CLR_MUTED}; }}
+        QPushButton[kind="success"]{{ background:{CLR_SUCCESS}; }}
+        QPushButton:hover {{ background:{CLR_ACCENT_2}; }}
+        QProgressBar {{ background:rgba(255,255,255,0.06); border:1px solid rgba(126,205,242,0.12);
+                        border-radius:{RADIUS-8}px; height:20px; text-align:center; }}
+        QProgressBar::chunk {{ background:{CLR_ACCENT}; border-radius:{RADIUS-8}px; }}
+        """
+
+    def _build_ui(self):
+        w=QtWidgets.QWidget(); self.setCentralWidget(w)
+        root=QtWidgets.QVBoxLayout(w); root.setContentsMargins(20,20,20,20); root.setSpacing(16)
+
+        hero=Card(); hero_lay=QtWidgets.QVBoxLayout(hero); hero_lay.setContentsMargins(20,20,20,20); hero_lay.setSpacing(8)
+        self.logo_lbl=QtWidgets.QLabel(alignment=QtCore.Qt.AlignCenter); self.logo_lbl.setObjectName("Logo"); self.logo_lbl.setMinimumHeight(140)
+        hero_lay.addWidget(self.logo_lbl)
+        sub=QtWidgets.QLabel("Launcher Officiel"); sub.setObjectName("SubTitle"); sub.setAlignment(QtCore.Qt.AlignCenter)
+        hero_lay.addWidget(sub)
+
+        info=QtWidgets.QHBoxLayout()
+        self.installed_lbl=QtWidgets.QLabel(f"Version installée : {self.cur_ver}")
+        self.available_lbl=QtWidgets.QLabel("")
+        info.addWidget(self.installed_lbl); info.addStretch(1); info.addWidget(self.available_lbl)
+        hero_lay.addLayout(info)
+
+        bar=QtWidgets.QHBoxLayout()
+        self.play_btn=self._btn("JOUER",kind="success",big=True,cb=self.launch_game)
+        self.update_btn=self._btn("Vérifier les mises à jour",cb=self.check_updates)
+        self.settings_btn=self._btn("Paramètres",kind="muted",cb=self.open_settings)
+        bar.addWidget(self.play_btn,2); bar.addWidget(self.update_btn,1); bar.addWidget(self.settings_btn,0)
+        hero_lay.addLayout(bar)
+
+        ch=Card(); ch_lay=QtWidgets.QVBoxLayout(ch)
+        title=QtWidgets.QLabel("Notes de mise à jour"); title.setObjectName("CardTitle")
+        self.changelog=QtWidgets.QTextEdit(readOnly=True); self.changelog.setObjectName("Changelog")
+        self.changelog.setText("Bienvenue dans Pokémon New World !\n\nClique sur « Vérifier les mises à jour » pour commencer.")
+        ch_lay.addWidget(title); ch_lay.addWidget(self.changelog)
+
+        prog=Card(); p_lay=QtWidgets.QVBoxLayout(prog)
+        self.status_lbl=QtWidgets.QLabel("")
+        self.progress=QtWidgets.QProgressBar(); self.progress.setValue(0); self.progress.setTextVisible(True); self.progress.setFormat("")
+        prog.setVisible(False); p_lay.addWidget(self.status_lbl); p_lay.addWidget(self.progress)
+        self.card_prog=prog
+
+        root.addWidget(hero); root.addWidget(ch,3); root.addWidget(prog)
+        self._refresh_install_state()
+
+    def _btn(self,text,kind="accent",big=False,cb=None):
+        b=QtWidgets.QPushButton(text); b.setProperty("kind",kind)
+        if big: b.setProperty("big",True)
+        if cb: b.clicked.connect(cb)
+        return b
+
+    # State
+    def _load_game_path(self)->str:
+        cfg=configparser.ConfigParser()
+        if Path(CONFIG_PATH).exists():
+            cfg.read(CONFIG_PATH,encoding="utf-8")
+            return cfg.get("Game","path",fallback="game")
+        return "game"
+
+    def _save_game_path(self,path:str):
+        cfg=configparser.ConfigParser(); cfg["Game"]={"path":path}
+        with open(CONFIG_PATH,"w",encoding="utf-8") as f: cfg.write(f)
+
+    def _read_version(self)->str:
+        vf=self.game_dir/"version.txt"
+        try: return vf.read_text(encoding="utf-8").strip() if vf.exists() else "0.0.0"
+        except: return "0.0.0"
+
+    def _set_version(self,v:str):
+        (self.game_dir/"version.txt").write_text(v,encoding="utf-8")
+        self.installed_lbl.setText(f"Version installée : {v}")
+
+    def _refresh_install_state(self):
+        exe=self.game_dir/DEFAULT_GAME_EXE
+        self.play_btn.setEnabled(exe.exists())
+        self.play_btn.setText("JOUER" if exe.exists() else "INSTALLER")
+
+    # Logo (thread-safe)
+    def _load_logo_async(self,url:str):
+        self._logo_worker=LogoWorker(url)
+        self._logo_thread=QtCore.QThread(self)
+        self._logo_worker.moveToThread(self._logo_thread)
+        self._logo_thread.started.connect(self._logo_worker.run)
+        self._logo_worker.finished.connect(self._on_logo_ready)
+        self._logo_worker.finished.connect(self._logo_thread.quit)
+        self._logo_worker.finished.connect(self._logo_worker.deleteLater)
+        self._logo_thread.finished.connect(self._logo_thread.deleteLater)
+        self._logo_thread.start()
+
+    @QtCore.Slot(QtGui.QPixmap)
+    def _on_logo_ready(self,pix:QtGui.QPixmap):
+        self.logo_lbl.setPixmap(pix)
+        QtWidgets.QApplication.setWindowIcon(QtGui.QIcon(pix))
+
+    # Updates
+    def check_updates_silent(self): self._run_manifest(silent=True)
+    def check_updates(self): self._run_manifest(silent=False)
+
+    def _run_manifest(self,silent:bool):
+        self.update_btn.setEnabled(False); self.available_lbl.setText("Vérification…")
+        self._mw=ManifestWorker(); self._t=QtCore.QThread(self)
+        self._mw.moveToThread(self._t)
+        self._t.started.connect(self._mw.run)
+        self._mw.finished.connect(lambda m,e: self._on_manifest_done(m,e,silent))
+        self._mw.finished.connect(self._t.quit)
+        self._mw.finished.connect(self._mw.deleteLater)
+        self._t.finished.connect(self._t.deleteLater)
+        self._t.start()
+
+    def _on_manifest_done(self,manifest:dict,err:str,silent:bool):
+        self.update_btn.setEnabled(True)
+        if err:
+            self.available_lbl.setText("")
+            if not silent: QtWidgets.QMessageBox.critical(self,"Erreur",f"Impossible de vérifier les mises à jour:\n{err}")
+            return
+        latest=manifest.get("version","0.0.0")
+        ch_fr=manifest.get("changelog",{}).get("fr","Pas de notes de version.")
+        dl_sz=manifest.get("downloadSize",0); cur=self._read_version()
+
+        if compare_versions(latest,cur)>0:
+            self.available_lbl.setText(f"✨ Version {latest} disponible")
+            self.changelog.setPlainText(f"Nouvelle version : {latest}\nTaille : {fmt_size(dl_sz)}\n\n{ch_fr}")
+            if silent: return
+            if QtWidgets.QMessageBox.question(self,"Mise à jour",
+                    f"Installer la {latest} ? ({fmt_size(dl_sz)})",
+                    QtWidgets.QMessageBox.Yes|QtWidgets.QMessageBox.No)==QtWidgets.QMessageBox.Yes:
+                self._start_download(manifest)
+        else:
+            self.available_lbl.setText("")
+            if not silent: QtWidgets.QMessageBox.information(self,"À jour","Votre jeu est déjà à jour ✅")
+
+    def _start_download(self,manifest:dict):
+        self.card_prog.setVisible(True); self.status_lbl.setText("Préparation…")
+        self.progress.setRange(0,100); self.progress.setValue(0)
+        self._dw=DownloadWorker(manifest,self.game_dir); self._dt=QtCore.QThread(self)
+        self._dw.moveToThread(self._dt)
+        self._dt.started.connect(self._dw.run)
+        self._dw.progress.connect(self._on_progress)
+        self._dw.stepinfo.connect(self.status_lbl.setText)
+        self._dw.done.connect(self._on_done)
+        self._dw.done.connect(self._dt.quit)
+        self._dw.done.connect(self._dw.deleteLater)
+        self._dt.finished.connect(self._dt.deleteLater)
+        self._dt.start()
+
+    @QtCore.Slot(int,int)
+    def _on_progress(self,a:int,b:int):
+        if b<=0: self.progress.setRange(0,0); return
+        self.progress.setRange(0,100); pct=int(a/b*100)
+        self.progress.setValue(max(0,min(100,pct)))
+        self.progress.setFormat(f"{pct}% — {fmt_size(a)} / {fmt_size(b)}")
+
+    @QtCore.Slot(str,str)
+    def _on_done(self,version:str,err:str):
+        if err:
+            self.status_lbl.setText("Échec"); QtWidgets.QMessageBox.critical(self,"Erreur de mise à jour",err)
+        else:
+            self.status_lbl.setText("Terminé ✅")
+            if version: self._set_version(version)
+            self._refresh_install_state()
+            QtWidgets.QMessageBox.information(self,"Mise à jour",f"Le jeu a été mis à jour en {version} !")
+
+    def launch_game(self):
+        exe=self.game_dir/DEFAULT_GAME_EXE
+        if not exe.exists():
+            QtWidgets.QMessageBox.warning(self,"Non installé","Lance « Vérifier les mises à jour » pour installer le jeu."); return
+        try: subprocess.Popen([str(exe)], cwd=str(self.game_dir))
+        except Exception as e: QtWidgets.QMessageBox.critical(self,"Erreur",f"Impossible de lancer le jeu:\n{e}")
+
+    def open_settings(self):
+        dlg=QtWidgets.QDialog(self); dlg.setWindowTitle("Paramètres"); dlg.setStyleSheet(self._qss()); dlg.setMinimumWidth(520)
+        lay=QtWidgets.QVBoxLayout(dlg)
+        card=Card(); form=QtWidgets.QFormLayout(card)
+        path_edit=QtWidgets.QLineEdit(str(self.game_dir))
+        browse=QtWidgets.QPushButton("Parcourir…")
+        row=QtWidgets.QHBoxLayout(); row.addWidget(path_edit,1); row.addWidget(browse,0)
+        form.addRow("Dossier du jeu :",row)
+        browse.clicked.connect(lambda: path_edit.setText(QtWidgets.QFileDialog.getExistingDirectory(self,"Choisir le dossier du jeu",str(self.game_dir)) or path_edit.text()))
+        btns=QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Save|QtWidgets.QDialogButtonBox.Cancel)
+        btns.accepted.connect(dlg.accept); btns.rejected.connect(dlg.reject)
+        lay.addWidget(card); lay.addWidget(btns)
+        if dlg.exec():
+            new_dir=Path(path_edit.text().strip())
+            if new_dir!=self.game_dir:
+                self.game_dir=new_dir; self._save_game_path(str(new_dir))
+                self._set_version(self._read_version()); self._refresh_install_state()
 
 def main():
-    """Point d'entrée du programme"""
-    root = tk.Tk()
-    app = PokemonNewWorldLauncher(root)
-    
-    # Centrer la fenêtre
-    root.update_idletasks()
-    x = (root.winfo_screenwidth() // 2) - (root.winfo_width() // 2)
-    y = (root.winfo_screenheight() // 2) - (root.winfo_height() // 2)
-    root.geometry(f'+{x}+{y}')
-    
-    root.mainloop()
+    app=QtWidgets.QApplication(sys.argv); app.setApplicationName(APP_NAME); app.setStyle("Fusion")
+    win=Launcher()
+    geo=win.frameGeometry(); geo.moveCenter(QtGui.QGuiApplication.primaryScreen().availableGeometry().center()); win.move(geo.topLeft())
+    win.show(); sys.exit(app.exec())
 
-
-if __name__ == "__main__":
-    main()
+if __name__=="__main__": main()
