@@ -1,0 +1,1 @@
+{"main-core":{"identifier":"main-core","description":"Permissions de base pour la fenêtre principale.","local":true,"windows":["main"],"permissions":["core:default"]}}

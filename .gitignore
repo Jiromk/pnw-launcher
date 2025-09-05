@@ -1,0 +1,8 @@
+/node_modules
+/dist
+/.vercel
+/.cache
+/.vite
+/src-tauri/target
+/src-tauri/.cargo
+.DS_Store
