@@ -1,13 +1,13 @@
 {
   "name": "Pokemon New World",
-  "version": "0.0.1",
-  "releaseDate": "2025-01-15T10:00:00Z",
+  "version": "0.51",
+  "releaseDate": "2025-09-05T10:00:00Z",
   "minimumLauncherVersion": "1.0.0",
   "changelog": {
-    "fr": "## Version 0.0.1\n- Version initiale du système de mise à jour\n- Test de connexion avec le launcher",
-    "en": "## Version 0.0.1\n- Initial update system version\n- Launcher connection test"
+    "fr": "## Version 0.51\n- Première beta ouverte VF\n- Ajout du système de mise à jour via le launcher\n- Téléchargement depuis GitHub Releases",
+    "en": "## Version 0.51\n- First open beta (French)\n- Added update system via launcher\n- Download from GitHub Releases"
   },
-  "downloadUrl": "https://github.com/Jiromk/pnw-launcher/releases/download/v0.0.1/patch_0.0.1.zip",
+  "downloadUrl": "https://github.com/Jiromk/pnw-launcher/releases/download/Pokemon/Open.Beta.VF0.51.zip",
   "downloadSize": 0,
   "files": [],
   "requirements": {
