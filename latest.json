@@ -1,0 +1,21 @@
+{
+  "name": "Pokemon New World",
+  "version": "0.0.1",
+  "releaseDate": "2025-01-15T10:00:00Z",
+  "minimumLauncherVersion": "1.0.0",
+  "changelog": {
+    "fr": "## Version 0.0.1\n- Version initiale du système de mise à jour\n- Test de connexion avec le launcher",
+    "en": "## Version 0.0.1\n- Initial update system version\n- Launcher connection test"
+  },
+  "downloadUrl": "https://github.com/Jiromk/pnw-launcher/releases/download/v0.0.1/patch_0.0.1.zip",
+  "downloadSize": 0,
+  "files": [],
+  "requirements": {
+    "minimumRAM": 2048,
+    "diskSpace": 500000000
+  },
+  "integrity": {
+    "archiveHash": "sha256:pending",
+    "archiveSize": 0
+  }
+}
