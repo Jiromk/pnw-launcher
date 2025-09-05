@@ -4,13 +4,14 @@ import { listen } from "@tauri-apps/api/event";
 import { Card, Button, Progress } from "./ui";
 import type { Manifest } from "./types";
 
-const APP_NAME = "Pokémon New World";
 const MANIFEST_URL = "https://raw.githubusercontent.com/Jiromk/pnw-launcher/main/latest.json";
+const LOGO = "https://images-ext-1.discordapp.net/external/8aBjWgdfMWrEKmwjq_N3mavMjtYTAXRSk9ApxLbvMTA/%3Fcb%3D20231013130752%26path-prefix%3Dfr/https/static.wikia.nocookie.net/pokemon-new-world-fr/images/e/e7/Ygdgydgzydz.png/revision/latest?format=webp&width=1522&height=856";
 
 type DlEvent = { downloaded: number; total: number; stage: "download" | "extract" };
+type UiState = "idle"|"checking"|"ready"|"downloading"|"extracting"|"done"|"error";
 
 export default function App(){
-  const [status, setStatus] = useState<"idle"|"checking"|"ready"|"downloading"|"extracting"|"done"|"error">("idle");
+  const [status, setStatus] = useState<UiState>("idle");
   const [progress, setProgress] = useState(0);
   const [log, setLog] = useState<string[]>([]);
   const [installedPath, setInstalledPath] = useState<string | null>(null);
@@ -68,43 +69,51 @@ export default function App(){
   const needsUpdate = manifest && manifest.version !== (installedVersion || "");
 
   return (
-    <div className="min-h-screen bg-bg text-text">
-      <div className="max-w-[980px] mx-auto p-6">
-        <header className="flex items-center justify-between mb-6">
-          <h1 className="text-2xl font-bold">{APP_NAME} — Launcher</h1>
-          <Button onClick={() => window.open("https://github.com/Jiromk/pnw-launcher", "_blank")}>GitHub</Button>
+    <div className="min-h-screen">
+      <div className="max-w-[1120px] mx-auto p-6 space-y-6">
+        {/* Header style site */}
+        <header className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <img src={LOGO} alt="logo" className="w-10 h-10 object-contain rounded-md ring-1 ring-white/20 bg-white/5" />
+            <h1 className="text-2xl font-bold drop-shadow">Pokémon New World — Launcher</h1>
+          </div>
+          <Button variant="ghost" onClick={() => window.open("https://github.com/Jiromk/pnw-launcher", "_blank")}>
+            GitHub
+          </Button>
         </header>
 
-        <Card className="mb-6">
-          <div className="flex items-center gap-6">
-            <img src="https://raw.githubusercontent.com/Jiromk/pnw-launcher/main/icon.png"
-                 alt="logo" className="w-16 h-16 rounded-xl ring-1 ring-white/10"/>
+        {/* HERO avec ton fond visible */}
+        <section className="hero p-6">
+          <div className="relative z-10 flex items-center gap-6">
+            <img src={LOGO} alt="logo" className="w-24 h-24 object-contain rounded-xl ring-1 ring-white/10 bg-white/5"/>
             <div className="flex-1">
               <div className="text-lg font-semibold">Version installée : {installedVersion ?? "—"}</div>
-              <div className="text-muted">Dernière version : {manifest?.version ?? "…"}</div>
+              <div className="text-white/80">Dernière version : {manifest?.version ?? "…"}</div>
             </div>
             <div className="flex gap-3">
               <Button onClick={check}>Rafraîchir</Button>
               {needsUpdate ? (
                 <Button onClick={install}>Mettre à jour</Button>
               ) : (
-                <Button onClick={launch} disabled={!installedPath}>Lancer le jeu</Button>
+                <Button variant="secondary" onClick={launch} disabled={!installedPath}>Lancer le jeu</Button>
               )}
             </div>
           </div>
-          <div className="mt-4">
-            {(status === "downloading" || status === "extracting") && (
-              <div className="space-y-2">
-                <Progress value={progress}/>
-                <div className="text-sm text-muted">{status === "downloading" ? "Téléchargement…" : "Extraction…"}</div>
-              </div>
-            )}
-          </div>
-        </Card>
 
+          {(status === "downloading" || status === "extracting") && (
+            <div className="relative z-10 mt-4 space-y-2">
+              <Progress value={progress}/>
+              <div className="text-sm text-white/85">
+                {status === "downloading" ? "Téléchargement…" : "Extraction…"}
+              </div>
+            </div>
+          )}
+        </section>
+
+        {/* Journal */}
         <Card title="Journal">
           <div className="text-sm space-y-1 max-h-64 overflow-auto">
-            {log.map((l, i) => <div key={i} className="text-muted">{l}</div>)}
+            {log.map((l, i) => <div key={i} className="text-white/80">{l}</div>)}
           </div>
         </Card>
       </div>
