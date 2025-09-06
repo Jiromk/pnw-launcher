@@ -1,1 +1,1 @@
-{"main-core":{"identifier":"main-core","description":"Permissions de base pour la fenêtre principale.","local":true,"windows":["main"],"permissions":["core:default"]}}
+{"default":{"identifier":"default","description":"Capacités par défaut du launcher","local":true,"windows":["*"],"permissions":["core:default","dialog:default","dialog:allow-open"],"platforms":["windows"]},"main-core":{"identifier":"main-core","description":"Permissions de base pour la fenêtre principale.","local":true,"windows":["main"],"permissions":["core:default"]}}

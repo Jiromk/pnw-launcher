@@ -1,0 +1,8 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/schema/capabilities.schema.json",
+  "identifier": "default",
+  "description": "Capacités par défaut du launcher",
+  "windows": ["*"],
+  "platforms": ["windows"],
+  "permissions": ["core:default", "dialog:default", "dialog:allow-open"]
+}

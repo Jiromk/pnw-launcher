@@ -1,7 +1,15 @@
 export type Manifest = {
   version: string;
-  zip_url: string;
-  game_exe?: string; // défaut: Game.exe
-  // optionnel: "folder" pour dézipper dans un sous-dossier
+  downloadUrl?: string;
+  zip_url?: string;
+  game_exe?: string;
   folder?: string;
+  name?: string;
+  releaseDate?: string;
+  minimumLauncherVersion?: string;
+  changelog?: any;
+  downloadSize?: number;
+  files?: any[];
+  requirements?: any;
+  integrity?: any;
 };

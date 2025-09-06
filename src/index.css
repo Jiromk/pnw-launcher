@@ -2,28 +2,41 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ===== Thème ===== */
+/* Thème */
 :root{
-  --bg:#061728;          /* bleu nuit */
-  --text:#e8f0ff;
-  --ring: rgba(126,205,242,.45);
+  --bg:#071528;
+  --text:#eaf2ff;
   --glass: rgba(255,255,255,.06);
 }
 
-/* ===== Layout global + fond type site ===== */
 html, body, #root { height: 100%; }
 body{
   margin:0; color:var(--text); background: var(--bg);
-  /* dégradé violet -> bleu comme ton site */
-  background-image:
-    radial-gradient(1200px 800px at 15% 10%, rgba(112,70,255,.35), transparent 60%),
-    radial-gradient(1100px 900px at 85% 20%, rgba(0,153,255,.28), transparent 60%),
-    radial-gradient(1000px 900px at 50% 110%, rgba(0,102,204,.25), transparent 60%),
-    linear-gradient(180deg, #0b1a33 0%, #061728 70%);
-  overflow-y:auto;
+  overflow: hidden;
 }
 
-/* Cartes glass + ombre douce */
+/* Fond GIF */
+body::before{
+  content:"";
+  position:fixed; inset:0;
+  background: url("https://i.redd.it/3hydakwumwgb1.gif") center/cover no-repeat fixed;
+  filter: saturate(115%) contrast(105%) brightness(75%);
+  transform: scale(1.03);
+  z-index:-2;
+}
+
+/* Overlay dégradé pour lisibilité */
+body::after{
+  content:"";
+  position:fixed; inset:0;
+  background:
+    radial-gradient(1200px 800px at 15% 10%, rgba(112,70,255,.35), transparent 60%),
+    radial-gradient(1100px 900px at 85% 20%, rgba(0,153,255,.28), transparent 60%),
+    linear-gradient(180deg, rgba(7,21,40,.55) 0%, rgba(7,21,40,.88) 55%, rgba(7,21,40,.95) 100%);
+  z-index:-1;
+}
+
+/* Cartes glass */
 .glass{
   background: var(--glass);
   backdrop-filter: saturate(130%) blur(10px);
@@ -32,30 +45,37 @@ body{
   border-radius: 18px;
 }
 
-/* ===== HERO avec image fournie (bien visible) ===== */
+/* Section hero */
 .hero{
   position: relative;
-  min-height: 260px;
   border-radius: 18px;
   overflow: hidden;
   border:1px solid rgba(255,255,255,.10);
-  box-shadow: 0 18px 40px rgba(0,0,0,.35);
+  background: linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.03));
+  backdrop-filter: blur(4px);
 }
 
-/* Image de fond bien visible (peu d’assombrissement) */
-.hero::before{
-  content:"";
-  position:absolute; inset:0;
-  background: url("https://images4.alphacoders.com/127/1274987.png") center/cover no-repeat;
-  filter: saturate(110%) contrast(105%) brightness(80%);
-  transform: scale(1.02);
-  z-index:0;
+/* Journal */
+.loglist{
+  max-height: 260px;
+  overflow: auto;
+  display: grid;
+  gap: 6px;
+  padding-right: 4px;
 }
-
-/* Voile très léger pour le texte (garde l’image visible) */
-.hero::after{
-  content:"";
-  position:absolute; inset:0;
-  background: linear-gradient(180deg, rgba(6,23,40,.25), rgba(6,23,40,.45));
-  z-index:1;
+.logrow{
+  display: grid;
+  grid-template-columns: auto 56px 1fr;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.03));
+  border: 1px solid rgba(255,255,255,.08);
 }
+.logicon{
+  display:grid; place-items:center;
+  width: 24px; height: 24px; border-radius: 8px;
+}
+.logtime{ font-size:12px; color:rgba(255,255,255,.65); }
+.logtext{ font-size:14px; color:rgba(255,255,255,.92); line-height:1.25rem; }

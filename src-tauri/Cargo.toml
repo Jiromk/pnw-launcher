@@ -2,18 +2,19 @@
 name = "pnw-launcher"
 version = "1.0.0"
 edition = "2021"
-build = "build.rs"
 
 [dependencies]
 tauri = { version = "2", features = [] }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-reqwest = { version = "0.11", features = ["blocking", "json"] }
-zip = "0.6"
-walkdir = "2.5"
-dirs = "5.0"
-anyhow = "1.0"
-tempfile = "3.10"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+reqwest = { version = "0.12", features = ["blocking", "gzip", "brotli", "deflate", "json"] }
+walkdir = "2"
+zip = { version = "0.6", default-features = false, features = ["deflate"] }
+dirs = "5"
+
+# >>> plugin de dialogue (v2)
+tauri-plugin-dialog = "2"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

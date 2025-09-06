@@ -3,11 +3,17 @@
   <head>
     <meta charset="UTF-8" />
     <meta
-      name="viewport"
-      content="width=device-width, initial-scale=1.0"/>
-    <title>Pokémon New World — Launcher</title>
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self' blob: data: filesystem: ws: http: https:;
+               img-src * data: blob:;
+               style-src 'self' 'unsafe-inline';
+               script-src 'self' 'unsafe-eval' 'unsafe-inline';
+               connect-src * ws:;"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PNW — Launcher</title>
   </head>
-  <body class="bg-[#0b1222] text-[#e8f0ff]">
+  <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

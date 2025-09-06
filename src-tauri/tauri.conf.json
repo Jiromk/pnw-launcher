@@ -1,26 +1,30 @@
 {
-  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "identifier": "com.pnw.launcher",
+  "$schema": "../node_modules/@tauri-apps/cli/schema.json",
   "productName": "PNW Launcher",
   "version": "1.0.0",
+  "identifier": "com.pnw.launcher",
   "build": {
     "beforeDevCommand": "vite",
     "beforeBuildCommand": "vite build",
-    "devUrl": "http://localhost:5173",
-    "frontendDist": "../dist"
+    "devUrl": "http://localhost:5173"
   },
   "app": {
-    "security": { "csp": null },
     "windows": [
       {
-        "label": "main",
         "title": "Pokémon New World — Launcher",
-        "width": 980,
-        "height": 640,
+        "width": 1100,
+        "height": 700,
         "resizable": true
       }
-    ]
+    ],
+    "security": {
+      "csp": null,
+      "capabilities": ["default"]
+    }
   },
-  "bundle": {},
-  "plugins": {}
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": ["icons/icon.ico"]
+  }
 }
