@@ -7,7 +7,7 @@
     "fr": "## Version 0.51\n- Première beta ouverte VF\n- Ajout du système de mise à jour via le launcher\n- Téléchargement depuis GitHub Releases",
     "en": "## Version 0.51\n- First open beta (French)\n- Added update system via launcher\n- Download from GitHub Releases"
   },
-  "downloadUrl": "https://github.com/Jiromk/pnw-launcher/releases/download/Pokemon/Open.Beta.VF0.51.zip",
+  "downloadUrl": "https://github.com/Jiromk/pnw-launcher/releases/download/v0.52/Open.Beta.VF0.52.zip",
   "downloadSize": 0,
   "files": [],
   "requirements": {
