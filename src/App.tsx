@@ -5,20 +5,20 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { Card, Button, Progress } from "./ui";
 import type { Manifest } from "./types";
 
+// Font Awesome v5
 import {
   FaFolderOpen,
-  FaRotateRight,
+  FaSyncAlt,
   FaGithub,
   FaPlay,
   FaDownload,
   FaPause,
   FaStop,
-  FaCircleInfo,
-  FaTriangleExclamation,
-  FaCircleCheck,
-  FaCircleXmark,
-  FaTrash,
-} from "react-icons/fa6";
+  FaTrashAlt,
+  FaClock,
+  FaSearch,
+  FaCaretDown,
+} from "react-icons/fa";
 
 /* -------------------- Constantes -------------------- */
 
@@ -46,15 +46,13 @@ type UiState =
   | "done"
   | "error";
 
-type LogLevel = "info" | "ok" | "warn" | "error";
-type LogEntry = { id: number; t: number; level: LogLevel; text: string };
-
 /* -------------------- Utils -------------------- */
 
 function getZipUrl(m: Manifest): string {
   return (m as any).downloadUrl || (m as any).zip_url || "";
 }
-function cmpSemver(a: string, b: string) {
+function cmpSemver(a?: string | null, b?: string | null) {
+  if (!a || !b) return 0;
   const A = a.split(".").map((n) => +n);
   const B = b.split(".").map((n) => +n);
   for (let i = 0; i < Math.max(A.length, B.length); i++) {
@@ -75,54 +73,163 @@ function fmtBytes(n: number) {
   } while (n >= 1024 && i < u.length - 1);
   return `${n.toFixed(1)} ${u[i]}`;
 }
-function fmtTimeHMS(ts: number) {
-  const d = new Date(ts);
-  const h = d.getHours().toString().padStart(2, "0");
-  const m = d.getMinutes().toString().padStart(2, "0");
-  return `${h}:${m}`;
-}
-function fmtEta(s?: number | null) {
+function fmtTime(s?: number | null) {
   if (s == null) return "—";
   const m = Math.floor(s / 60),
     r = Math.floor(s % 60);
   return `${m}:${r.toString().padStart(2, "0")}`;
 }
+function dedup(arr: string[]) {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const s of arr) {
+    if (!seen.has(s)) {
+      seen.add(s);
+      out.push(s);
+    }
+  }
+  return out;
+}
 
-/* -------------------- Bouton icône+label -------------------- */
+/* -------------------- Bouton stylé -------------------- */
 
 type IconButtonProps = React.ComponentProps<typeof Button> & {
   icon: React.ReactNode;
   label: React.ReactNode;
-  tone?: "primary" | "secondary" | "ghost";
   size?: "sm" | "md" | "lg";
+  tone?: "primary" | "secondary" | "ghost";
 };
 
 function IconButton({
   icon,
   label,
-  tone = "primary",
   size = "md",
+  tone = "primary",
   className = "",
   ...props
 }: IconButtonProps) {
-  const sizeCls =
-    size === "sm"
-      ? "px-3 py-2 text-sm"
-      : size === "lg"
-      ? "px-5 py-3 text-base"
-      : "px-4 py-2.5 text-sm";
-  const toneCls =
-    tone === "secondary"
-      ? "bg-white/10 hover:bg-white/15 ring-1 ring-white/15 text-white/90"
-      : tone === "ghost"
-      ? "bg-white/5 hover:bg-white/10 ring-1 ring-white/10 text-white/90"
-      : "bg-gradient-to-br from-blue-500/90 to-indigo-500/90 hover:from-blue-500 hover:to-indigo-500 ring-1 ring-white/10 text-white";
+  const sizes = {
+    sm: {
+      pad: "px-3 py-2",
+      iconBox: "w-6 h-6",
+      icon: "text-[12px]",
+      gap: "gap-2",
+      text: "text-sm",
+    },
+    md: {
+      pad: "px-4 py-2.5",
+      iconBox: "w-7 h-7",
+      icon: "text-[14px]",
+      gap: "gap-2.5",
+      text: "text-sm",
+    },
+    lg: {
+      pad: "px-5 py-3",
+      iconBox: "w-9 h-9",
+      icon: "text-[16px]",
+      gap: "gap-3",
+      text: "text-base",
+    },
+  }[size];
+
+  const tones: Record<typeof tone, string> = {
+    primary:
+      "bg-gradient-to-br from-blue-500/90 to-indigo-500/90 hover:from-blue-500 hover:to-indigo-500 active:scale-[0.99] ring-1 ring-white/10 text-white",
+    secondary:
+      "bg-white/10 hover:bg-white/15 active:scale-[0.99] ring-1 ring-white/15 text-white/90",
+    ghost:
+      "bg-white/6 hover:bg-white/10 active:scale-[0.99] ring-1 ring-white/10 text-white/90",
+  };
 
   return (
-    <Button className={[sizeCls, toneCls, className].join(" ")} {...props}>
-      <span className="text-[1.05rem]">{icon}</span>
+    <Button
+      className={[
+        "group relative rounded-xl shadow-[0_8px_25px_-10px_rgba(0,0,0,0.6)]",
+        "backdrop-blur supports-[backdrop-filter]:bg-opacity-80 transition-all",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/50",
+        sizes.pad,
+        sizes.gap,
+        sizes.text,
+        tones[tone],
+        className,
+      ].join(" ")}
+      {...props}
+    >
+      <span
+        className={[
+          "grid place-items-center rounded-lg",
+          "bg-white/12 ring-1 ring-white/15",
+          "shadow-inner shadow-black/20",
+          sizes.iconBox,
+          "transition-transform duration-200 group-active:scale-95",
+        ].join(" ")}
+      >
+        <span className={sizes.icon}>{icon}</span>
+      </span>
       <span className="font-medium tracking-wide">{label}</span>
+      <span className="pointer-events-none absolute inset-0 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity">
+        <span className="absolute inset-0 rounded-xl bg-gradient-to-tr from-white/6 to-white/0" />
+      </span>
     </Button>
+  );
+}
+
+/* Un bouton “Dossier ▾” avec menu */
+function FolderDropdown({
+  onChoose,
+  onAuto,
+}: {
+  onChoose: () => void;
+  onAuto: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const onClick = (e: MouseEvent) => {
+      if (!ref.current) return;
+      if (!ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, []);
+
+  return (
+    <div className="relative" ref={ref}>
+      <IconButton
+        icon={<FaFolderOpen />}
+        label={
+          <span className="flex items-center gap-2">
+            Dossier <FaCaretDown className="opacity-80" />
+          </span>
+        }
+        onClick={() => setOpen((v) => !v)}
+      />
+      {open && (
+        <div className="absolute right-0 mt-2 w-56 rounded-xl bg-zinc-900/90 ring-1 ring-white/10 shadow-2xl backdrop-blur p-1 z-50">
+          <button
+            className="flex w-full items-center gap-2 px-3 py-2 rounded-lg hover:bg-white/10 text-left"
+            onClick={() => {
+              setOpen(false);
+              onChoose();
+            }}
+          >
+            <FaFolderOpen className="opacity-80" />
+            <span>Choisir un dossier…</span>
+          </button>
+          <button
+            className="flex w-full items-center gap-2 px-3 py-2 rounded-lg hover:bg-white/10 text-left"
+            onClick={() => {
+              setOpen(false);
+              onAuto();
+            }}
+          >
+            <FaSearch className="opacity-80" />
+            <span>Détecter automatiquement</span>
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -133,46 +240,38 @@ export default function App() {
   const [progress, setProgress] = useState(0);
   const [eta, setEta] = useState<string>("—");
   const [speed, setSpeed] = useState<string>("—/s");
-  const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [log, setLog] = useState<string[]>([]);
   const [manifest, setManifest] = useState<Manifest | null>(null);
   const [installDir, setInstallDir] = useState<string>("");
   const [installedVersion, setInstalledVersion] = useState<string | null>(null);
   const [hasGame, setHasGame] = useState(false);
   const pollingRef = useRef<number | null>(null);
-  const idRef = useRef(1);
 
-  /* ---- gestion log : horodaté + anti-doublon ---- */
-  function addLog(text: string, level: LogLevel = "info") {
-    setLogs((prev) => {
-      if (prev[0]?.text === text) return prev; // éviter doublon consécutif
-      const entry: LogEntry = {
-        id: idRef.current++,
-        t: Date.now(),
-        level,
-        text,
-      };
-      return [entry, ...prev].slice(0, 50);
-    });
-  }
+  const isInstalled = !!installedVersion || hasGame;
+  const remoteVersion = manifest?.version ?? null;
+  const needsUpdate =
+    isInstalled && !!remoteVersion && !!installedVersion
+      ? cmpSemver(installedVersion, remoteVersion) < 0
+      : false;
 
-  /* ---- events DL ---- */
   useEffect(() => {
     const un1 = listen<DlEvent>("pnw://progress", (e) => {
       const p = e.payload;
-      if (p.stage === "paused") return setStatus("paused");
+      if (p.stage === "paused") {
+        setStatus("paused");
+        return;
+      }
       if (p.stage === "canceled") {
         setStatus("ready");
         setProgress(0);
         setEta("—");
         setSpeed("—/s");
-        addLog("Téléchargement annulé", "warn");
         return;
       }
       if (p.stage === "done") {
         setStatus("done");
         setProgress(100);
         setEta("0:00");
-        addLog("Installation terminée", "ok");
         check();
         return;
       }
@@ -181,17 +280,16 @@ export default function App() {
         const tot = p.total || 0;
         const dl = p.downloaded || 0;
         setProgress(tot ? (dl / tot) * 100 : 0);
-        setEta(fmtEta(p.eta_secs ?? null));
+        setEta(fmtTime(p.eta_secs ?? null));
         setSpeed(p.speed_bps ? `${fmtBytes(p.speed_bps)}/s` : "—/s");
         return;
       }
       if (p.stage === "extract") {
         setStatus("extracting");
-        addLog("Extraction…", "info");
       }
     });
     const un2 = listen<any>("pnw://error", (e) =>
-      addLog(`Erreur: ${e.payload?.error}`, "error")
+      setLog((l) => dedup([`Erreur: ${e.payload?.error}`, ...l]))
     );
     return () => {
       un1.then((f) => f());
@@ -199,7 +297,6 @@ export default function App() {
     };
   }, []);
 
-  /* ---- API ---- */
   async function fetchManifest() {
     const m = await invoke<Manifest>("cmd_fetch_manifest", {
       manifestUrl: MANIFEST_URL,
@@ -218,24 +315,31 @@ export default function App() {
     setInstalledVersion(info.version);
     return info;
   }
+
   async function check() {
     try {
       setStatus("checking");
       const [m, info] = await Promise.all([fetchManifest(), readInstallInfo()]);
-      const need =
-        m?.version
-          ? info.version
-            ? cmpSemver(info.version, m.version) < 0
-            : !!info.hasGame
+      const installed = !!info.version || info.hasGame;
+      const update =
+        installed && m?.version && info.version
+          ? cmpSemver(info.version, m.version) < 0
           : false;
-      setStatus("ready");
 
-      if (!info.hasGame) addLog("Jeu non installé", "warn");
-      else if (need) addLog(`MAJ disponible → v${m.version}`, "warn");
-      else addLog(`À jour (v${info.version ?? "—"})`, "ok");
+      setStatus("ready");
+      setLog((l) =>
+        dedup([
+          installed
+            ? update
+              ? `Jeu pas à jour (local v${info.version} → distante v${m.version})`
+              : `À jour (v${info.version ?? "—"})`
+            : "Jeu non installé",
+          ...l,
+        ])
+      );
     } catch (e: any) {
       setStatus("error");
-      addLog(`Erreur check: ${String(e)}`, "error");
+      setLog((l) => dedup([`Erreur check: ${String(e)}`, ...l]));
     }
   }
 
@@ -248,31 +352,63 @@ export default function App() {
         defaultPath: installDir || "C:\\",
       });
       if (!dir) {
-        addLog("Sélection de dossier annulée.", "info");
+        setLog((l) => dedup(["Sélection de dossier annulée.", ...l]));
         return;
       }
       await invoke("cmd_set_install_dir", { path: String(dir) });
       setInstallDir(String(dir));
-      addLog(`Dossier d'installation: ${dir}`, "ok");
+      setLog((l) => dedup([`Dossier d'installation: ${dir}`, ...l]));
       await check();
     } catch (e: any) {
-      addLog(`Erreur d’ouverture: ${String(e)}`, "error");
+      setLog((l) => dedup([`Erreur d’ouverture du sélecteur: ${String(e)}`, ...l]));
+    }
+  }
+
+  async function autoDetectFolder() {
+    try {
+      const res = await invoke<{
+        found: boolean;
+        installDir?: string;
+        reason?: string;
+      }>("cmd_autodetect_install", { manifest }); // Rust va scanner
+      if (res.found && res.installDir) {
+        setInstallDir(res.installDir);
+        setLog((l) =>
+          dedup([`Chemin détecté automatiquement: ${res.installDir}`, ...l])
+        );
+        await check();
+      } else {
+        setLog((l) =>
+          dedup([
+            `Aucun dossier détecté automatiquement${
+              res.reason ? ` (${res.reason})` : ""
+            }.`,
+            ...l,
+          ])
+        );
+      }
+    } catch (e: any) {
+      setLog((l) => dedup([`Erreur détection auto: ${String(e)}`, ...l]));
     }
   }
 
   function installOrUpdate() {
-    if (!manifest) return addLog("Manifest indisponible", "error");
-    if (!getZipUrl(manifest)) return addLog("Manifest sans URL valide", "error");
-
+    if (!manifest) {
+      setLog((l) => dedup(["Manifest indisponible", ...l]));
+      return;
+    }
+    if (!getZipUrl(manifest)) {
+      setLog((l) => dedup(["Manifest sans URL (downloadUrl/zip_url).", ...l]));
+      return;
+    }
     setStatus("downloading");
     setProgress(0);
     setEta("—");
     setSpeed("—/s");
-    addLog("Téléchargement…", "info");
-    invoke("cmd_download_and_install", { manifest }); // fire-and-forget
+    invoke("cmd_download_and_install", { manifest });
   }
-  const pause = () => invoke("cmd_pause_download").then(() => addLog("Pause", "info"));
-  const resume = () => invoke("cmd_resume_download").then(() => addLog("Reprise", "info"));
+  const pause = () => invoke("cmd_pause_download");
+  const resume = () => invoke("cmd_resume_download");
   const cancel = () => invoke("cmd_cancel_download");
 
   useEffect(() => {
@@ -288,37 +424,10 @@ export default function App() {
     };
   }, []);
 
-  const needInstall = !hasGame;
-  const needUpdate =
-    hasGame && manifest && installedVersion
-      ? cmpSemver(installedVersion, manifest.version) < 0
-      : false;
-
-  /* ---- helpers UI ---- */
-  const iconFor = (lvl: LogLevel) =>
-    lvl === "ok" ? (
-      <FaCircleCheck />
-    ) : lvl === "warn" ? (
-      <FaTriangleExclamation />
-    ) : lvl === "error" ? (
-      <FaCircleXmark />
-    ) : (
-      <FaCircleInfo />
-    );
-
-  const colorFor = (lvl: LogLevel) =>
-    lvl === "ok"
-      ? "bg-emerald-500/20 text-emerald-300"
-      : lvl === "warn"
-      ? "bg-amber-500/20 text-amber-300"
-      : lvl === "error"
-      ? "bg-rose-500/20 text-rose-300"
-      : "bg-sky-500/20 text-sky-300";
-
-  /* ---- UI ---- */
   return (
     <div className="min-h-screen">
       <div className="max-w-[1100px] mx-auto p-6 space-y-6">
+        {/* Header */}
         <header className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <img
@@ -333,7 +442,7 @@ export default function App() {
             <IconButton
               tone="ghost"
               size="sm"
-              icon={<FaRotateRight />}
+              icon={<FaSyncAlt />}
               label="Rafraîchir"
               onClick={check}
             />
@@ -349,6 +458,7 @@ export default function App() {
           </div>
         </header>
 
+        {/* Statut */}
         <section className="hero p-6">
           <div className="flex items-center gap-6">
             <img
@@ -363,7 +473,7 @@ export default function App() {
                 <b className="text-white/95">{installDir || "—"}</b>
               </div>
               <div>
-                Installé : <b>{hasGame ? "Oui" : "Non"}</b>
+                Installé : <b>{(!!installedVersion || hasGame) ? "Oui" : "Non"}</b>
               </div>
               <div>
                 Version locale : <b>{installedVersion ?? "—"}</b>
@@ -374,19 +484,18 @@ export default function App() {
             </div>
 
             <div className="flex flex-col gap-2">
-              <IconButton
-                icon={<FaFolderOpen />}
-                label="Choisir un dossier"
-                onClick={chooseFolder}
+              <FolderDropdown
+                onChoose={chooseFolder}
+                onAuto={autoDetectFolder}
               />
 
-              {needInstall ? (
+              {!((!!installedVersion) || hasGame) ? (
                 <IconButton
                   icon={<FaDownload />}
-                  label="Installer"
+                  label="Télécharger le jeu"
                   onClick={installOrUpdate}
                 />
-              ) : needUpdate ? (
+              ) : (installedVersion && manifest?.version && cmpSemver(installedVersion, manifest.version) < 0) ? (
                 <IconButton
                   icon={<FaDownload />}
                   label="Mettre à jour"
@@ -399,10 +508,9 @@ export default function App() {
                   label="Lancer"
                   onClick={() =>
                     invoke("cmd_launch_game", {
-                      exeName: (manifest as any)?.game_exe || "Game.exe",
+                      exeName: (manifest as any)?.game_exe || "Pokemon New World.exe",
                     })
                   }
-                  disabled={!hasGame}
                 />
               )}
             </div>
@@ -458,32 +566,40 @@ export default function App() {
           )}
         </section>
 
-        <Card title="Journal">
-          <div className="flex justify-between items-center mb-2">
-            <span className="text-sm opacity-80">
-              Historique des actions récentes
-            </span>
-            <IconButton
-              tone="ghost"
-              size="sm"
-              icon={<FaTrash />}
-              label="Vider"
-              onClick={() => setLogs([])}
-            />
-          </div>
-
-          <div className="loglist">
-            {logs.map((e) => (
-              <div key={e.id} className="logrow">
-                <span className={`logicon ${colorFor(e.level)}`}>
-                  {iconFor(e.level)}
-                </span>
-                <span className="logtime">{fmtTimeHMS(e.t)}</span>
-                <span className="logtext">{e.text}</span>
-              </div>
-            ))}
-            {logs.length === 0 && (
-              <div className="text-sm opacity-70">Aucun événement pour l’instant.</div>
+        {/* Journal */}
+        <Card
+          title={
+            <div className="flex items-center justify-between w-full">
+              <span>Journal</span>
+              <IconButton
+                tone="ghost"
+                size="sm"
+                icon={<FaTrashAlt />}
+                label="Vider"
+                onClick={() => setLog([])}
+              />
+            </div>
+          }
+        >
+          <div className="text-sm space-y-2 max-h-64 overflow-auto">
+            {log.length === 0 ? (
+              <div className="opacity-70">—</div>
+            ) : (
+              log.map((l, i) => (
+                <div
+                  key={i}
+                  className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/5 ring-1 ring-white/10"
+                >
+                  <FaClock className="opacity-70" />
+                  <span className="opacity-70 w-14">
+                    {new Date().toLocaleTimeString([], {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })}
+                  </span>
+                  <span className="text-white/90">{l}</span>
+                </div>
+              ))
             )}
           </div>
         </Card>

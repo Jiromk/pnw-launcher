@@ -5,8 +5,8 @@ use std::{
   io::{Read, Write},
   path::{Path, PathBuf},
   sync::{Arc, Mutex},
-  thread,
   time::{Duration, Instant},
+  thread,
 };
 
 use anyhow::Result;
@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{Emitter, State};
 use walkdir::WalkDir;
 
-/* =================== Config =================== */
+/* ========================= Config ========================= */
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
 struct LauncherConfig {
@@ -22,6 +22,7 @@ struct LauncherConfig {
 }
 
 fn config_dir() -> std::result::Result<PathBuf, String> {
+  // %APPDATA%/Roaming sur Windows
   let base = dirs::config_dir().ok_or("config_dir introuvable")?;
   Ok(base.join("PNW"))
 }
@@ -55,19 +56,20 @@ fn write_config(cfg: &LauncherConfig) -> std::result::Result<(), String> {
   Ok(())
 }
 
-/* =================== Manifest =================== */
+/* ========================= Manifest ========================= */
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct Manifest {
   version: String,
-  #[serde(alias = "downloadUrl", alias = "zipUrl")]
+  #[serde(alias = "downloadUrl", alias = "zip_url")]
   zip_url: String,
-  /// Nom d’exe conseillé (optionnel)
+  #[serde(default)]
   game_exe: Option<String>,
+  #[serde(default)]
   folder: Option<String>,
 }
 
-/* =================== DL state =================== */
+/* ========================= DL state ========================= */
 
 #[derive(Default)]
 struct DlInner {
@@ -76,15 +78,74 @@ struct DlInner {
   tmp_path: Option<PathBuf>,
   downloaded: u64,
   total: u64,
+  // fenêtre glissante (instant, bytes) pour calcul vitesse/ETA
   window: Vec<(Instant, u64)>,
   started: Option<Instant>,
 }
+
 #[derive(Default)]
 struct AppState {
   dl: Arc<Mutex<DlInner>>,
 }
 
-/* =================== Commands =================== */
+/* ========================= Helpers ========================= */
+
+fn default_install_dir() -> std::result::Result<PathBuf, String> {
+  // %LOCALAPPDATA%/PNW/Game
+  let base = dirs::data_local_dir().ok_or("data_local_dir introuvable")?;
+  Ok(base.join("PNW").join("Game"))
+}
+
+fn install_dir() -> std::result::Result<PathBuf, String> {
+  let cfg = read_config();
+  if let Some(p) = cfg.install_dir {
+    return Ok(PathBuf::from(p));
+  }
+  default_install_dir()
+}
+
+fn find_game_exe(dir: &PathBuf, exe_name: &str) -> std::result::Result<PathBuf, anyhow::Error> {
+  let candidate = dir.join(exe_name);
+  if candidate.exists() {
+    return Ok(candidate);
+  }
+  for entry in WalkDir::new(dir).into_iter().filter_map(|e| e.ok()) {
+    let p = entry.path();
+    if p.file_name().and_then(|n| n.to_str()) == Some(exe_name) {
+      return Ok(p.to_path_buf());
+    }
+  }
+  Err(anyhow::anyhow!("{} non trouvé", exe_name))
+}
+
+fn read_version(dir: &PathBuf) -> Result<String> {
+  let v = fs::read_to_string(dir.join(".version"))?;
+  Ok(v.trim().to_string())
+}
+
+fn write_version(dir: &PathBuf, v: &str) -> Result<()> {
+  fs::write(dir.join(".version"), v)?;
+  Ok(())
+}
+
+// empêche l'extraction de chemins dangereux + rejoint le répertoire d'install
+fn sanitize_zip_path(base: &PathBuf, name: &str) -> PathBuf {
+  let mut path = base.clone();
+  for comp in name.split(['\\', '/']) {
+    if comp == ".." || comp.contains(':') || comp.is_empty() {
+      continue;
+    }
+    path.push(comp);
+  }
+  path
+}
+
+// convertit n'importe quelle erreur affichable en String
+fn err<E: std::fmt::Display>(e: E) -> String {
+  e.to_string()
+}
+
+/* ========================= Commands ========================= */
 
 #[tauri::command]
 fn cmd_fetch_manifest(manifest_url: String) -> Result<Manifest, String> {
@@ -105,13 +166,13 @@ fn cmd_fetch_manifest(manifest_url: String) -> Result<Manifest, String> {
 #[tauri::command]
 fn cmd_get_install_info() -> Result<serde_json::Value, String> {
   let dir = install_dir()?;
-  let exe = auto_find_exe(&dir).ok();
   let ver = read_version(&dir).ok();
+  // nom par défaut si on ne sait pas (sera précisé par le manifest côté UI)
+  let exe = find_game_exe(&dir, "Pokemon New World.exe").ok();
   Ok(serde_json::json!({
     "installDir": dir.to_string_lossy(),
     "version": ver,
-    "hasGame": exe.is_some(),
-    "exePath": exe.map(|p| p.to_string_lossy().to_string())
+    "hasGame": exe.is_some()
   }))
 }
 
@@ -134,6 +195,7 @@ fn cmd_pause_download(state: State<AppState>) -> Result<(), String> {
   }
   Ok(())
 }
+
 #[tauri::command]
 fn cmd_resume_download(state: State<AppState>) -> Result<(), String> {
   if let Ok(mut s) = state.dl.lock() {
@@ -141,6 +203,7 @@ fn cmd_resume_download(state: State<AppState>) -> Result<(), String> {
   }
   Ok(())
 }
+
 #[tauri::command]
 fn cmd_cancel_download(state: State<AppState>) -> Result<(), String> {
   if let Ok(mut s) = state.dl.lock() {
@@ -149,6 +212,7 @@ fn cmd_cancel_download(state: State<AppState>) -> Result<(), String> {
   Ok(())
 }
 
+/* Lance la tâche en arrière-plan */
 #[tauri::command]
 fn cmd_download_and_install(
   app: tauri::AppHandle,
@@ -167,12 +231,9 @@ fn cmd_download_and_install(
 }
 
 #[tauri::command]
-fn cmd_launch_game(exe_name: Option<String>) -> Result<(), String> {
+fn cmd_launch_game(exe_name: String) -> Result<(), String> {
   let dir = install_dir()?;
-  let wanted = exe_name.unwrap_or_else(|| "Pokémon New World.exe".to_string());
-  let exe = find_game_exe(&dir, &wanted)
-    .or_else(|_| auto_find_exe(&dir))
-    .map_err(err)?;
+  let exe = find_game_exe(&dir, &exe_name).map_err(err)?;
   #[cfg(target_os = "windows")]
   {
     std::process::Command::new(&exe)
@@ -187,7 +248,78 @@ fn cmd_launch_game(exe_name: Option<String>) -> Result<(), String> {
   Ok(())
 }
 
-/* =================== Worker =================== */
+/* Détection automatique d'un dossier de jeu déjà existant */
+#[tauri::command]
+fn cmd_autodetect_install(manifest: Option<Manifest>) -> Result<serde_json::Value, String> {
+  let exe_name = manifest
+    .as_ref()
+    .and_then(|m| m.game_exe.clone())
+    .unwrap_or_else(|| "Pokemon New World.exe".to_string());
+
+  // Quelques racines probables
+  let mut roots: Vec<PathBuf> = vec![];
+  if let Some(p) = dirs::data_local_dir() {
+    roots.push(p);
+  }
+  if let Some(p) = dirs::document_dir() {
+    roots.push(p);
+  }
+  if let Some(p) = dirs::download_dir() {
+    roots.push(p);
+  }
+  if let Some(p) = dirs::desktop_dir() {
+    roots.push(p);
+  }
+  roots.push(PathBuf::from(r"C:\Program Files"));
+  roots.push(PathBuf::from(r"C:\Program Files (x86)"));
+  roots.push(PathBuf::from(r"C:\Games"));
+
+  if let Ok(def) = default_install_dir() {
+    if let Some(parent) = def.parent() {
+      roots.push(parent.to_path_buf());
+    }
+  }
+
+  let mut found: Option<PathBuf> = None;
+
+  'outer: for root in roots {
+    if !root.exists() {
+      continue;
+    }
+    for entry in WalkDir::new(&root)
+      .max_depth(5)
+      .into_iter()
+      .filter_map(|e| e.ok())
+    {
+      let p = entry.path();
+      if p.file_name().and_then(|n| n.to_str()) == Some(&exe_name) {
+        found = p.parent().map(|pp| pp.to_path_buf());
+        break 'outer;
+      }
+      if p.file_name().and_then(|n| n.to_str()) == Some(".version") {
+        found = p.parent().map(|pp| pp.to_path_buf());
+        break 'outer;
+      }
+    }
+  }
+
+  if let Some(dir) = found {
+    let mut cfg = read_config();
+    cfg.install_dir = Some(dir.to_string_lossy().to_string());
+    write_config(&cfg)?;
+    return Ok(serde_json::json!({
+      "found": true,
+      "installDir": cfg.install_dir
+    }));
+  }
+
+  Ok(serde_json::json!({
+    "found": false,
+    "reason": "Aucun exe ou .version trouvé"
+  }))
+}
+
+/* ========================= Worker ========================= */
 
 fn run_download_and_install(
   app: &tauri::AppHandle,
@@ -199,6 +331,7 @@ fn run_download_and_install(
     .build()
     .map_err(err)?;
 
+  // chemins + état
   let tmp_path = {
     let p = temp_zip_path()?;
     if let Some(d) = p.parent() {
@@ -208,6 +341,7 @@ fn run_download_and_install(
     }
     p
   };
+
   let start_at: u64 = if tmp_path.exists() {
     fs::metadata(&tmp_path).map_err(err)?.len()
   } else {
@@ -223,7 +357,7 @@ fn run_download_and_install(
     s.downloaded = start_at;
   }
 
-  // total
+  // HEAD pour connaître la taille totale
   let head = client.head(&manifest.zip_url).send().map_err(err)?;
   let total = head
     .headers()
@@ -237,12 +371,14 @@ fn run_download_and_install(
     s.window.push((Instant::now(), start_at));
   }
 
-  // GET (Range)
+  // Requête GET avec Range si reprise
   let mut req = client.get(&manifest.zip_url);
   if start_at > 0 {
     req = req.header(reqwest::header::RANGE, format!("bytes={}-", start_at));
   }
   let mut resp = req.send().and_then(|r| r.error_for_status()).map_err(err)?;
+
+  // Fichier de sortie (append)
   let mut out = OpenOptions::new()
     .create(true)
     .append(true)
@@ -251,7 +387,7 @@ fn run_download_and_install(
 
   let mut buf = [0u8; 64 * 1024];
   loop {
-    // pause/cancel
+    // pause/annulation
     {
       let mut s = dl.lock().unwrap();
       if s.cancel {
@@ -260,10 +396,9 @@ fn run_download_and_install(
         return Err("annulé".into());
       }
       while s.paused {
-        let _ = app.emit(
-          "pnw://progress",
-          serde_json::json!({"stage":"paused","downloaded": s.downloaded,"total": s.total,"eta_secs": null,"speed_bps": 0}),
-        );
+        let _ = app.emit("pnw://progress", serde_json::json!({
+          "stage":"paused","downloaded": s.downloaded,"total": s.total,"eta_secs": null,"speed_bps": 0
+        }));
         thread::sleep(Duration::from_millis(200));
       }
     }
@@ -281,6 +416,7 @@ fn run_download_and_install(
       let now = Instant::now();
       let downloaded_now = s.downloaded;
       s.window.push((now, downloaded_now));
+      // fenêtre 3 secondes
       while s
         .window
         .first()
@@ -323,9 +459,23 @@ fn run_download_and_install(
 
   let f = File::open(&tmp_path).map_err(err)?;
   let mut archive = zip::ZipArchive::new(f).map_err(err)?;
+
+  // On N’ÉCRASE PAS le dossier Saves/ existant
+  let saves_dir = target.join("Saves");
+  let mut extracted_count = 0usize;
+
   for i in 0..archive.len() {
     let mut file = archive.by_index(i).map_err(err)?;
     let outpath = sanitize_zip_path(&target, file.name());
+
+    // Si c'est dans Saves/, on saute (préservation)
+    if outpath
+      .components()
+      .any(|c| c.as_os_str().to_string_lossy().eq_ignore_ascii_case("Saves"))
+    {
+      continue;
+    }
+
     if file.is_dir() {
       fs::create_dir_all(&outpath).map_err(err)?;
     } else {
@@ -341,6 +491,7 @@ fn run_download_and_install(
           fs::set_permissions(&outpath, fs::Permissions::from_mode(mode)).ok();
         }
       }
+      extracted_count += 1;
     }
   }
 
@@ -351,119 +502,22 @@ fn run_download_and_install(
     s.tmp_path = None;
     s.window.clear();
   }
+  // écrit le nouvel identifiant de version
   write_version(&target, &manifest.version).ok();
 
-  let _ = app.emit("pnw://progress", serde_json::json!({ "stage":"done" }));
+  // assure l’existence du dossier Saves
+  if !saves_dir.exists() {
+    let _ = fs::create_dir_all(&saves_dir);
+  }
+
+  let _ = app.emit("pnw://progress", serde_json::json!({ "stage":"done", "extracted": extracted_count }));
   Ok(())
 }
 
-/* =================== Helpers =================== */
-
-fn default_install_dir() -> Result<PathBuf, String> {
-  let base = dirs::data_local_dir().ok_or("data_local_dir introuvable")?;
-  Ok(base.join("PNW").join("Game"))
-}
-fn install_dir() -> Result<PathBuf, String> {
-  let cfg = read_config();
-  if let Some(p) = cfg.install_dir {
-    return Ok(PathBuf::from(p));
-  }
-  default_install_dir()
-}
-
-fn find_game_exe(dir: &PathBuf, exe_name: &str) -> std::result::Result<PathBuf, anyhow::Error> {
-  if !exe_name.trim().is_empty() {
-    let candidate = dir.join(exe_name);
-    if candidate.exists() {
-      return Ok(candidate);
-    }
-    for entry in WalkDir::new(dir).into_iter().filter_map(|e| e.ok()) {
-      let p = entry.path();
-      if p.file_name().and_then(|n| n.to_str()) == Some(exe_name) {
-        return Ok(p.to_path_buf());
-      }
-    }
-  }
-  Err(anyhow::anyhow!("{} non trouvé", exe_name))
-}
-
-/// Essaie plusieurs noms, puis choisit le **plus gros .exe** plausible.
-fn auto_find_exe(dir: &PathBuf) -> std::result::Result<PathBuf, anyhow::Error> {
-  // 1) noms fréquents
-  let candidates = [
-    "Pokémon New World.exe",
-    "Pokemon New World.exe",
-    "Game.exe",
-    "PNW.exe",
-  ];
-  for name in candidates {
-    if let Ok(p) = find_game_exe(dir, name) {
-      return Ok(p);
-    }
-  }
-  // 2) plus gros .exe plausible (ignore installeurs/outils)
-  let mut best: Option<(u64, PathBuf)> = None;
-  for entry in WalkDir::new(dir).into_iter().filter_map(|e| e.ok()) {
-    let p = entry.path();
-    if p
-      .extension()
-      .and_then(|e| e.to_str())
-      .map(|s| s.eq_ignore_ascii_case("exe"))
-      != Some(true)
-    {
-      continue;
-    }
-    let fname = p
-      .file_name()
-      .and_then(|s| s.to_str())
-      .unwrap_or("")
-      .to_ascii_lowercase();
-    if fname.contains("vcredist")
-      || fname.contains("dxsetup")
-      || fname.contains("setup")
-      || fname.contains("install")
-    {
-      continue;
-    }
-    if let Ok(meta) = fs::metadata(p) {
-      let size = meta.len();
-      if best.as_ref().map_or(true, |(b, _)| size > *b) {
-        best = Some((size, p.to_path_buf()));
-      }
-    }
-  }
-  best
-    .map(|(_, p)| p)
-    .ok_or_else(|| anyhow::anyhow!("Aucun exe trouvé"))
-}
-
-fn read_version(dir: &PathBuf) -> Result<String> {
-  let v = fs::read_to_string(dir.join(".version"))?;
-  Ok(v.trim().to_string())
-}
-fn write_version(dir: &PathBuf, v: &str) -> Result<()> {
-  fs::write(dir.join(".version"), v)?;
-  Ok(())
-}
-fn sanitize_zip_path(base: &PathBuf, name: &str) -> PathBuf {
-  let mut path = base.clone();
-  for comp in name.split(['\\', '/']) {
-    if comp == ".." || comp.contains(':') || comp.is_empty() {
-      continue;
-    }
-    path.push(comp);
-  }
-  path
-}
-fn err<E: std::fmt::Display>(e: E) -> String {
-  e.to_string()
-}
-
-/* =================== main =================== */
+/* ========================= main ========================= */
 
 fn main() {
   tauri::Builder::default()
-    .plugin(tauri_plugin_dialog::init())
     .manage(AppState::default())
     .invoke_handler(tauri::generate_handler![
       cmd_fetch_manifest,
@@ -473,7 +527,8 @@ fn main() {
       cmd_resume_download,
       cmd_cancel_download,
       cmd_download_and_install,
-      cmd_launch_game
+      cmd_launch_game,
+      cmd_autodetect_install
     ])
     .run(tauri::generate_context!())
     .expect("erreur tauri");
