@@ -46,17 +46,27 @@ body::after{
   border-radius: 18px;
 }
 
-/* Section hero */
+/* Section hero au-dessus du journal ET ne pas clipper le dropdown */
 .hero{
   position: relative;
   border-radius: 18px;
-  overflow: hidden;
+  overflow: visible;
   border:1px solid rgba(255,255,255,.10);
   background: linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.03));
   backdrop-filter: blur(4px);
+  z-index: 20;
 }
 
-/* Assurer la lisibilité au hover des boutons */
-button, a[role="button"] {
-  color: inherit;
+/* Le journal en dessous du hero */
+.journal-layer{
+  position: relative;
+  z-index: 10;
+}
+
+/* Boutons : garder le texte lisible au survol */
+.btn-ink {
+  color: #fff;                     /* texte toujours blanc */
+}
+.btn-ink:hover {
+  filter: brightness(1.08);        /* petit boost, pas “tout bleu” */
 }
