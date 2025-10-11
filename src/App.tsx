@@ -331,6 +331,9 @@ export default function App() {
       hasVersion: boolean;
       version: string | null;
       hasGame?: boolean;
+      hasIntegrity?: boolean;
+      missingFiles?: number;
+      hasManifest?: boolean;
     }>("cmd_get_install_info", {});
     setInstallDir(info.installDir);
     setHasExe(info.hasExe);
