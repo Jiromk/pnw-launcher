@@ -2,71 +2,112 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Thème */
+/* ───── Thème global (le menu Thème met à jour --accent) ───── */
 :root{
   --bg:#071528;
   --text:#eaf2ff;
-  --ring: rgba(126,205,242,.45);
-  --glass: rgba(255,255,255,.06);
+  --accent:#5865F2;            /* sera remplacée par le menu Thème */
 }
 
-html, body, #root { height: 100%; }
+html,body,#root{height:100%}
 body{
-  margin:0; color:var(--text); background: var(--bg);
-  overflow: hidden;
+  margin:0; color:var(--text); background:var(--bg); overflow:hidden;
+  font-family:Inter,system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
 }
 
-/* Fond GIF */
+/* ───── Fond + halo coloré par --accent ───── */
 body::before{
-  content:"";
-  position:fixed; inset:0;
-  background: url("https://i.redd.it/3hydakwumwgb1.gif") center/cover no-repeat fixed;
-  filter: saturate(115%) contrast(105%) brightness(75%);
-  transform: scale(1.03);
-  z-index:-2;
+  content:""; position:fixed; inset:0; z-index:-2;
+  background:url("/background.gif") center/cover no-repeat fixed;   /* ton GIF public */
+  filter:saturate(115%) contrast(105%) brightness(75%); transform:scale(1.03);
 }
-
-/* Overlay dégradé pour lisibilité */
 body::after{
-  content:"";
-  position:fixed; inset:0;
+  content:""; position:fixed; inset:0; z-index:-1;
   background:
-    radial-gradient(1200px 800px at 15% 10%, rgba(112,70,255,.35), transparent 60%),
-    radial-gradient(1100px 900px at 85% 20%, rgba(0,153,255,.28), transparent 60%),
+    radial-gradient(1200px 800px at 15% 10%,
+      color-mix(in srgb, var(--accent) 35%, transparent) , transparent 60%),
+    radial-gradient(1100px 900px at 85% 20%,
+      color-mix(in srgb, var(--accent) 22%, transparent) , transparent 60%),
     linear-gradient(180deg, rgba(7,21,40,.55) 0%, rgba(7,21,40,.88) 55%, rgba(7,21,40,.95) 100%);
-  z-index:-1;
 }
 
-/* Cartes glass */
+/* ───── Cartes “glass” et section Hero teintées ───── */
 .glass{
-  background: var(--glass);
-  backdrop-filter: saturate(130%) blur(10px);
-  border:1px solid rgba(255,255,255,.10);
-  box-shadow: 0 18px 40px rgba(0,0,0,.35);
-  border-radius: 18px;
+  background:
+    linear-gradient(180deg,
+      color-mix(in srgb, var(--accent) 8%, rgba(255,255,255,.06)),
+      color-mix(in srgb, var(--accent) 4%, rgba(255,255,255,.03)));
+  backdrop-filter:saturate(130%) blur(10px);
+  border:1px solid color-mix(in srgb, var(--accent) 25%, transparent);
+  box-shadow:0 18px 40px rgba(0,0,0,.35), inset 0 0 0 1px rgba(255,255,255,.06);
+  border-radius:18px;
 }
 
-/* Section hero au-dessus du journal ET ne pas clipper le dropdown */
 .hero{
   position: relative;
   border-radius: 18px;
   overflow: visible;
-  border:1px solid rgba(255,255,255,.10);
-  background: linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.03));
+  border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
+  background:
+    linear-gradient(180deg,
+      color-mix(in srgb, var(--accent) 10%, rgba(255,255,255,.06)),
+      color-mix(in srgb, var(--accent) 6%, rgba(255,255,255,.03)));
   backdrop-filter: blur(4px);
-  z-index: 20;
+  z-index: 0; /* <- ne recouvre plus le journal */
 }
-
-/* Le journal en dessous du hero */
 .journal-layer{
   position: relative;
-  z-index: 10;
+  z-index: 0;       /* même plan que hero */
+  margin-top: 8px;  /* petit espace pour éviter tout chevauchement visuel */
 }
 
-/* Boutons : garder le texte lisible au survol */
-.btn-ink {
-  color: #fff;                     /* texte toujours blanc */
+/* ───── Tuiles internes (stats, équipe…) ───── */
+.hero .rounded-lg,
+.glass .rounded-lg{
+  background:color-mix(in srgb, var(--accent) 7%, rgba(255,255,255,.06));
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--accent) 28%, transparent),
+    inset 0 0 0 1px rgba(255,255,255,.05);
+  border-radius:12px;
 }
-.btn-ink:hover {
-  filter: brightness(1.08);        /* petit boost, pas “tout bleu” */
+
+/* Progress (teinte déjà clonée par les composants, on garde) */
+.progress-accent{ background:var(--accent); }
+
+/* ───── Overlay “Recherche du jeu…” ───── */
+.boot-overlay{
+  position:fixed; inset:0; z-index:9998;
+  display:flex; align-items:flex-start; justify-content:center;
+  padding-top:22px;
+  background:transparent;
+  cursor:wait; user-select:none; -webkit-user-select:none;
+  touch-action:none; pointer-events:auto;
 }
+.boot-chip{
+  display:flex; align-items:center; gap:14px;
+  padding:10px 16px; border-radius:16px;
+  background:linear-gradient(180deg, rgba(255,255,255,.08), rgba(255,255,255,.03));
+  border:1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  box-shadow:0 12px 40px rgba(0,0,0,.35), inset 0 0 0 1px rgba(255,255,255,.06);
+  backdrop-filter:blur(8px) saturate(150%);
+}
+.boot-runway{ width:180px; height:64px; border-radius:12px; overflow:hidden;
+  border:1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  background:
+    radial-gradient(120% 120% at 0% 0%, rgba(255,255,255,.18), rgba(255,255,255,0) 60%),
+    linear-gradient(90deg, rgba(255,255,255,.06), transparent 30%, transparent 70%, rgba(255,255,255,.06));
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.06);
+}
+.boot-runway img{ width:100%; height:100%; object-fit:contain; image-rendering:pixelated; display:block; background:#0c1222; }
+.boot-label{ display:flex; align-items:center; gap:8px; font-weight:700; letter-spacing:.2px; }
+.boot-dots{ display:inline-flex; gap:5px; margin-left:2px; }
+.boot-dots i{
+  width:6px; height:6px; border-radius:50%;
+  background:color-mix(in srgb, var(--accent) 70%, white);
+  opacity:.35; transform:translateY(0);
+  animation:bootDot 1.4s infinite ease-in-out;
+}
+.boot-dots i:nth-child(2){ animation-delay:.15s; }
+.boot-dots i:nth-child(3){ animation-delay:.3s; }
+@keyframes bootDot{ 0%,100%{opacity:.35; transform:translateY(0);} 50%{opacity:1; transform:translateY(-2px);} }
+

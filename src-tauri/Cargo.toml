@@ -4,16 +4,27 @@ version = "1.0.0"
 edition = "2021"
 
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["protocol-asset"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
-reqwest = { version = "0.12", features = ["blocking", "gzip", "brotli", "deflate", "json"] }
+
+# HTTP + TLS + décompression (blocking)
+reqwest = { version = "0.12", default-features = false, features = [
+  "blocking",
+  "rustls-tls",
+  "gzip",
+  "brotli",
+  "deflate",
+  "json"
+] }
+
 walkdir = "2"
 zip = { version = "0.6", default-features = false, features = ["deflate"] }
 dirs = "5"
+base64 = "0.22"
 
-# >>> plugin de dialogue (v2)
+# Plugin dialog v2 (pour @tauri-apps/plugin-dialog côté front)
 tauri-plugin-dialog = "2"
 
 [build-dependencies]

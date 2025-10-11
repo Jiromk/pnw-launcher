@@ -1,3 +1,31 @@
+// src/types.ts
+export type PokedexInfo = { seen?: number; caught?: number };
+
+export type TeamMember = {
+  code?: number | string;      // 001, "006_31", etc.
+  form?: number | string | null;
+  level?: number;
+  nickname?: string | null;
+  speciesName?: string | null;
+  isShiny?: boolean | null;
+  gender?: 0 | 1 | 2 | undefined; // 0=♂, 1=♀ (si dispo)
+  iconPath?: string | null;
+};
+
+export type PlayerProfile = {
+  name?: string | null;
+  id?: number;
+  rawTrainerId?: number;
+  money?: number;
+  startTime?: number;
+  playTimeSec?: number;
+  gender?: 0 | 1 | 2 | undefined; // 0=♂, 1=♀
+  charset?: string | null;
+  badges?: number;
+  pokedex?: PokedexInfo;
+  team?: TeamMember[];
+};
+
 export type Manifest = {
   version: string;
   downloadUrl?: string;

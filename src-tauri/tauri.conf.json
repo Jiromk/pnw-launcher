@@ -3,25 +3,33 @@
   "productName": "PNW Launcher",
   "version": "1.0.0",
   "identifier": "com.pnw.launcher",
+
   "build": {
     "beforeDevCommand": "vite",
     "beforeBuildCommand": "vite build",
-    "devUrl": "http://localhost:5173"
+    "devUrl": "http://localhost:5173",
+    "frontendDist": "../dist"  
   },
+
   "app": {
     "windows": [
       {
         "title": "Pokémon New World — Launcher",
-        "width": 1100,
-        "height": 700,
-        "resizable": true
+        "width": 1280,
+        "height": 950,
+        "minWidth": 1100,
+        "minHeight": 700,
+        "resizable": true,
+        "center": true
       }
     ],
     "security": {
       "csp": null,
+      "assetProtocol": { "enable": true, "scope": ["**"] },
       "capabilities": ["default"]
     }
   },
+
   "bundle": {
     "active": true,
     "targets": ["nsis"],
