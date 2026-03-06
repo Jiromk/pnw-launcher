@@ -32,6 +32,11 @@ import { ThemeMenu, useTheme, PfpMenu, usePfp } from "./themes";
 const MANIFEST_URL =
   "https://raw.githubusercontent.com/Jiromk/pnw-launcher/main/latest.json";
 
+/** URL du site Pokémon New World (pour l'API pokedex/extradex) */
+const PNW_SITE_URL =
+  import.meta.env.VITE_PNW_SITE_URL ||
+  "https://pokemon-new-world-2-0.onrender.com";
+
 type DlEvent = {
   stage: "download" | "extract" | "paused" | "canceled" | "done" | "reconnect";
   downloaded?: number;
@@ -251,6 +256,14 @@ export default function App() {
   const [profileState, setProfileState] =
     useState<"idle" | "loading" | "ready" | "none" | "error">("idle"); // FIX: generic sur la même ligne
   const [lastSavePath, setLastSavePath] = useState<string | null>(null);
+
+  const [siteDex, setSiteDex] = useState<{
+    pokedexCount: number;
+    extradexCount: number;
+    pokedexUrl: string;
+    extradexUrl: string;
+  } | null>(null);
+  const [siteDexLoading, setSiteDexLoading] = useState(true);
 
   const pollingRef = useRef<number | null>(null);
   const initialCheckDone = useRef(false);
@@ -553,6 +566,29 @@ export default function App() {
     invoke("cmd_cancel_download");
     setShowUpdateNotice(false);
   };
+
+  /* ====== Pokédex du site (API) ====== */
+  useEffect(() => {
+    let cancelled = false;
+    setSiteDexLoading(true);
+    const base = PNW_SITE_URL.replace(/\/$/, "");
+    fetch(`${base}/api/dex`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (cancelled || !d.success) return;
+        setSiteDex({
+          pokedexCount: d.pokedex?.count ?? 0,
+          extradexCount: d.extradex?.count ?? 0,
+          pokedexUrl: `${base}/pokedex`,
+          extradexUrl: `${base}/extradex`,
+        });
+      })
+      .catch(() => setSiteDex(null))
+      .finally(() => {
+        if (!cancelled) setSiteDexLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, []);
 
   /* ====== Initialisation ====== */
   useEffect(() => {
@@ -965,6 +1001,41 @@ export default function App() {
             </div>
           )}
         </Card>
+
+        {(siteDex || siteDexLoading) && (
+          <Card title="Pokédex du site">
+            {siteDexLoading && !siteDex ? (
+              <div className="text-white/60 text-sm">Chargement…</div>
+            ) : siteDex ? (
+              <div className="flex flex-wrap gap-2">
+                <a
+                  href={siteDex.pokedexUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-2 rounded-lg bg-white/8 px-3 py-2 ring-1 ring-white/10 hover:bg-white/12 hover:ring-white/15 transition-colors text-sm"
+                >
+                  <FaBookOpen className="opacity-80" />
+                  <span className="font-semibold">Pokédex</span>
+                  <span className="opacity-80">({siteDex.pokedexCount} créatures)</span>
+                </a>
+                <a
+                  href={siteDex.extradexUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-2 rounded-lg bg-white/8 px-3 py-2 ring-1 ring-white/10 hover:bg-white/12 hover:ring-white/15 transition-colors text-sm"
+                >
+                  <FaBookOpen className="opacity-80" />
+                  <span className="font-semibold">Extradex</span>
+                  <span className="opacity-80">({siteDex.extradexCount} créatures)</span>
+                </a>
+              </div>
+            ) : (
+              <div className="text-white/60 text-sm">
+                Indisponible. Vérifiez que le site est en ligne.
+              </div>
+            )}
+          </Card>
+        )}
 
         <div className="journal-layer">
           <Card title="Journal">
