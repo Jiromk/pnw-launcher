@@ -190,35 +190,36 @@ function IconButton({
   }[size];
   const tones = {
     primary:
-      "bg-gradient-to-br from-blue-500/90 to-indigo-500/90 hover:from-blue-500 hover:to-indigo-500 ring-1 ring-white/10",
-    secondary: "bg-white/10 hover:bg-white/15 ring-1 ring-white/15",
-    ghost: "bg-white/6 hover:bg-white/10 ring-1 ring-white/10",
+      "bg-[color-mix(in_srgb,var(--accent)_90%,white)] hover:bg-[color-mix(in_srgb,var(--accent)_95%,white)] ring-1 ring-white/8 hover:ring-white/12",
+    secondary: "bg-white/8 hover:bg-white/12 ring-1 ring-white/8 hover:ring-white/12",
+    ghost: "bg-white/5 hover:bg-white/10 ring-1 ring-white/6 hover:ring-white/10",
     success:
-      "bg-gradient-to-br from-green-500/90 to-emerald-500/90 hover:from-green-500 hover:to-emerald-500 ring-1 ring-white/10",
+      "bg-[color-mix(in_srgb,#22c55e_90%,white)] hover:bg-[color-mix(in_srgb,#22c55e_95%,white)] ring-1 ring-white/8 hover:ring-white/12",
   };
   return (
     <Button
       className={[
-        "group rounded-xl shadow-[0_8px_25px_-10px_rgba(0,0,0,0.6)] backdrop-blur transition-all active:scale-[0.99]",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/50",
+        "group rounded-xl shadow-[0_2px_12px_-4px_rgba(0,0,0,0.35)] hover:shadow-[0_4px_16px_-4px_rgba(0,0,0,0.45)] backdrop-blur transition-all duration-200 active:scale-[0.99]",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30",
         sizes.pad,
         sizes.gap,
         sizes.text,
         tones[tone],
         className,
       ].join(" ")}
+      style={{ backgroundImage: "none" }}
       {...props}
     >
       <span
         className={[
-          "grid place-items-center rounded-lg bg-white/12 ring-1 ring-white/15 shadow-inner shadow-black/20",
+          "grid place-items-center rounded-lg bg-white/10 ring-1 ring-white/8",
           sizes.iconBox,
           "transition-transform duration-200 group-active:scale-95",
         ].join(" ")}
       >
         <span className={sizes.icon}>{icon}</span>
       </span>
-      <span className="font-medium tracking-wide">{label}</span>
+      <span className="font-medium tracking-wide text-white/95">{label}</span>
     </Button>
   );
 }
@@ -742,7 +743,7 @@ export default function App() {
                     onMouseLeave={() => setOpenFolderMenu(false)}
                   >
                     <button
-                      className="w-full text-left px-3 py-2.5 hover:bg-white/10 rounded-t-xl flex items-center gap-2"
+                      className="w-full text-left px-3 py-2.5 hover:bg-white/8 rounded-t-xl flex items-center gap-2 transition-colors duration-200"
                       onClick={() => {
                         setOpenFolderMenu(false);
                         chooseFolder();
@@ -751,7 +752,7 @@ export default function App() {
                       <FaFolderOpen /> Choisir un dossier…
                     </button>
                     <button
-                      className="w-full text-left px-3 py-2.5 hover:bg-white/10 rounded-b-xl flex items-center gap-2"
+                      className="w-full text-left px-3 py-2.5 hover:bg-white/8 rounded-b-xl flex items-center gap-2 transition-colors duration-200"
                       onClick={() => {
                         setOpenFolderMenu(false);
                         manualDetect();

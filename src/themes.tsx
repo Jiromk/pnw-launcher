@@ -220,9 +220,9 @@ export function ThemeMenu() {
     <div className="relative" ref={wrapRef}>
       <button
         onClick={() => setOpenMenu((v) => !v)}
-        className="group rounded-xl bg-white/6 hover:bg-white/10 ring-1 ring-white/10 px-4 py-2.5 text-sm font-medium inline-flex items-center gap-2 shadow-[0_8px_25px_-10px_rgba(0,0,0,0.6)] backdrop-blur"
+        className="group rounded-xl bg-white/5 hover:bg-white/10 ring-1 ring-white/8 hover:ring-white/12 px-4 py-2.5 text-sm font-medium inline-flex items-center gap-2 backdrop-blur transition-all duration-200"
       >
-        <span className="grid place-items-center w-7 h-7 rounded-lg bg-white/12 ring-1 ring-white/15 shadow-inner shadow-black/20">
+        <span className="grid place-items-center w-7 h-7 rounded-lg bg-white/10 ring-1 ring-white/8">
           <span className="text-[14px]">
             <FaPalette />
           </span>
@@ -250,7 +250,7 @@ export function ThemeMenu() {
               ))}
               <button
                 onClick={() => colorRef.current?.click()}
-                className="px-2 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-xs ring-1 ring-white/15"
+                className="px-2 py-1.5 rounded-lg bg-white/8 hover:bg-white/12 text-xs ring-1 ring-white/8 transition-colors duration-200"
               >
                 Personnalisée…
               </button>
@@ -271,7 +271,7 @@ export function ThemeMenu() {
             <div className="text-xs opacity-80 mb-1">Fond d’écran</div>
             <div className="flex flex-col">
               <button
-                className="w-full text-left px-3 py-2.5 hover:bg-white/10 rounded-lg flex items-center gap-2"
+                className="w-full text-left px-3 py-2.5 hover:bg-white/8 rounded-lg flex items-center gap-2 transition-colors duration-200"
                 onClick={() => {
                   setBgPublic("/background.gif");
                   setOpenMenu(false);
@@ -280,7 +280,7 @@ export function ThemeMenu() {
                 <FaRotateLeft /> Par défaut (background.gif)
               </button>
               <button
-                className="w-full text-left px-3 py-2.5 hover:bg-white/10 rounded-lg flex items-center gap-2"
+                className="w-full text-left px-3 py-2.5 hover:bg-white/8 rounded-lg flex items-center gap-2 transition-colors duration-200"
                 onClick={pickFile}
               >
                 <FaFolderOpen /> Choisir un fichier…
@@ -331,9 +331,9 @@ export function PfpMenu() {
     <div className="relative" ref={wrapRef}>
       <button
         onClick={() => setOpenMenu((v) => !v)}
-        className="group rounded-xl bg-white/6 hover:bg-white/10 ring-1 ring-white/10 px-4 py-2.5 text-sm font-medium inline-flex items-center gap-2 shadow-[0_8px_25px_-10px_rgba(0,0,0,0.6)] backdrop-blur"
+        className="group rounded-xl bg-white/5 hover:bg-white/10 ring-1 ring-white/8 hover:ring-white/12 px-4 py-2.5 text-sm font-medium inline-flex items-center gap-2 backdrop-blur transition-all duration-200"
       >
-        <span className="grid place-items-center w-7 h-7 rounded-lg bg-white/12 ring-1 ring-white/15 shadow-inner shadow-black/20">
+        <span className="grid place-items-center w-7 h-7 rounded-lg bg-white/10 ring-1 ring-white/8">
           <span className="text-[14px]">
             <FaUser />
           </span>
@@ -379,13 +379,13 @@ export function PfpMenu() {
 
           <div className="flex items-center gap-2">
             <button
-              className="flex-1 px-3 py-2 rounded-lg bg-white/10 hover:bg-white/15 text-sm ring-1 ring-white/15 inline-flex items-center gap-2 justify-center"
+              className="flex-1 px-3 py-2 rounded-lg bg-white/8 hover:bg-white/12 text-sm ring-1 ring-white/8 inline-flex items-center gap-2 justify-center transition-colors duration-200"
               onClick={pickFile}
             >
               <FaFolderOpen /> Image locale…
             </button>
             <button
-              className="flex-1 px-3 py-2 rounded-lg bg-white/10 hover:bg-white/15 text-sm ring-1 ring-white/15 inline-flex items-center gap-2 justify-center"
+              className="flex-1 px-3 py-2 rounded-lg bg-white/8 hover:bg-white/12 text-sm ring-1 ring-white/8 inline-flex items-center gap-2 justify-center transition-colors duration-200"
               onClick={() => {
                 clearPfp(); // retour au sprite par défaut (male/female)
                 setOpenMenu(false);

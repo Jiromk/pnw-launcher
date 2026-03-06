@@ -1,18 +1,16 @@
 import React from "react";
 
 /* Bouton générique piloté par la couleur d'accent via CSS var --accent.
-   -> Pas de dégradé "hardcodé" : les parents (ex: IconButton dans App.tsx)
-      peuvent appliquer leur style, et les boutons simples héritent de --accent. */
+   Style sobre et élégant : dégradé discret, ombre légère, transitions douces. */
 export function Button(
   { className = "", children, disabled, style, ...props }:
   React.ButtonHTMLAttributes<HTMLButtonElement>
 ) {
-  // si l'appelant n'a PAS déjà donné un background, on applique le gradient accent
   const finalStyle = {
     backgroundImage:
       style && ("background" in style || "backgroundImage" in style)
         ? (style as any).backgroundImage
-        : "linear-gradient(135deg, var(--accent) 0%, color-mix(in srgb, var(--accent), white 15%) 100%)",
+        : "linear-gradient(180deg, color-mix(in srgb, var(--accent) 95%, white 8%) 0%, var(--accent) 100%)",
     ...style,
   } as React.CSSProperties;
 
@@ -21,8 +19,9 @@ export function Button(
       disabled={disabled}
       className={[
         "inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 select-none",
-        "text-white ring-1 ring-white/10 shadow-[0_8px_25px_-10px_rgba(0,0,0,0.6)]",
-        "active:scale-[0.99] transition-all",
+        "text-white/95 ring-1 ring-white/8 shadow-[0_2px_12px_-4px_rgba(0,0,0,0.4)]",
+        "hover:ring-white/12 hover:shadow-[0_4px_16px_-4px_rgba(0,0,0,0.5)]",
+        "active:scale-[0.99] transition-all duration-200",
         "disabled:opacity-50 disabled:cursor-not-allowed",
         className,
       ].join(" ")}
