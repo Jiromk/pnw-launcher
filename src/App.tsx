@@ -27,15 +27,31 @@ import {
   FaPlus,
 } from "react-icons/fa6";
 import { ThemeMenu, useTheme, PfpMenu, usePfp } from "./themes";
+import Sidebar from "./Sidebar";
+import LoreView from "./views/LoreView";
+import GuideView from "./views/GuideView";
+import PatchNotesView from "./views/PatchNotesView";
+import PokedexView from "./views/PokedexView";
+import ItemLocationView from "./views/ItemLocationView";
+import EVsLocationView from "./views/EVsLocationView";
+import BSTView from "./views/BSTView";
+import NerfsAndBuffsView from "./views/NerfsAndBuffsView";
+import TeamView from "./views/TeamView";
+import ContactView from "./views/ContactView";
 
 /* ==================== Constantes ==================== */
 const MANIFEST_URL =
-  "https://raw.githubusercontent.com/Jiromk/pnw-launcher/main/latest.json";
+  "https://www.pokemonnewworld.fr/api/downloads/manifest";
 
-/** URL du site Pokémon New World (pour l'API pokedex/extradex) */
+/**
+ * URL du site Pokémon New World. Toutes les vues (Lore, Pokédex, Extradex, EVs, BST, etc.)
+ * chargent leurs données via les API du site (ex. /api/lore, /api/pokedex, /api/extradex).
+ * Tout contenu ajouté ou modifié sur le site est donc automatiquement reflété dans le launcher
+ * à chaque chargement de vue (aucun cache de contenu côté launcher).
+ */
 const PNW_SITE_URL =
   import.meta.env.VITE_PNW_SITE_URL ||
-  "https://pokemon-new-world-2-0.onrender.com";
+  "https://www.pokemonnewworld.fr";
 
 type DlEvent = {
   stage: "download" | "extract" | "paused" | "canceled" | "done" | "reconnect";
@@ -229,8 +245,12 @@ function IconButton({
   );
 }
 
+/* ==================== Types de vues ==================== */
+type ViewName = "launcher" | "lore" | "pokedex" | "guide" | "patchnotes" | "items" | "evs" | "bst" | "nerfs" | "team" | "contact";
+
 /* ==================== App ==================== */
 export default function App() {
+  const [activeView, setActiveView] = useState<ViewName>("launcher");
   const [status, setStatus] = useState<UiState>("idle");
   const [progress, setProgress] = useState(0);
   const [eta, setEta] = useState("—");
@@ -256,14 +276,6 @@ export default function App() {
   const [profileState, setProfileState] =
     useState<"idle" | "loading" | "ready" | "none" | "error">("idle"); // FIX: generic sur la même ligne
   const [lastSavePath, setLastSavePath] = useState<string | null>(null);
-
-  const [siteDex, setSiteDex] = useState<{
-    pokedexCount: number;
-    extradexCount: number;
-    pokedexUrl: string;
-    extradexUrl: string;
-  } | null>(null);
-  const [siteDexLoading, setSiteDexLoading] = useState(true);
 
   const pollingRef = useRef<number | null>(null);
   const initialCheckDone = useRef(false);
@@ -567,29 +579,6 @@ export default function App() {
     setShowUpdateNotice(false);
   };
 
-  /* ====== Pokédex du site (API) ====== */
-  useEffect(() => {
-    let cancelled = false;
-    setSiteDexLoading(true);
-    const base = PNW_SITE_URL.replace(/\/$/, "");
-    fetch(`${base}/api/dex`)
-      .then((r) => r.json())
-      .then((d) => {
-        if (cancelled || !d.success) return;
-        setSiteDex({
-          pokedexCount: d.pokedex?.count ?? 0,
-          extradexCount: d.extradex?.count ?? 0,
-          pokedexUrl: `${base}/pokedex`,
-          extradexUrl: `${base}/extradex`,
-        });
-      })
-      .catch(() => setSiteDex(null))
-      .finally(() => {
-        if (!cancelled) setSiteDexLoading(false);
-      });
-    return () => { cancelled = true; };
-  }, []);
-
   /* ====== Initialisation ====== */
   useEffect(() => {
     check();
@@ -659,8 +648,26 @@ export default function App() {
     return <IconButton tone="success" icon={<FaPlay />} label="Jouer" onClick={launchGame} />;
   };
 
+  const siteUrl = PNW_SITE_URL;
+
+  function renderView() {
+    switch (activeView) {
+      case "lore": return <LoreView siteUrl={siteUrl} />;
+      case "guide": return <GuideView siteUrl={siteUrl} onBack={() => setActiveView("launcher")} />;
+      case "patchnotes": return <PatchNotesView siteUrl={siteUrl} />;
+      case "pokedex": return <PokedexView siteUrl={siteUrl} />;
+      case "items": return <ItemLocationView siteUrl={siteUrl} />;
+      case "evs": return <EVsLocationView siteUrl={siteUrl} />;
+      case "bst": return <BSTView siteUrl={siteUrl} onBack={() => setActiveView("launcher")} />;
+      case "nerfs": return <NerfsAndBuffsView siteUrl={siteUrl} onBack={() => setActiveView("launcher")} />;
+      case "team": return <TeamView siteUrl={siteUrl} onBack={() => setActiveView("launcher")} />;
+      case "contact": return <ContactView siteUrl={siteUrl} onBack={() => setActiveView("launcher")} />;
+      default: return null;
+    }
+  }
+
   return (
-    <div className="min-h-screen relative">
+    <div className="min-h-screen relative flex">
       {/* Fond dynamique */}
       <div
         className="fixed inset-0 pointer-events-none"
@@ -673,6 +680,9 @@ export default function App() {
           filter: "saturate(1.05) brightness(0.9)",
         }}
       />
+
+      {/* Sidebar */}
+      <Sidebar siteUrl={siteUrl} activeView={activeView} onNavigate={(v) => setActiveView(v as ViewName)} />
 
       {/* Overlay de scan */}
       {scanning && (
@@ -700,17 +710,29 @@ export default function App() {
         </div>
       )}
 
-      <div className="max-w-[1100px] mx-auto p-6 space-y-6">
-        <header className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
+      {/* Contenu principal */}
+      <main className="flex-1 overflow-y-auto h-screen">
+        {activeView !== "launcher" ? (
+          <div
+            className={
+              activeView === "lore" || activeView === "guide" || activeView === "nerfs" || activeView === "bst" || activeView === "team" || activeView === "contact"
+                ? "w-full max-w-none min-w-0 mx-0 p-0"
+                : "max-w-[1050px] mx-auto p-6"
+            }
+          >
+            {renderView()}
+          </div>
+        ) : (
+      <div className="launcher-home space-y-6 animate-in">
+        <header className="launcher-home-header">
+          <div className="launcher-home-brand">
             <img
               src="/logo.png"
-              alt="logo"
-              className="w-10 h-10 object-contain rounded-md ring-1 ring-white/20 bg-white/5"
+              alt="Pokémon New World Launcher"
+              className="launcher-home-logo"
             />
-            <h1 className="text-2xl font-bold">PNW — Launcher</h1>
           </div>
-          <div className="flex gap-3">
+          <div className="launcher-home-actions">
             <ThemeMenu />
             <PfpMenu />
             <IconButton
@@ -735,18 +757,19 @@ export default function App() {
         </header>
 
         <section className="hero p-6">
-          <div className="flex items-center gap-6">
+          <div className="flex items-center gap-6 flex-wrap">
             <img
               src="/logo.png"
-              alt="logo"
-              className="w-20 h-20 object-contain rounded-xl ring-1 ring-white/10 bg-white/5"
+              alt=""
+              className="w-20 h-20 object-contain rounded-xl ring-1 ring-white/10 bg-white/5 flex-shrink-0"
             />
-            <div className="flex-1">
-              <div>
-                Chemin : <b className="text-white/95">{installDir || "Non défini"}</b>
+            <div className="flex-1 min-w-0 space-y-1">
+              <div className="launcher-hero-line">
+                <span className="text-[var(--muted)]">Chemin</span>{" "}
+                <b className="text-white/95">{installDir || "Non défini"}</b>
               </div>
-              <div>
-                État :{" "}
+              <div className="launcher-hero-line">
+                <span className="text-[var(--muted)]">État</span>{" "}
                 <b>
                   {!hasExe
                     ? "❌ Non installé"
@@ -757,8 +780,14 @@ export default function App() {
                     : "✅ À jour"}
                 </b>
               </div>
-              <div>Version locale : <b>{installedVersion ?? "—"}</b></div>
-              <div>Version distante : <b>{manifest?.version ?? "…"}</b></div>
+              <div className="launcher-hero-line">
+                <span className="text-[var(--muted)]">Version locale</span>{" "}
+                <b>{installedVersion ?? "—"}</b>
+              </div>
+              <div className="launcher-hero-line">
+                <span className="text-[var(--muted)]">Version distante</span>{" "}
+                <b>{manifest?.version ?? "…"}</b>
+              </div>
             </div>
 
             <div className="relative z-40 flex flex-col gap-2">
@@ -843,7 +872,7 @@ export default function App() {
         </section>
 
         {showUpdateNotice && status === "downloading" && (
-          <div className="bg-orange-500/20 border border-orange-500/40 rounded-xl p-4">
+          <div className="launcher-home-update-banner">
             <div className="flex items-center gap-3">
               <FaDownload className="text-orange-400 text-xl" />
               <div className="flex-1">
@@ -1002,41 +1031,6 @@ export default function App() {
           )}
         </Card>
 
-        {(siteDex || siteDexLoading) && (
-          <Card title="Pokédex du site">
-            {siteDexLoading && !siteDex ? (
-              <div className="text-white/60 text-sm">Chargement…</div>
-            ) : siteDex ? (
-              <div className="flex flex-wrap gap-2">
-                <a
-                  href={siteDex.pokedexUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-2 rounded-lg bg-white/8 px-3 py-2 ring-1 ring-white/10 hover:bg-white/12 hover:ring-white/15 transition-colors text-sm"
-                >
-                  <FaBookOpen className="opacity-80" />
-                  <span className="font-semibold">Pokédex</span>
-                  <span className="opacity-80">({siteDex.pokedexCount} créatures)</span>
-                </a>
-                <a
-                  href={siteDex.extradexUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-2 rounded-lg bg-white/8 px-3 py-2 ring-1 ring-white/10 hover:bg-white/12 hover:ring-white/15 transition-colors text-sm"
-                >
-                  <FaBookOpen className="opacity-80" />
-                  <span className="font-semibold">Extradex</span>
-                  <span className="opacity-80">({siteDex.extradexCount} créatures)</span>
-                </a>
-              </div>
-            ) : (
-              <div className="text-white/60 text-sm">
-                Indisponible. Vérifiez que le site est en ligne.
-              </div>
-            )}
-          </Card>
-        )}
-
         <div className="journal-layer">
           <Card title="Journal">
             <div className="text-sm space-y-1 max-h-64 overflow-auto">
@@ -1053,66 +1047,68 @@ export default function App() {
           </Card>
         </div>
       </div>
+        )}
 
-      {/* Modal de choix initial */}
-      <Modal
-        open={showInitialChoice}
-        title="Bienvenue sur PNW Launcher"
-        onCancel={() => setShowInitialChoice(false)}
-        onConfirm={() => {}}
-        confirmLabel=""
-        cancelLabel=""
-      >
-        <div className="text-white/85 text-sm space-y-4">
-          <p className="text-base">Est-ce votre première fois sur Pokémon New World ?</p>
-          
-          <div className="grid grid-cols-2 gap-3 mt-4">
-            <button
-              onClick={handleFirstTimeUser}
-              className="flex flex-col items-center gap-3 p-4 rounded-xl bg-gradient-to-br from-blue-500/20 to-indigo-500/20 hover:from-blue-500/30 hover:to-indigo-500/30 ring-1 ring-white/20 transition-all"
-            >
-              <FaPlus className="text-3xl text-blue-400" />
-              <div>
-                <div className="font-semibold">Première fois</div>
-                <div className="text-xs opacity-75 mt-1">Je n'ai jamais joué</div>
-              </div>
-            </button>
+        {/* Modal de choix initial */}
+        <Modal
+          open={showInitialChoice}
+          title="Bienvenue sur PNW Launcher"
+          onCancel={() => setShowInitialChoice(false)}
+          onConfirm={() => {}}
+          confirmLabel=""
+          cancelLabel=""
+        >
+          <div className="text-white/85 text-sm space-y-4">
+            <p className="text-base">Est-ce votre première fois sur Pokémon New World ?</p>
+            
+            <div className="grid grid-cols-2 gap-3 mt-4">
+              <button
+                onClick={handleFirstTimeUser}
+                className="flex flex-col items-center gap-3 p-4 rounded-xl bg-gradient-to-br from-blue-500/20 to-indigo-500/20 hover:from-blue-500/30 hover:to-indigo-500/30 ring-1 ring-white/20 transition-all"
+              >
+                <FaPlus className="text-3xl text-blue-400" />
+                <div>
+                  <div className="font-semibold">Première fois</div>
+                  <div className="text-xs opacity-75 mt-1">Je n'ai jamais joué</div>
+                </div>
+              </button>
 
-            <button
-              onClick={handleExistingUser}
-              className="flex flex-col items-center gap-3 p-4 rounded-xl bg-gradient-to-br from-green-500/20 to-emerald-500/20 hover:from-green-500/30 hover:to-emerald-500/30 ring-1 ring-white/20 transition-all"
-            >
-              <FaGamepad className="text-3xl text-green-400" />
-              <div>
-                <div className="font-semibold">Déjà installé</div>
-                <div className="text-xs opacity-75 mt-1">J'ai déjà le jeu</div>
-              </div>
-            </button>
+              <button
+                onClick={handleExistingUser}
+                className="flex flex-col items-center gap-3 p-4 rounded-xl bg-gradient-to-br from-green-500/20 to-emerald-500/20 hover:from-green-500/30 hover:to-emerald-500/30 ring-1 ring-white/20 transition-all"
+              >
+                <FaGamepad className="text-3xl text-green-400" />
+                <div>
+                  <div className="font-semibold">Déjà installé</div>
+                  <div className="text-xs opacity-75 mt-1">J'ai déjà le jeu</div>
+                </div>
+              </button>
+            </div>
+
+            <p className="text-xs opacity-60 text-center mt-3">
+              Vous pourrez changer le dossier d'installation plus tard via le menu Dossier
+            </p>
           </div>
+        </Modal>
 
-          <p className="text-xs opacity-60 text-center mt-3">
-            Vous pourrez changer le dossier d'installation plus tard via le menu Dossier
-          </p>
-        </div>
-      </Modal>
-
-      {/* Modal d'installation après échec de détection */}
-      <Modal
-        open={showInstallPrompt}
-        title="Jeu non trouvé"
-        onCancel={() => setShowInstallPrompt(false)}
-        onConfirm={handleInstallConfirm}
-        confirmLabel="Installer maintenant"
-        cancelLabel="Plus tard"
-      >
-        <div className="text-white/85 text-sm space-y-2">
-          <p>Nous n'avons pas trouvé Pokémon New World sur votre ordinateur.</p>
-          <p>
-            Voulez-vous l'installer maintenant ? Le jeu sera installé dans le dossier par défaut
-            (AppData\Local\PNW Launcher).
-          </p>
-        </div>
-      </Modal>
+        {/* Modal d'installation après échec de détection */}
+        <Modal
+          open={showInstallPrompt}
+          title="Jeu non trouvé"
+          onCancel={() => setShowInstallPrompt(false)}
+          onConfirm={handleInstallConfirm}
+          confirmLabel="Installer maintenant"
+          cancelLabel="Plus tard"
+        >
+          <div className="text-white/85 text-sm space-y-2">
+            <p>Nous n'avons pas trouvé Pokémon New World sur votre ordinateur.</p>
+            <p>
+              Voulez-vous l'installer maintenant ? Le jeu sera installé dans le dossier par défaut
+              (AppData\Local\PNW Launcher).
+            </p>
+          </div>
+        </Modal>
+      </main>
     </div>
   );
 }
