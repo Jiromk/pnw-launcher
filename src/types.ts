@@ -1,5 +1,10 @@
 // src/types.ts
-export type PokedexInfo = { seen?: number; caught?: number };
+export type PokedexInfo = {
+  seen?: number;
+  caught?: number;
+  /** IDs des espèces capturées (numéros Pokédex 1-based). Les noms se déduisent via l’API /api/pokedex du site si entrées avec id. */
+  capturedIds?: number[];
+};
 
 export type TeamMember = {
   code?: number | string;      // 001, "006_31", etc.

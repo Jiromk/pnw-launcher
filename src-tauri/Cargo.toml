@@ -27,5 +27,8 @@ base64 = "0.22"
 # Plugin dialog v2 (pour @tauri-apps/plugin-dialog côté front)
 tauri-plugin-dialog = "2"
 
+# Espace disque (vérif avant mise à jour)
+sysinfo = "0.31"
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

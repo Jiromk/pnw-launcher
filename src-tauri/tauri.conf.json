@@ -7,7 +7,7 @@
   "build": {
     "beforeDevCommand": "vite",
     "beforeBuildCommand": "vite build",
-    "devUrl": "http://localhost:5173",
+    "devUrl": "http://localhost:5174",
     "frontendDist": "../dist"  
   },
 
@@ -33,6 +33,17 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
-    "icon": ["icons/icon.ico"]
+    "icon": ["icons/icon.ico"],
+    "windows": {
+      "nsis": {
+        "displayLanguageSelector": false,
+        "installerIcon": "icons/icon.ico",
+        "headerImage": null,
+        "sidebarImage": null,
+        "installMode": "currentUser",
+        "languages": ["French", "English"],
+        "startMenuFolder": "Pokemon New World"
+      }
+    }
   }
 }

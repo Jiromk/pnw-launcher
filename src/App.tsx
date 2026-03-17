@@ -1,6 +1,7 @@
 // src/App.tsx
 import React from "react";
-import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -25,6 +26,8 @@ import {
   FaCircleCheck,
   FaGamepad,
   FaPlus,
+  FaFileImport,
+  FaChevronDown,
 } from "react-icons/fa6";
 import { ThemeMenu, useTheme, PfpMenu, usePfp } from "./themes";
 import Sidebar from "./Sidebar";
@@ -57,6 +60,7 @@ type DlEvent = {
   stage: "download" | "extract" | "paused" | "canceled" | "done" | "reconnect";
   downloaded?: number;
   total?: number;
+  extracted?: number;
   eta_secs?: number | null;
   speed_bps?: number;
 };
@@ -128,6 +132,18 @@ function b64ToBytes(b64: string): Uint8Array {
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i) & 0xff;
   return out;
+}
+
+/** Formate les secondes en "X XXX h YY min" (espaces milliers, unités claires). */
+function formatPlayTime(sec: number): string {
+  const s = Math.max(0, Math.floor(sec));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const hStr = h.toLocaleString("fr-FR");
+  const mStr = m.toString().padStart(2, "0");
+  if (h === 0) return `${mStr} min`;
+  if (m === 0) return `${hStr} h`;
+  return `${hStr} h ${mStr} min`;
 }
 
 /* Sprite joueur (fallback) */
@@ -248,6 +264,57 @@ function IconButton({
 /* ==================== Types de vues ==================== */
 type ViewName = "launcher" | "lore" | "pokedex" | "guide" | "patchnotes" | "items" | "evs" | "bst" | "nerfs" | "team" | "contact";
 
+/* ==================== Dropdown Dossier (portail) ==================== */
+function FolderDropdown({
+  anchorRef,
+  onClose,
+  onChooseFolder,
+  onDetect,
+  onInsertSave,
+}: {
+  anchorRef: React.RefObject<HTMLDivElement | null>;
+  onClose: () => void;
+  onChooseFolder: () => void;
+  onDetect: () => void;
+  onInsertSave: () => void;
+}) {
+  const [pos, setPos] = useState({ top: 0, right: 0 });
+  useEffect(() => {
+    const el = anchorRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    setPos({ top: r.bottom + 8, right: window.innerWidth - r.right });
+  }, [anchorRef]);
+  return (
+    <>
+      <div className="fixed inset-0 z-[9998]" onClick={onClose} />
+      <div
+        className="fixed w-64 rounded-xl bg-black/90 text-white/90 ring-1 ring-white/15 backdrop-blur-xl shadow-2xl z-[9999]"
+        style={{ top: pos.top, right: pos.right }}
+      >
+        <button
+          className="w-full text-left px-3 py-2.5 hover:bg-white/10 rounded-t-xl flex items-center gap-2 transition-colors duration-200"
+          onClick={onChooseFolder}
+        >
+          <FaFolderOpen /> Choisir un dossier…
+        </button>
+        <button
+          className="w-full text-left px-3 py-2.5 hover:bg-white/10 flex items-center gap-2 transition-colors duration-200"
+          onClick={onDetect}
+        >
+          <FaWandMagicSparkles /> Détecter automatiquement
+        </button>
+        <button
+          className="w-full text-left px-3 py-2.5 hover:bg-white/10 rounded-b-xl flex items-center gap-2 transition-colors duration-200"
+          onClick={onInsertSave}
+        >
+          <FaFileImport /> Insérer une save
+        </button>
+      </div>
+    </>
+  );
+}
+
 /* ==================== App ==================== */
 export default function App() {
   const [activeView, setActiveView] = useState<ViewName>("launcher");
@@ -264,6 +331,7 @@ export default function App() {
   const [hasVersion, setHasVersion] = useState(false);
 
   const [openFolderMenu, setOpenFolderMenu] = useState(false);
+  const folderBtnRef = useRef<HTMLDivElement>(null);
   const [scanning, setScanning] = useState(false);
   const [scanText, setScanText] = useState("Recherche du jeu…");
 
@@ -274,8 +342,12 @@ export default function App() {
 
   const [profile, setProfile] = useState<PlayerProfile | null>(null);
   const [profileState, setProfileState] =
-    useState<"idle" | "loading" | "ready" | "none" | "error">("idle"); // FIX: generic sur la même ligne
+    useState<"idle" | "loading" | "ready" | "none" | "error">("idle");
   const [lastSavePath, setLastSavePath] = useState<string | null>(null);
+  const [saveList, setSaveList] = useState<{ path: string; name: string; modified: number; size: number }[]>([]);
+  const [selectedSaveIdx, setSelectedSaveIdx] = useState(0);
+  const [openSaveMenu, setOpenSaveMenu] = useState(false);
+  const saveMenuRef = useRef<HTMLDivElement>(null);
 
   const pollingRef = useRef<number | null>(null);
   const initialCheckDone = useRef(false);
@@ -331,7 +403,15 @@ export default function App() {
         setSpeed(p.speed_bps ? `${fmtBytes(p.speed_bps)}/s` : "—/s");
         return;
       }
-      if (p.stage === "extract") setStatus("extracting");
+      if (p.stage === "extract") {
+        setStatus("extracting");
+        const tot = p.total || 0;
+        const ext = p.extracted || 0;
+        setProgress(tot ? (ext / tot) * 100 : 0);
+        setEta("—");
+        setSpeed("—");
+        return;
+      }
     });
     const un2 = listen<any>("pnw://error", (e) => {
       setStatus("error");
@@ -378,9 +458,26 @@ export default function App() {
     }
   }
   
-  function startInstallOrUpdate(m: Manifest) {
+  async function startInstallOrUpdate(m: Manifest) {
     if (!getZipUrl(m)) {
       setLog((l) => prependUnique(l, "❌ Manifest sans URL"));
+      return;
+    }
+    try {
+      const check = await invoke<{ ok: boolean; message?: string }>("cmd_check_disk_space_for_update", {
+        manifest: m,
+      });
+      if (!check.ok && check.message) {
+        setStatus("ready");
+        setLog((l) => prependUnique(l, `❌ ${check.message}`));
+        autoUpdateStarted.current = false;
+        setShowUpdateNotice(true);
+        return;
+      }
+    } catch (e) {
+      setStatus("ready");
+      setLog((l) => prependUnique(l, `❌ Vérification espace disque : ${String(e)}`));
+      autoUpdateStarted.current = false;
       return;
     }
     setStatus("downloading");
@@ -391,12 +488,21 @@ export default function App() {
   }
 
   /* ====== Profil ====== */
-  async function loadProfile() {
+  async function loadProfile(forceIdx?: number) {
     try {
       setProfileState("loading");
+      const saves = await invoke<{ path: string; name: string; modified: number; size: number }[]>("cmd_list_saves");
+      setSaveList(saves);
+      if (!saves.length) {
+        setProfile(null);
+        setProfileState("none");
+        return;
+      }
+      const idx = forceIdx ?? 0;
+      setSelectedSaveIdx(idx);
       const blob = await invoke<{ path: string; modified: number; bytes_b64: string } | null>(
-        "cmd_latest_save_blob",
-        {}
+        "cmd_get_save_blob",
+        { savePath: saves[idx].path },
       );
       if (!blob) {
         setProfile(null);
@@ -420,6 +526,24 @@ export default function App() {
       setLog((l) => prependUnique(l, `⚠️ Profil: ${String(e)}`));
     }
   }
+
+  async function switchSave(idx: number) {
+    setOpenSaveMenu(false);
+    if (idx === selectedSaveIdx && profileState === "ready") return;
+    setSelectedSaveIdx(idx);
+    await loadProfile(idx);
+  }
+
+  useEffect(() => {
+    if (!openSaveMenu) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (saveMenuRef.current && !saveMenuRef.current.contains(e.target as Node)) {
+        setOpenSaveMenu(false);
+      }
+    };
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, [openSaveMenu]);
 
   /* ====== Check principal amélioré avec choix initial ====== */
   async function check() {
@@ -561,6 +685,23 @@ export default function App() {
     }
   }
   
+  async function insertSave() {
+    try {
+      setOpenFolderMenu(false);
+      const file = await open({
+        title: "Sélectionner un fichier de sauvegarde",
+        multiple: false,
+        filters: [{ name: "Tous les fichiers", extensions: ["*"] }],
+      });
+      if (!file) return;
+      const dest = await invoke<string>("cmd_insert_save", { sourcePath: String(file) });
+      setLog((l) => prependUnique(l, `💾 Save importée : ${dest}`));
+      await loadProfile();
+    } catch (e: any) {
+      setLog((l) => prependUnique(l, `❌ Import save échoué : ${String(e)}`));
+    }
+  }
+
   async function launchGame() {
     try {
       await invoke("cmd_launch_game", {
@@ -757,78 +898,72 @@ export default function App() {
         </header>
 
         <section className="hero p-6">
-          <div className="flex items-center gap-6 flex-wrap">
-            <img
-              src="/logo.png"
-              alt=""
-              className="w-20 h-20 object-contain rounded-xl ring-1 ring-white/10 bg-white/5 flex-shrink-0"
-            />
-            <div className="flex-1 min-w-0 space-y-1">
-              <div className="launcher-hero-line">
-                <span className="text-[var(--muted)]">Chemin</span>{" "}
-                <b className="text-white/95">{installDir || "Non défini"}</b>
+          <div className="flex items-start gap-5 flex-wrap">
+            <div className="relative flex-shrink-0">
+              <img
+                src="/logo.png"
+                alt=""
+                className="w-[72px] h-[72px] object-contain rounded-2xl ring-1 ring-white/15 bg-white/5 shadow-lg"
+              />
+              <div className="absolute -inset-2 -z-10 rounded-3xl bg-[var(--accent)] opacity-10 blur-xl" />
+            </div>
+
+            <div className="flex-1 min-w-0 space-y-2.5">
+              <div className="text-xs text-white/50 font-medium tracking-wider uppercase">Répertoire d'installation</div>
+              <div className="text-sm text-white/85 font-mono bg-white/5 rounded-lg px-3 py-1.5 ring-1 ring-white/8 truncate">
+                {installDir || "Non défini"}
               </div>
-              <div className="launcher-hero-line">
-                <span className="text-[var(--muted)]">État</span>{" "}
-                <b>
-                  {!hasExe
-                    ? "❌ Non installé"
-                    : !hasVersion
-                    ? "⚠️ Fichier .version manquant"
+
+              <div className="flex items-center flex-wrap gap-2 pt-1">
+                <span className={`inline-flex items-center gap-1.5 text-xs font-semibold rounded-full px-3 py-1 ring-1 ${
+                  !hasExe
+                    ? "bg-red-500/15 text-red-300 ring-red-400/30"
                     : needUpdate
-                    ? "⚠️ Mise à jour disponible"
-                    : "✅ À jour"}
-                </b>
-              </div>
-              <div className="launcher-hero-line">
-                <span className="text-[var(--muted)]">Version locale</span>{" "}
-                <b>{installedVersion ?? "—"}</b>
-              </div>
-              <div className="launcher-hero-line">
-                <span className="text-[var(--muted)]">Version distante</span>{" "}
-                <b>{manifest?.version ?? "…"}</b>
+                    ? "bg-amber-500/15 text-amber-300 ring-amber-400/30"
+                    : "bg-emerald-500/15 text-emerald-300 ring-emerald-400/30"
+                }`}>
+                  <span className={`w-1.5 h-1.5 rounded-full ${
+                    !hasExe ? "bg-red-400" : needUpdate ? "bg-amber-400" : "bg-emerald-400"
+                  }`} />
+                  {!hasExe ? "Non installé" : needUpdate ? "Mise à jour disponible" : "À jour"}
+                </span>
+
+                {installedVersion && (
+                  <span className="text-xs text-white/60 bg-white/5 rounded-full px-2.5 py-1 ring-1 ring-white/8">
+                    v{installedVersion}
+                  </span>
+                )}
+                {manifest?.version && installedVersion !== manifest.version && (
+                  <span className="text-xs text-[var(--accent)] bg-[var(--accent)]/10 rounded-full px-2.5 py-1 ring-1 ring-[var(--accent)]/25">
+                    → v{manifest.version}
+                  </span>
+                )}
               </div>
             </div>
 
-            <div className="relative z-40 flex flex-col gap-2">
-              <div className="relative">
+            <div className="flex flex-col gap-2 flex-shrink-0">
+              <div ref={folderBtnRef} className="relative">
                 <IconButton
                   icon={<FaFolderOpen />}
                   label={
                     <span className="inline-flex items-center gap-2">
-                      Dossier <span className="text-white/80">▾</span>
+                      Dossier <span className="text-white/60 text-[10px]">▾</span>
                     </span>
                   }
                   tone="ghost"
                   onClick={() => setOpenFolderMenu((o) => !o)}
                 />
-                {openFolderMenu && (
-                  <div
-                    className="absolute right-0 mt-2 w-64 rounded-xl bg-black/80 text-white/90 ring-1 ring-white/15 backdrop-blur shadow-xl z-[999]"
-                    onMouseLeave={() => setOpenFolderMenu(false)}
-                  >
-                    <button
-                      className="w-full text-left px-3 py-2.5 hover:bg-white/8 rounded-t-xl flex items-center gap-2 transition-colors duration-200"
-                      onClick={() => {
-                        setOpenFolderMenu(false);
-                        chooseFolder();
-                      }}
-                    >
-                      <FaFolderOpen /> Choisir un dossier…
-                    </button>
-                    <button
-                      className="w-full text-left px-3 py-2.5 hover:bg-white/8 rounded-b-xl flex items-center gap-2 transition-colors duration-200"
-                      onClick={() => {
-                        setOpenFolderMenu(false);
-                        manualDetect();
-                      }}
-                    >
-                      <FaWandMagicSparkles /> Détecter automatiquement
-                    </button>
-                  </div>
+                {openFolderMenu && createPortal(
+                  <FolderDropdown
+                    anchorRef={folderBtnRef}
+                    onClose={() => setOpenFolderMenu(false)}
+                    onChooseFolder={() => { setOpenFolderMenu(false); chooseFolder(); }}
+                    onDetect={() => { setOpenFolderMenu(false); manualDetect(); }}
+                    onInsertSave={() => { setOpenFolderMenu(false); insertSave(); }}
+                  />,
+                  document.body,
                 )}
               </div>
-
               {getMainButton()}
             </div>
           </div>
@@ -837,31 +972,27 @@ export default function App() {
             status === "paused" ||
             status === "extracting" ||
             status === "reconnecting") && (
-            <div className="mt-4 space-y-3">
-              <div className="flex items-center justify-between text-sm opacity-80">
-                <div>
-                  {status === "downloading" && "Téléchargement en cours..."}
+            <div className="mt-5 space-y-2.5 pt-4 border-t border-white/8">
+              <div className="flex items-center justify-between text-sm">
+                <div className="font-medium text-white/90">
+                  {status === "downloading" && "Téléchargement en cours…"}
                   {status === "paused" && "En pause"}
-                  {status === "extracting" && "Extraction des fichiers..."}
-                  {status === "reconnecting" && "Reconnexion au serveur..."}
+                  {status === "extracting" && `Extraction… ${Math.round(progress)}%`}
+                  {status === "reconnecting" && "Reconnexion…"}
                 </div>
-                <div>
-                  Temps restant : <b>{eta}</b> • Vitesse : <b>{speed}</b>
+                <div className="text-white/50 text-xs tabular-nums">
+                  {status !== "extracting" && (
+                    <>{eta} restant • {speed}</>
+                  )}
                 </div>
               </div>
               <Progress value={progress} />
-              <div className="flex gap-2">
+              <div className="flex gap-2 pt-1">
                 {status !== "paused" && status !== "extracting" && (
                   <IconButton tone="ghost" size="sm" icon={<FaPause />} label="Pause" onClick={pause} />
                 )}
                 {status === "paused" && (
-                  <IconButton
-                    tone="ghost"
-                    size="sm"
-                    icon={<FaPlay />}
-                    label="Reprendre"
-                    onClick={resume}
-                  />
+                  <IconButton tone="ghost" size="sm" icon={<FaPlay />} label="Reprendre" onClick={resume} />
                 )}
                 {(status === "downloading" || status === "paused" || status === "reconnecting") && (
                   <IconButton tone="ghost" size="sm" icon={<FaStop />} label="Annuler" onClick={cancel} />
@@ -871,19 +1002,43 @@ export default function App() {
           )}
         </section>
 
-        {showUpdateNotice && status === "downloading" && (
-          <div className="launcher-home-update-banner">
-            <div className="flex items-center gap-3">
-              <FaDownload className="text-orange-400 text-xl" />
-              <div className="flex-1">
-                <div className="font-semibold">Mise à jour en cours</div>
-                <div className="text-sm opacity-80">Installation de la version {manifest?.version}...</div>
+        <Card title={
+          <div className="flex items-center justify-between gap-3">
+            <span>Profil joueur</span>
+            {saveList.length > 1 && (
+              <div ref={saveMenuRef} className="relative">
+                <button
+                  type="button"
+                  onClick={() => setOpenSaveMenu((o) => !o)}
+                  className="save-selector-trigger"
+                  aria-expanded={openSaveMenu}
+                  aria-haspopup="listbox"
+                >
+                  <span className="min-w-0 truncate text-white/95">{saveList[selectedSaveIdx]?.name ?? "Save 1"}</span>
+                  <FaChevronDown className={`text-[9px] text-white/55 flex-shrink-0 transition-transform duration-200 ${openSaveMenu ? "rotate-180" : ""}`} />
+                </button>
+                {openSaveMenu && (
+                  <div className="save-selector-dropdown" role="listbox">
+                    {saveList.map((s, i) => (
+                      <button
+                        key={s.path}
+                        type="button"
+                        role="option"
+                        aria-selected={i === selectedSaveIdx}
+                        onClick={() => switchSave(i)}
+                        className={`save-selector-option ${i === selectedSaveIdx ? "save-selector-option--active" : ""}`}
+                      >
+                        <span className="save-selector-option-dot" />
+                        <span>{s.name}</span>
+                        {i === selectedSaveIdx && <FaCircleCheck className="save-selector-option-check" />}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
-            </div>
+            )}
           </div>
-        )}
-
-        <Card title="Profil joueur">
+        }>
           {profileState === "loading" && (
             <div className="text-white/80 text-sm">Lecture de la sauvegarde…</div>
           )}
@@ -896,109 +1051,96 @@ export default function App() {
             <div className="text-white/80 text-sm">Impossible de lire la save (voir Journal).</div>
           )}
           {profileState === "ready" && profile && (
-            <div className="flex flex-col gap-4">
-              <div className="relative overflow-hidden rounded-xl ring-1 ring-white/10 bg-gradient-to-br from-white/5 to-white/2 p-4">
-                <div className="flex items-center gap-4">
-                  <div className="relative">
-                    <div className="w-16 h-16 rounded-xl bg-white/5 ring-1 ring-white/10 grid place-items-center overflow-hidden shadow-inner">
-                      <img
-                        src={pfpUrl ?? playerSpriteUrl(profile)}
-                        className="w-full h-full object-cover"
-                        alt=""
-                      />
-                    </div>
-                    <div className="absolute -inset-1 -z-10 blur-2xl opacity-20 bg-gradient-to-tr from-blue-500 to-indigo-500" />
+            <div className="flex flex-col gap-5">
+              {/* En-tête joueur */}
+              <div className="flex items-center gap-4">
+                <div className="relative flex-shrink-0 profile-avatar-wrap">
+                  <div className="profile-avatar-inner">
+                    <img
+                      src={pfpUrl ?? playerSpriteUrl(profile)}
+                      className="profile-avatar-img"
+                      alt=""
+                    />
                   </div>
-
-                  <div className="min-w-0">
-                    <div className="text-lg font-semibold leading-tight truncate">
-                      {profile.name ?? "—"}
-                    </div>
-                    <div className="mt-1 text-xs">
-                      <span className="inline-flex items-center gap-1 rounded-md bg-white/8 px-2 py-0.5 ring-1 ring-white/10">
-                        <FaIdCard className="opacity-80" />
-                        ID{" "}
-                        <b>
-                          {profile.id != null ? profile.id.toString().padStart(5, "0") : "—"}
-                        </b>
+                  <div className="absolute -inset-3 -z-10 rounded-3xl bg-[var(--accent)] opacity-[0.08] blur-2xl" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="text-xl font-bold leading-tight truncate tracking-tight">
+                    {profile.name ?? "—"}
+                  </div>
+                  <div className="mt-1.5 flex items-center gap-2 flex-wrap">
+                    <span className="inline-flex items-center gap-1.5 text-xs rounded-full bg-white/8 px-2.5 py-1 ring-1 ring-white/10 text-white/75">
+                      <FaIdCard className="text-[10px] opacity-70" />
+                      <span className="font-semibold text-white/90">
+                        {profile.id != null ? profile.id.toString().padStart(5, "0") : "—"}
                       </span>
-                    </div>
+                    </span>
                   </div>
                 </div>
+              </div>
 
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-2 mt-4">
-                  <div className="rounded-lg bg-white/6 ring-1 ring-white/10 p-3">
-                    <div className="text-[11px] uppercase tracking-wide opacity-75 inline-flex items-center gap-1">
-                      <FaCoins /> Argent
-                    </div>
-                    <div className="text-base font-semibold">
-                      {profile.money != null ? `${profile.money}₽` : "—"}
-                    </div>
-                  </div>
-                  <div className="rounded-lg bg-white/6 ring-1 ring-white/10 p-3">
-                    <div className="text-[11px] uppercase tracking-wide opacity-75 inline-flex items-center gap-1">
-                      <FaClock /> Temps
-                    </div>
-                    <div className="text-base font-semibold">
-                      {profile.playTimeSec != null
-                        ? (() => {
-                            const s = profile.playTimeSec | 0;
-                            const m = Math.floor(s / 60);
-                            const r = s % 60;
-                            return `${m.toString().padStart(2, "0")}:${r.toString().padStart(2, "0")}`;
-                          })()
-                        : "—"}
-                    </div>
-                  </div>
-                  <div className="rounded-lg bg-white/6 ring-1 ring-white/10 p-3">
-                    <div className="text-[11px] uppercase tracking-wide opacity-75 inline-flex items-center gap-1">
-                      <FaCalendarDays /> Début
-                    </div>
-                    <div className="text-base font-semibold">
-                      {profile.startTime
-                        ? new Date(
-                            (profile.startTime > 1e11
-                              ? profile.startTime
-                              : (profile.startTime as number) * 1000) as number
-                          ).toLocaleDateString()
-                        : "—"}
-                    </div>
+              {/* Grille de stats */}
+              <div className="grid grid-cols-3 gap-2.5">
+                <div className="stat-tile">
+                  <div className="stat-tile-label"><FaCoins className="text-amber-400/80" /> Argent</div>
+                  <div className="stat-tile-value">{profile.money != null ? `${profile.money.toLocaleString()}₽` : "—"}</div>
+                </div>
+                <div className="stat-tile">
+                  <div className="stat-tile-label"><FaClock className="text-sky-400/80" /> Temps</div>
+                  <div className="stat-tile-value stat-tile-value--time">
+                    {profile.playTimeSec != null
+                      ? formatPlayTime(profile.playTimeSec)
+                      : "—"}
                   </div>
                 </div>
+                <div className="stat-tile">
+                  <div className="stat-tile-label"><FaCalendarDays className="text-violet-400/80" /> Début</div>
+                  <div className="stat-tile-value">
+                    {profile.startTime
+                      ? new Date(
+                          (profile.startTime > 1e11
+                            ? profile.startTime
+                            : (profile.startTime as number) * 1000) as number
+                        ).toLocaleDateString()
+                      : "—"}
+                  </div>
+                </div>
+              </div>
 
-                <div className="mt-3 inline-flex items-center gap-2">
-                  <span className="inline-flex items-center gap-2 text-sm opacity-85">
-                    <FaBookOpen className="opacity-80" />
-                    Pokédex :
+              {/* Pokédex */}
+              <div className="flex items-center gap-3 flex-wrap">
+                <span className="text-xs font-semibold uppercase tracking-wider text-white/50 flex items-center gap-1.5">
+                  <FaBookOpen className="text-[11px]" /> Pokédex
+                </span>
+                <div className="flex gap-2">
+                  <span className="inline-flex items-center gap-1.5 text-xs rounded-lg bg-sky-500/10 px-2.5 py-1.5 ring-1 ring-sky-400/20 text-sky-300">
+                    <FaEye className="text-[10px]" />
+                    <b>{profile.pokedex?.seen ?? "?"}</b> vus
                   </span>
-                  <span className="inline-flex items-center gap-2 rounded-md bg-white/8 px-2 py-1 ring-1 ring-white/10">
-                    <FaEye />
-                    <b>{profile.pokedex?.seen ?? "?"}</b>
-                    <span className="opacity-80 text-xs">vus</span>
-                  </span>
-                  <span className="inline-flex items-center gap-2 rounded-md bg-white/8 px-2 py-1 ring-1 ring-white/10">
-                    <FaCircleCheck />
-                    <b>{profile.pokedex?.caught ?? "?"}</b>
-                    <span className="opacity-80 text-xs">capturés</span>
+                  <span className="inline-flex items-center gap-1.5 text-xs rounded-lg bg-emerald-500/10 px-2.5 py-1.5 ring-1 ring-emerald-400/20 text-emerald-300">
+                    <FaCircleCheck className="text-[10px]" />
+                    <b>{profile.pokedex?.caught ?? "?"}</b> capturés
                   </span>
                 </div>
               </div>
 
+              {/* Équipe */}
               {profile.team?.length ? (
                 <div>
-                  <div className="text-white/80 text-sm mb-2">Équipe</div>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+                  <div className="text-xs font-semibold uppercase tracking-wider text-white/50 mb-2.5 flex items-center gap-1.5">
+                    <FaGamepad className="text-[11px]" /> Équipe
+                  </div>
+                  <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
                     {profile.team.map((m, i) => {
                       const root =
                         lastSavePath ? rootFromSavePath(lastSavePath, installDir) : installDir;
                       const { list } = monIconCandidates(root, m);
-
                       return (
                         <div
                           key={i}
-                          className="flex items-center gap-2 rounded-lg bg-white/5 ring-1 ring-white/10 p-2"
+                          className="team-mon-card group"
                         >
-                          <div className="w-10 h-10 rounded-md bg-black/20 grid place-items-center overflow-hidden">
+                          <div className="team-mon-sprite-wrap">
                             <img
                               src={list[0]}
                               data-srcs={list.slice(1).join("|")}
@@ -1014,12 +1156,12 @@ export default function App() {
                                   im.setAttribute("data-idx", String(idx + 1));
                                 }
                               }}
-                              className="max-w-full max-h-full object-contain"
+                              className="team-mon-sprite"
                               alt=""
                             />
                           </div>
-                          <div className="min-w-0">
-                            <div className="text-sm font-semibold">Nv. {m.level ?? "—"}</div>
+                          <div className="text-[11px] font-bold text-center mt-1.5 text-white/80">
+                            Nv. {m.level ?? "—"}
                           </div>
                         </div>
                       );
@@ -1033,13 +1175,17 @@ export default function App() {
 
         <div className="journal-layer">
           <Card title="Journal">
-            <div className="text-sm space-y-1 max-h-64 overflow-auto">
+            <div className="text-sm space-y-0.5 max-h-52 overflow-auto pnw-scrollbar pr-1">
               {log.length === 0 ? (
-                <div className="text-white/60">Aucun événement pour le moment.</div>
+                <div className="text-white/40 text-xs italic py-2">Aucun événement pour le moment.</div>
               ) : (
                 log.map((l, i) => (
-                  <div key={i} className="text-white/80">
-                    {l}
+                  <div
+                    key={i}
+                    className="flex items-start gap-2 py-1.5 text-white/75 text-[13px] leading-snug border-b border-white/[0.04] last:border-0"
+                  >
+                    <span className="flex-shrink-0 mt-0.5 w-1.5 h-1.5 rounded-full bg-[var(--accent)] opacity-50" />
+                    <span>{l}</span>
                   </div>
                 ))
               )}

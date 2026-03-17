@@ -1,0 +1,160 @@
+import React, { useState, useEffect } from "react";
+import {
+  FaHouse, FaScroll, FaBook, FaBookOpen, FaFileLines,
+  FaLocationDot, FaTable, FaScaleBalanced, FaUsers,
+  FaBars, FaXmark, FaGamepad, FaEnvelope,
+} from "react-icons/fa6";
+
+const ICON_MAP: Record<string, React.ReactNode> = {
+  "fa-house": <FaHouse />,
+  "fa-gamepad": <FaGamepad />,
+  "fa-scroll": <FaScroll />,
+  "fa-book": <FaBook />,
+  "fa-book-open": <FaBookOpen />,
+  "fa-file-lines": <FaFileLines />,
+  "fa-location-dot": <FaLocationDot />,
+  "fa-table": <FaTable />,
+  "fa-scale-balanced": <FaScaleBalanced />,
+  "fa-users": <FaUsers />,
+};
+
+const VIEW_MAP: Record<string, string> = {
+  accueil: "launcher",
+  lore: "lore",
+  pokedex: "pokedex",
+  guide: "guide",
+  patchnotes: "patchnotes",
+  items: "items",
+  evs: "evs",
+  bst: "bst",
+  nerfs: "nerfs",
+  equipe: "team",
+};
+
+interface SidebarItem {
+  id: string;
+  label: string;
+  icon: string;
+  to: string;
+  highlight?: boolean;
+}
+
+interface SidebarProps {
+  siteUrl: string;
+  activeView: string;
+  onNavigate: (view: string) => void;
+}
+
+const DEFAULT_ITEMS: SidebarItem[] = [
+  { id: "accueil", label: "Launcher", icon: "fa-gamepad", to: "/" },
+  { id: "lore", label: "Le Lore", icon: "fa-scroll", to: "/lore", highlight: true },
+  { id: "pokedex", label: "Pokedex", icon: "fa-book", to: "/pokedex" },
+  { id: "guide", label: "Guide", icon: "fa-book-open", to: "/guide" },
+  { id: "patchnotes", label: "PatchNotes", icon: "fa-file-lines", to: "/patchnotes" },
+  { id: "items", label: "Items locations", icon: "fa-location-dot", to: "/item-location" },
+  { id: "evs", label: "EVs locations", icon: "fa-location-dot", to: "/evs-location" },
+  { id: "bst", label: "All BST + Abilities", icon: "fa-table", to: "/bst" },
+  { id: "nerfs", label: "Nerfs and buffs", icon: "fa-scale-balanced", to: "/nerfs-and-buffs" },
+  { id: "equipe", label: "L'équipe", icon: "fa-users", to: "/equipe" },
+];
+
+export default function Sidebar({ siteUrl, activeView, onNavigate }: SidebarProps) {
+  const [items, setItems] = useState<SidebarItem[]>(DEFAULT_ITEMS);
+  const [bgUrl, setBgUrl] = useState("");
+  const [collapsed, setCollapsed] = useState(true);
+
+  useEffect(() => {
+    const base = siteUrl.replace(/\/$/, "");
+    fetch(`${base}/api/config/sidebar?t=${Date.now()}`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (d?.success && d?.config) {
+          const cfg = d.config;
+          if (Array.isArray(cfg.items) && cfg.items.length) {
+            const siteItems = cfg.items as SidebarItem[];
+            const launcherItem: SidebarItem = { id: "accueil", label: "Launcher", icon: "fa-gamepad", to: "/" };
+            setItems([launcherItem, ...siteItems.filter((i) => i.id !== "accueil")]);
+          }
+          if (typeof cfg.backgroundImage === "string" && cfg.backgroundImage.trim()) {
+            setBgUrl(cfg.backgroundImage.trim());
+          }
+        }
+      })
+      .catch(() => {});
+  }, [siteUrl]);
+
+  const innerBg = bgUrl
+    ? `linear-gradient(180deg, rgba(8,14,28,.85) 0%, rgba(5,9,20,.92) 100%), url(${bgUrl})`
+    : undefined;
+
+  return (
+    <>
+      {collapsed && (
+        <button
+          className="pnw-sidebar-toggle"
+          onClick={() => setCollapsed(false)}
+          aria-label="Ouvrir le menu"
+        >
+          <FaBars />
+        </button>
+      )}
+
+      <aside
+        className={`pnw-sidebar ${collapsed ? "pnw-sidebar--collapsed" : ""}`}
+        style={innerBg ? { backgroundImage: innerBg, backgroundSize: "cover", backgroundPosition: "center" } : undefined}
+      >
+        {/* Header with centered logo */}
+        <div className="pnw-sidebar-header">
+          <img src="/logo.png" alt="Pokémon New World" className="pnw-sidebar-logo" />
+          <button
+            className="pnw-sidebar-close"
+            onClick={() => setCollapsed(true)}
+            aria-label="Fermer le menu"
+          >
+            <FaXmark />
+          </button>
+        </div>
+
+        {/* Navigation */}
+        <nav className="pnw-sidebar-nav">
+          {items.map((item) => {
+            const viewName = VIEW_MAP[item.id] || "launcher";
+            const isActive = activeView === viewName;
+            const icon = ICON_MAP[item.icon] || <FaHouse />;
+            const isLore = item.highlight;
+            return (
+              <button
+                key={item.id}
+                onClick={() => onNavigate(viewName)}
+                className={[
+                  "pnw-sidebar-link",
+                  isActive && "pnw-sidebar-link--active",
+                  isLore && "pnw-sidebar-link--lore",
+                ].filter(Boolean).join(" ")}
+                title={item.label}
+              >
+                <span className={`pnw-sidebar-link-icon${isLore ? " pnw-sidebar-link-icon--lore" : ""}`}>
+                  {icon}
+                </span>
+                <span>{item.label}</span>
+              </button>
+            );
+          })}
+        </nav>
+
+        {/* Contact button at bottom */}
+        <div className="pnw-sidebar-contact-wrap">
+          <button
+            type="button"
+            onClick={() => onNavigate("contact")}
+            className="pnw-sidebar-contact-btn"
+            title="Contacter l'équipe"
+          >
+            <FaEnvelope />
+            <span>Contacter l'équipe</span>
+          </button>
+        </div>
+      </aside>
+    </>
+  );
+}

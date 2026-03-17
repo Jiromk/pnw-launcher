@@ -1,0 +1,69 @@
+[
+  {
+    "id": "pokedex",
+    "label": "Pokedex",
+    "type": "wiki",
+    "icon": "book",
+    "htmlUrl": "https://pokemon-new-world-fr.fandom.com/fr/wiki/Pok%C3%A9dex",
+    "viewUrl": "https://pokemon-new-world-fr.fandom.com/fr/wiki/Pok%C3%A9dex",
+    "selector": ".table-wide-inner > table",
+    "inlineImages": false,
+    "cacheKey": "pokedex-html",
+    "logLabel": "Pokedex"
+  },
+  {
+    "id": "guide",
+    "label": "Guide",
+    "type": "doc",
+    "icon": "guide",
+    "embedUrl": "https://docs.google.com/document/d/e/2PACX-1vQxFx11o1fDxQh8JWHTOISlnr3jknccVYRDNdc4NE61tBj_bT81XDea59VUFFvGxgC7vGuD6VR8DsyY/pub",
+    "viewUrl": "https://docs.google.com/document/d/1Gz6UbtzVkEEhEoHuIUQCPzSxFrSJVxRV01yF1p5XifM/edit?hl=fr&tab=t.0",
+    "logLabel": "Guide Pokémon New World"
+  },
+  {
+    "id": "patchnotes",
+    "label": "PatchNotes",
+    "type": "doc",
+    "icon": "notes",
+    "embedUrl": "https://docs.google.com/document/d/e/2PACX-1vTPySatz9HlJcOxs91OimfsnrGGq5uiyESgottxrXHNF1KdA8HMkYHgtm86yUDXRo987GftT1muHG6m/pub",
+    "viewUrl": "https://docs.google.com/document/d/1YEFGeePNZBo0K5cMt3Sm5jPX6LB6Qohsp7xQEBSFjPg/edit?usp=sharing",
+    "logLabel": "PatchNotes"
+  },
+  {
+    "id": "items",
+    "label": "Items locations",
+    "type": "doc",
+    "icon": "location",
+    "embedUrl": "https://docs.google.com/document/d/e/2PACX-1vTzi9sJ3rz3fvy3PgHluaBWidQvk4YW3InjzvSdMdaX295mgShXdF4_xa92UEhx01t5Dq-OxFgabT3o/pub?embedded=true",
+    "viewUrl": "https://docs.google.com/document/d/1mJHIZtqVmZwFmAon_Boiww6XDtPkCJ5jZCKu8akgFD8/edit?usp=sharing",
+    "logLabel": "Items locations"
+  },
+  {
+    "id": "evs",
+    "label": "EVs locations",
+    "type": "doc",
+    "icon": "location",
+    "embedUrl": "https://docs.google.com/document/d/e/2PACX-1vSOO4d9VXWslMQv4KwMkXDQWcWAXp_OSW9B-kb76SkKpnJk-a4B88zkiO4sT2_WibAXfCBYWz1Bw4MA/pub",
+    "viewUrl": "https://docs.google.com/document/d/1vu9gY_-1-L6RaQ5ZHW1UUFUtJoWdTVub7Nek26I__mc/edit?usp=sharing",
+    "logLabel": "EVs locations"
+  },
+  {
+    "id": "all-bst",
+    "label": "All BST + new Abilities",
+    "type": "sheet",
+    "icon": "table",
+    "embedUrl": "https://docs.google.com/spreadsheets/d/e/2PACX-1vS90IWwXZpEG2ZhospH0cGB5ZM0hsJSU_DGdNxaIzid2BiKcNFP4yP23aDAVG1_ccfkYu-7SUMkVxJi/pubhtml",
+    "viewUrl": "https://docs.google.com/spreadsheets/d/1_Mg2_oYeVRMvT4OT0gekhFeXLWmvKx_4gDbV4pUemuI/edit?gid=0#gid=0",
+    "logLabel": "All BST + new Abilities"
+  },
+  {
+    "id": "nerfs",
+    "label": "Nerfs and buffs",
+    "type": "doc",
+    "icon": "scale",
+    "embedUrl": "https://docs.google.com/document/d/e/2PACX-1vQn-k7yDJCUV8s2i8CXIAKGAc6T1MPKLTxfsxb4gU-a6FkbNCR_i31_oml95B43wH-jrR7C0RwsN2NB/pub",
+    "viewUrl": "https://docs.google.com/document/d/12Gcl8yYEEsPv9FN_2Dj2AzUG55VM3-iYbRQ5q1xhETk/edit?usp=sharing",
+    "logLabel": "Nerfs and buffs"
+  }
+]
+

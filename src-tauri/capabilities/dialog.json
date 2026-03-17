@@ -1,0 +1,14 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "identifier": "dialog:default",
+  "description": "Permissions for @tauri-apps/plugin-dialog",
+  "windows": ["*"],
+  "macOS": ["*"],
+  "linux": ["*"],
+  "permissions": [
+    "dialog:allow-open",
+    "dialog:allow-save",
+    "dialog:allow-message",
+    "dialog:allow-ask"
+  ]
+}

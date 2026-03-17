@@ -8,8 +8,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:dev": "cross-env CARGO_TARGET_DIR=target tauri dev",
+    "tauri:build": "cross-env CARGO_TARGET_DIR=target tauri build"
   },
   "dependencies": {
     "@hyrious/marshal": "^0.3.3",
@@ -21,6 +21,7 @@
     "react-icons": "^5.5.0"
   },
   "devDependencies": {
+    "cross-env": "^7.0.3",
     "@tauri-apps/cli": "^2.8.4",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
