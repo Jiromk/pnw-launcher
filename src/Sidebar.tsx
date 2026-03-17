@@ -43,6 +43,8 @@ interface SidebarProps {
   siteUrl: string;
   activeView: string;
   onNavigate: (view: string) => void;
+  /** URL d'image de fond de la sidebar (depuis le manifest du site). Prioritaire sur config/sidebar. */
+  sidebarImageUrl?: string;
 }
 
 const DEFAULT_ITEMS: SidebarItem[] = [
@@ -58,7 +60,7 @@ const DEFAULT_ITEMS: SidebarItem[] = [
   { id: "equipe", label: "L'équipe", icon: "fa-users", to: "/equipe" },
 ];
 
-export default function Sidebar({ siteUrl, activeView, onNavigate }: SidebarProps) {
+export default function Sidebar({ siteUrl, activeView, onNavigate, sidebarImageUrl }: SidebarProps) {
   const [items, setItems] = useState<SidebarItem[]>(DEFAULT_ITEMS);
   const [bgUrl, setBgUrl] = useState("");
   const [collapsed, setCollapsed] = useState(true);
@@ -80,11 +82,14 @@ export default function Sidebar({ siteUrl, activeView, onNavigate }: SidebarProp
           }
         }
       })
-      .catch(() => {});
+      .catch((e) => {
+        console.warn("[PNW] Sidebar config:", e);
+      });
   }, [siteUrl]);
 
-  const innerBg = bgUrl
-    ? `linear-gradient(180deg, rgba(8,14,28,.85) 0%, rgba(5,9,20,.92) 100%), url(${bgUrl})`
+  const resolvedBgUrl = (sidebarImageUrl && sidebarImageUrl.trim()) ? sidebarImageUrl.trim() : bgUrl;
+  const innerBg = resolvedBgUrl
+    ? `linear-gradient(180deg, rgba(8,14,28,.85) 0%, rgba(5,9,20,.92) 100%), url(${resolvedBgUrl})`
     : undefined;
 
   return (

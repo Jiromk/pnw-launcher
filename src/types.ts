@@ -47,4 +47,6 @@ export type Manifest = {
   integrity?: any;
   /** URL du background du launcher (définie depuis le site). */
   launcherBackgroundUrl?: string;
-};
+  /** URL de l'image de fond de la barre latérale du launcher (définie depuis le site). */
+  launcherSidebarImageUrl?: string;
+}

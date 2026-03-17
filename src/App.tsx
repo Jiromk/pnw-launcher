@@ -16,6 +16,7 @@ import {
   FaStop,
   FaRotateRight,
   FaIdCard,
+  FaUser,
   FaCoins,
   FaCalendarDays,
   FaClock,
@@ -23,6 +24,7 @@ import {
   FaEye,
   FaCircleCheck,
   FaGamepad,
+  FaCrown,
   FaPlus,
   FaFileImport,
   FaChevronDown,
@@ -109,6 +111,18 @@ function fmtTime(s?: number | null) {
 }
 function prependUnique(list: string[], line: string) {
   return list[0] === line ? list : [line, ...list];
+}
+
+/** Transforme un message d'erreur backend en message clair pour l'utilisateur. */
+function formatErrorForUser(err: string | undefined): string {
+  if (!err) return "Une erreur est survenue.";
+  const e = err.toLowerCase();
+  if (e.includes("404") || e.includes("not found")) return "Fichier ou page introuvable (404). Réessayez plus tard.";
+  if (e.includes("échec réseau") || e.includes("connection") || e.includes("failed to fetch") || e.includes("network") || e.includes("refused") || e.includes("timed out") || e.includes("timeout")) return "Connexion impossible (réseau ou serveur injoignable).";
+  if (e.includes("extraction") || e.includes("archive") || e.includes("zip") || e.includes("corromp")) return "Erreur d'extraction ou archive corrompue. Relancez la mise à jour.";
+  if (e.includes("annulé") || e.includes("cancel")) return "Téléchargement annulé.";
+  if (e.includes("espace") || e.includes("disk") || e.includes("space")) return "Espace disque insuffisant.";
+  return err;
 }
 
 /* ===== Helpers chemins + sprites/ico ===== */
@@ -340,6 +354,7 @@ export default function App() {
   const folderBtnRef = useRef<HTMLDivElement>(null);
   const [scanning, setScanning] = useState(false);
   const [scanText, setScanText] = useState("Recherche du jeu…");
+  const [isOffline, setIsOffline] = useState(false);
 
   // Modals
   const [showInitialChoice, setShowInitialChoice] = useState(false);
@@ -421,7 +436,8 @@ export default function App() {
     });
     const un2 = listen<any>("pnw://error", (e) => {
       setStatus("error");
-      setLog((l) => prependUnique(l, `❌ Erreur: ${e.payload?.error}`));
+      const msg = formatErrorForUser(e.payload?.error);
+      setLog((l) => prependUnique(l, `❌ ${msg}`));
     });
     return () => {
       un1.then((f) => f());
@@ -430,11 +446,20 @@ export default function App() {
   }, [manifest]);
 
   /* ====== Backend helpers ====== */
-  async function fetchManifest() {
-    const m = await invoke<Manifest>("cmd_fetch_manifest", { manifestUrl: MANIFEST_URL });
-    setManifest(m);
-    if (m?.launcherBackgroundUrl) setBgPublic(m.launcherBackgroundUrl);
-    return m;
+  async function fetchManifest(): Promise<Manifest | null> {
+    try {
+      const m = await invoke<Manifest>("cmd_fetch_manifest", { manifestUrl: MANIFEST_URL });
+      setManifest(m);
+      if (m?.launcherBackgroundUrl) setBgPublic(m.launcherBackgroundUrl);
+      setIsOffline(false);
+      return m;
+    } catch (err: any) {
+      const str = String(err ?? "");
+      if (!navigator.onLine || /connection|fetch|network|refused|timed out|timeout/i.test(str)) {
+        setIsOffline(true);
+      }
+      throw err;
+    }
   }
   
   async function readInstallInfo() {
@@ -560,16 +585,37 @@ export default function App() {
       kind: "menu",
       startTimestampSecs: undefined,
       details: details ?? undefined,
-    }).catch(() => {});
+    }).catch((e) => {
+      console.warn("[PNW] Discord Rich Presence:", e);
+    });
   }, [activeView, profileState, profile]);
 
   /* ====== Check principal amélioré avec choix initial ====== */
   async function check() {
     try {
       setStatus("checking");
-      const [m, info] = await Promise.all([fetchManifest(), readInstallInfo()]);
-
+      const info = await readInstallInfo();
       const isInstalled = info.hasExe === true;
+
+      let m: Manifest | null = null;
+      try {
+        m = await fetchManifest();
+      } catch (e: any) {
+        const errStr = String(e ?? "");
+        const networkError = !navigator.onLine || /connection|fetch|network|refused|timed out|timeout/i.test(errStr);
+        const msg = formatErrorForUser(errStr);
+        setLog((l) => prependUnique(l, `❌ ${msg}`));
+        if (networkError) {
+          setIsOffline(true);
+          setStatus("ready");
+          if (isInstalled) {
+            setLog((l) => prependUnique(l, "📴 Mode hors-ligne : vous pouvez lancer le jeu."));
+          }
+          return;
+        }
+        setStatus("error");
+        return;
+      }
 
       if (!isInstalled && !initialCheckDone.current) {
         setStatus("ready");
@@ -581,7 +627,7 @@ export default function App() {
       processInstallStatus(m, info, isInstalled);
     } catch (e: any) {
       setStatus("error");
-      setLog((l) => prependUnique(l, `❌ Erreur check: ${String(e)}`));
+      setLog((l) => prependUnique(l, `❌ ${formatErrorForUser(String(e))}`));
     }
   }
 
@@ -738,6 +784,13 @@ export default function App() {
     setShowUpdateNotice(false);
   };
 
+  /* ====== Détection connexion (online/offline) ====== */
+  useEffect(() => {
+    const onOnline = () => setIsOffline(false);
+    window.addEventListener("online", onOnline);
+    return () => window.removeEventListener("online", onOnline);
+  }, []);
+
   /* ====== Initialisation ====== */
   useEffect(() => {
     check();
@@ -841,7 +894,7 @@ export default function App() {
       />
 
       {/* Sidebar */}
-      <Sidebar siteUrl={siteUrl} activeView={activeView} onNavigate={(v) => setActiveView(v as ViewName)} />
+      <Sidebar siteUrl={siteUrl} activeView={activeView} onNavigate={(v) => setActiveView(v as ViewName)} sidebarImageUrl={manifest?.launcherSidebarImageUrl} />
 
       {/* Overlay de scan */}
       {scanning && (
@@ -883,6 +936,13 @@ export default function App() {
           </div>
         ) : (
       <div className="launcher-home space-y-6 animate-in">
+        {/* Bannière mode hors-ligne */}
+        {isOffline && (
+          <div className="mx-4 mt-2 rounded-xl bg-amber-500/15 border border-amber-400/30 px-4 py-2.5 flex items-center gap-2 text-amber-200 text-sm">
+            <span className="font-semibold">📴 Pas de connexion</span>
+            <span>— Vous pouvez lancer le jeu si déjà installé.</span>
+          </div>
+        )}
         <header className="launcher-home-header">
           <div className="launcher-home-brand">
             <img
@@ -1014,7 +1074,10 @@ export default function App() {
 
         <Card title={
           <div className="flex items-center justify-between gap-3">
-            <span>Profil joueur</span>
+            <span className="flex items-center gap-2">
+              <FaUser className="text-[14px] text-[var(--accent)] opacity-90" />
+              Profil joueur
+            </span>
             {saveList.length > 1 && (
               <div ref={saveMenuRef} className="relative">
                 <button
@@ -1179,6 +1242,29 @@ export default function App() {
                   </div>
                 </div>
               ) : null}
+
+              {/* Boss (badges) — juste en-dessous de l'équipe */}
+              <div className="boss-section mt-4">
+                <div className="text-xs font-semibold uppercase tracking-wider text-white/50 mb-3 flex items-center gap-2">
+                  <FaCrown className="text-amber-400/90 text-[12px]" />
+                  Boss
+                </div>
+                <div className="boss-badges-row">
+                  {[1, 2, 3, 4, 5, 6, 7, 8].map((n) => {
+                    const obtained = (profile.badges ?? 0) >= n;
+                    return (
+                      <div
+                        key={n}
+                        className={`boss-badge ${obtained ? "boss-badge--obtained" : ""}`}
+                        title={obtained ? `Boss ${n} vaincu` : `Boss ${n}`}
+                      >
+                        <span className="boss-badge-id">B{n}</span>
+                        <span className="boss-badge-label">Boss {n}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
             </div>
           )}
         </Card>
