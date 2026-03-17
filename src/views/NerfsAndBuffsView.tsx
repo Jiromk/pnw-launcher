@@ -61,7 +61,7 @@ interface NerfBuffEntry {
   typeFrom?: string;
   typeTo?: string;
   stats?: Record<string, number[] | number>;
-  talents?: { from: string; to: string }[];
+  talents?: { from: string; to: string; desc?: string }[];
   movepool?: string;
 }
 
@@ -278,6 +278,9 @@ function NerfBuffModal({
                     </div>
                   ) : (
                     <div className="bst-modal-talent-name">{t.to}</div>
+                  )}
+                  {t.desc && t.desc.trim() && (
+                    <div className="bst-modal-talent-desc">{t.desc}</div>
                   )}
                 </div>
               ))}
