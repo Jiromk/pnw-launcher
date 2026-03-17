@@ -37,6 +37,8 @@ struct Manifest {
     url: String,
     #[serde(default, rename = "downloadUrl")]
     download_url: String,
+    #[serde(default, rename = "launcherBackgroundUrl")]
+    launcher_background_url: Option<String>,
 }
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 struct Config {
@@ -91,6 +93,7 @@ struct AppState {
 /* ============== Constantes ============== */
 const DISCORD_APP_ID: u64 = 1483296386228289738;
 const PNW_SITE_URL: &str = "https://www.pokemonnewworld.fr";
+const PNW_DOWNLOAD_PAGE_URL: &str = "https://www.pokemonnewworld.fr/telechargement";
 const DISCORD_INVITE_URL: &str = "https://discord.gg/w5dfYbDNaq";
 const APP_DIR_NAME: &str = "PNW Launcher";
 const TMP_ZIP_NAME: &str = "pnw_tmp.zip";
@@ -924,7 +927,7 @@ fn discord_build_activity(
     let mut act = Activity::new()
         .state(state_label)
         .assets(|a| a.large_image(large_image_key).large_text(state_label))
-        .append_buttons(|b| b.label("Télécharger le jeu").url(PNW_SITE_URL))
+        .append_buttons(|b| b.label("Télécharger le jeu").url(PNW_DOWNLOAD_PAGE_URL))
         .append_buttons(|b| b.label("Rejoindre le Discord").url(DISCORD_INVITE_URL));
     act.name = Some("Pokemon New World".to_string());
     if let Some(d) = details {
