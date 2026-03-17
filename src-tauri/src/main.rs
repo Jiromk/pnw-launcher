@@ -19,6 +19,8 @@ use reqwest::header::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use discord_presence::models::rich_presence::{Activity, ActivityTimestamps};
+use discord_presence::Client as DiscordClient;
 use tauri::Emitter; // pour app.emit(...)
 use tauri::{AppHandle, State};
 use walkdir::WalkDir;
@@ -83,9 +85,13 @@ struct DlInner {
 }
 struct AppState {
     dl: Arc<Mutex<DlInner>>,
+    discord: Arc<Mutex<DiscordClient>>,
 }
 
 /* ============== Constantes ============== */
+const DISCORD_APP_ID: u64 = 1483296386228289738;
+const PNW_SITE_URL: &str = "https://www.pokemonnewworld.fr";
+const DISCORD_INVITE_URL: &str = "https://discord.gg/w5dfYbDNaq";
 const APP_DIR_NAME: &str = "PNW Launcher";
 const TMP_ZIP_NAME: &str = "pnw_tmp.zip";
 const EXACT_EXE_NAMES: [&str; 4] = [
@@ -900,12 +906,95 @@ fn cmd_cancel_download(state: State<AppState>) -> Result<(), String> {
     Ok(())
 }
 
+/* ============== Discord Rich Presence ============== */
+/// kind: "menu" | "game" | "map" | "battle"
+/// start_timestamp_secs: optionnel, pour afficher "Jouer depuis X" (temps de jeu)
+/// details: optionnel, 2e ligne (ex. "Sacha • #01234 | Pokédex: 42 vus, 38 capturés | 12 h 30")
+fn discord_build_activity(
+    kind: &str,
+    start_timestamp_secs: Option<u64>,
+    details: Option<&str>,
+) -> Activity {
+    let (state_label, large_image_key) = match kind {
+        "game" => ("En jeu", "pp1"),
+        "map" => ("Sur la carte", "carte"),
+        "battle" => ("En combat", "pp1"),
+        _ => ("Dans le menu", "logo_2_0"),
+    };
+    let mut act = Activity::new()
+        .state(state_label)
+        .assets(|a| a.large_image(large_image_key).large_text(state_label))
+        .append_buttons(|b| b.label("Télécharger le jeu").url(PNW_SITE_URL))
+        .append_buttons(|b| b.label("Rejoindre le Discord").url(DISCORD_INVITE_URL));
+    act.name = Some("Pokemon New World".to_string());
+    if let Some(d) = details {
+        act.details = Some(d.to_string());
+    }
+    if let Some(ts) = start_timestamp_secs {
+        act.timestamps = Some(ActivityTimestamps::new().start(ts));
+    }
+    act
+}
+
+fn discord_set_presence(
+    client: &mut DiscordClient,
+    kind: &str,
+    start_timestamp_secs: Option<u64>,
+    details: Option<&str>,
+) -> Result<(), String> {
+    let activity = discord_build_activity(kind, start_timestamp_secs, details);
+    client.set_activity(|_| activity).map_err(errs).map(|_| ())
+}
+
 #[tauri::command]
-fn cmd_launch_game(_exe_name: String) -> Result<(), String> {
+fn cmd_discord_set_presence(
+    state: State<AppState>,
+    kind: String,
+    start_timestamp_secs: Option<u64>,
+    details: Option<String>,
+) -> Result<(), String> {
+    if let Ok(mut client) = state.discord.lock() {
+        discord_set_presence(
+            &mut *client,
+            &kind,
+            start_timestamp_secs,
+            details.as_deref(),
+        )?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn cmd_launch_game(
+    app: AppHandle,
+    state: State<AppState>,
+    _exe_name: String,
+) -> Result<(), String> {
     let dir = current_install_dir().ok_or_else(|| "Dossier du jeu non défini".to_string())?;
     let exe =
         find_game_exe_in_dir(&dir, 2).ok_or_else(|| "Exécutable PNW introuvable".to_string())?;
     #[cfg(target_os = "windows")]
+    {
+        use std::process::Command;
+        let mut child = Command::new(&exe).current_dir(&dir).spawn().map_err(errs)?;
+        let discord = state.discord.clone();
+        let app_handle = app.clone();
+        thread::spawn(move || {
+            let _ = child.wait();
+            if let Ok(mut client) = discord.lock() {
+                let _ = discord_set_presence(&mut *client, "menu", None, None);
+            }
+            let _ = app_handle.emit("pnw://game-exited", ());
+        });
+        let start_ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        if let Ok(mut client) = state.discord.lock() {
+            let _ = discord_set_presence(&mut *client, "game", Some(start_ts), None);
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
     {
         use std::process::Command;
         Command::new(&exe).current_dir(&dir).spawn().map_err(errs)?;
@@ -993,6 +1082,24 @@ fn all_saves_in_dir(game_dir: &Path) -> Vec<(PathBuf, std::fs::Metadata)> {
     });
     saves
 }
+/// Parse un nom de save "BaseName-123" ou "BaseName-123.ext" -> (base, num, ext).
+fn parse_save_base_num(name: &str) -> Option<(&str, u64, &str)> {
+    let name = name.trim();
+    let (stem, ext) = if let Some(dot) = name.rfind('.') {
+        (&name[..dot], &name[dot..])
+    } else {
+        (name, "")
+    };
+    let dash = stem.rfind('-')?;
+    let num_part = stem.get(dash + 1..)?;
+    if num_part.is_empty() || !num_part.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    let num: u64 = num_part.parse().ok()?;
+    let base = stem.get(..dash)?;
+    Some((base, num, ext))
+}
+
 #[tauri::command]
 fn cmd_insert_save(source_path: String) -> Result<String, String> {
     let game_dir = current_install_dir()
@@ -1005,9 +1112,29 @@ fn cmd_insert_save(source_path: String) -> Result<String, String> {
         fs::create_dir_all(&saves_dir).map_err(errs)?;
     }
     let src = Path::new(&source_path);
-    let file_name = src.file_name()
+    let file_name = src
+        .file_name()
+        .and_then(|n| n.to_str())
         .ok_or_else(|| "Nom de fichier invalide".to_string())?;
-    let dest = saves_dir.join(file_name);
+
+    let dest_name: std::borrow::Cow<str> = if let Some((base, _incoming_num, ext)) = parse_save_base_num(file_name) {
+        let existing = all_saves_in_dir(&game_dir);
+        let mut max_num = 0u64;
+        for (path, _) in &existing {
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if let Some((b, n, _)) = parse_save_base_num(name) {
+                if b == base && n > max_num {
+                    max_num = n;
+                }
+            }
+        }
+        let next = max_num + 1;
+        std::borrow::Cow::Owned(format!("{}-{}{}", base, next, ext))
+    } else {
+        std::borrow::Cow::Borrowed(file_name)
+    };
+
+    let dest = saves_dir.join(dest_name.as_ref());
     fs::copy(src, &dest).map_err(errs)?;
     Ok(dest.to_string_lossy().to_string())
 }
@@ -1075,9 +1202,20 @@ fn cmd_latest_save_blob() -> Result<Option<SaveBlob>, String> {
 
 /* ============== Entrée ============== */
 fn main() {
+    let mut discord_client = DiscordClient::new(DISCORD_APP_ID);
+    discord_client.start();
+    let discord_arc = Arc::new(Mutex::new(discord_client));
+
     tauri::Builder::default()
         .manage(AppState {
             dl: Arc::new(Mutex::new(DlInner::default())),
+            discord: discord_arc.clone(),
+        })
+        .setup(move |_app| {
+            if let Ok(mut client) = discord_arc.lock() {
+                let _ = discord_set_presence(&mut *client, "menu", None, None);
+            }
+            Ok(())
         })
         .plugin(tauri_plugin_dialog::init()) // <— IMPORTANT pour open() côté front
         .invoke_handler(tauri::generate_handler![
@@ -1090,6 +1228,7 @@ fn main() {
             cmd_pause_download,
             cmd_resume_download,
             cmd_cancel_download,
+            cmd_discord_set_presence,
             cmd_launch_game,
             cmd_insert_save,
             cmd_list_saves,

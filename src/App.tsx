@@ -10,13 +10,11 @@ import type { Manifest, PlayerProfile } from "./types";
 import { parseSave } from "./profile";
 import {
   FaFolderOpen,
-  FaGithub,
   FaPlay,
   FaDownload,
   FaPause,
   FaStop,
   FaRotateRight,
-  FaWandMagicSparkles,
   FaIdCard,
   FaCoins,
   FaCalendarDays,
@@ -78,12 +76,16 @@ type UiState =
 function getZipUrl(m: Manifest) {
   return (m as any).downloadUrl || (m as any).zip_url || "";
 }
+/** Compare des versions type 0.8, 0.52, 1.0 (0.8 > 0.52, 1.0 > 0.8). */
 function cmpSemver(a: string, b: string) {
-  const A = a.split(".").map(Number),
-    B = b.split(".").map(Number);
-  for (let i = 0; i < Math.max(A.length, B.length); i++) {
-    const x = A[i] || 0,
-      y = B[i] || 0;
+  const A = a.split(".").map(Number);
+  const B = b.split(".").map(Number);
+  const len = Math.max(A.length, B.length);
+  for (let i = 0; i < len; i++) {
+    let x = A[i] ?? 0;
+    let y = B[i] ?? 0;
+    if (i === 1 && A.length === 2 && A[1] < 10) x = x * 10;
+    if (i === 1 && B.length === 2 && B[1] < 10) y = y * 10;
     if (x < y) return -1;
     if (x > y) return 1;
   }
@@ -144,6 +146,18 @@ function formatPlayTime(sec: number): string {
   if (h === 0) return `${mStr} min`;
   if (m === 0) return `${hStr} h`;
   return `${hStr} h ${mStr} min`;
+}
+
+/** Ligne "détails" Rich Presence : Pseudo #ID + nombre d’heures. */
+function buildDiscordDetails(p: PlayerProfile | null): string | null {
+  if (!p) return null;
+  const name = (p.name ?? "—").toString().trim();
+  const id = p.id != null ? `#${p.id.toString().padStart(5, "0")}` : "";
+  const sec = p.playTimeSec ?? 0;
+  const hours = Math.floor(sec / 3600);
+  const time = hours > 0 ? `${hours.toLocaleString("fr-FR")} h` : `${Math.floor(sec / 60)} min`;
+  const parts = [name + (id ? ` ${id}` : ""), time].filter(Boolean);
+  return parts.length ? parts.join(" • ") : null;
 }
 
 /* Sprite joueur (fallback) */
@@ -269,13 +283,11 @@ function FolderDropdown({
   anchorRef,
   onClose,
   onChooseFolder,
-  onDetect,
   onInsertSave,
 }: {
   anchorRef: React.RefObject<HTMLDivElement | null>;
   onClose: () => void;
   onChooseFolder: () => void;
-  onDetect: () => void;
   onInsertSave: () => void;
 }) {
   const [pos, setPos] = useState({ top: 0, right: 0 });
@@ -297,12 +309,6 @@ function FolderDropdown({
           onClick={onChooseFolder}
         >
           <FaFolderOpen /> Choisir un dossier…
-        </button>
-        <button
-          className="w-full text-left px-3 py-2.5 hover:bg-white/10 flex items-center gap-2 transition-colors duration-200"
-          onClick={onDetect}
-        >
-          <FaWandMagicSparkles /> Détecter automatiquement
         </button>
         <button
           className="w-full text-left px-3 py-2.5 hover:bg-white/10 rounded-b-xl flex items-center gap-2 transition-colors duration-200"
@@ -353,7 +359,7 @@ export default function App() {
   const initialCheckDone = useRef(false);
   const autoUpdateStarted = useRef(false);
 
-  const { bgUrl } = useTheme();
+  const { bgUrl, setBgPublic } = useTheme();
   const { pfpUrl } = usePfp();
 
   /* ====== Events de téléchargement ====== */
@@ -427,6 +433,7 @@ export default function App() {
   async function fetchManifest() {
     const m = await invoke<Manifest>("cmd_fetch_manifest", { manifestUrl: MANIFEST_URL });
     setManifest(m);
+    if (m?.launcherBackgroundUrl) setBgPublic(m.launcherBackgroundUrl);
     return m;
   }
   
@@ -544,6 +551,17 @@ export default function App() {
     document.addEventListener("mousedown", onDocClick);
     return () => document.removeEventListener("mousedown", onDocClick);
   }, [openSaveMenu]);
+
+  /* ====== Discord Rich Presence : mettre à jour les détails (profil) quand dispo ====== */
+  useEffect(() => {
+    if (activeView !== "launcher" || profileState !== "ready" || !profile) return;
+    const details = buildDiscordDetails(profile);
+    invoke("cmd_discord_set_presence", {
+      kind: "menu",
+      startTimestampSecs: undefined,
+      details: details ?? undefined,
+    }).catch(() => {});
+  }, [activeView, profileState, profile]);
 
   /* ====== Check principal amélioré avec choix initial ====== */
   async function check() {
@@ -887,13 +905,6 @@ export default function App() {
                 loadProfile();
               }}
             />
-            <IconButton
-              tone="ghost"
-              size="sm"
-              icon={<FaGithub />}
-              label="GitHub"
-              onClick={() => window.open("https://github.com/Jiromk/pnw-launcher", "_blank")}
-            />
           </div>
         </header>
 
@@ -958,7 +969,6 @@ export default function App() {
                     anchorRef={folderBtnRef}
                     onClose={() => setOpenFolderMenu(false)}
                     onChooseFolder={() => { setOpenFolderMenu(false); chooseFolder(); }}
-                    onDetect={() => { setOpenFolderMenu(false); manualDetect(); }}
                     onInsertSave={() => { setOpenFolderMenu(false); insertSave(); }}
                   />,
                   document.body,

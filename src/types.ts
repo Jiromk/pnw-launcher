@@ -45,4 +45,6 @@ export type Manifest = {
   files?: any[];
   requirements?: any;
   integrity?: any;
+  /** URL du background du launcher (définie depuis le site). */
+  launcherBackgroundUrl?: string;
 };
