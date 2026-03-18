@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import { createPortal } from "react-dom";
 import {
   FaBookOpen,
   FaStar,
@@ -289,7 +290,7 @@ export default function PokedexView({ siteUrl }: { siteUrl: string }) {
 
   return (
     <div className="space-y-5 animate-in">
-      {showEasterEgg && <GighastonEasterEgg onClose={closeEasterEgg} />}
+      {showEasterEgg && createPortal(<GighastonEasterEgg onClose={closeEasterEgg} />, document.body)}
       {/* Hero: Pokédex / Extradex (clic pour basculer) */}
       <div className="dex-hero-tabs">
         <button
