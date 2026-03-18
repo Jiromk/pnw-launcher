@@ -39,6 +39,8 @@ struct Manifest {
     download_url: String,
     #[serde(default, rename = "launcherBackgroundUrl")]
     launcher_background_url: Option<String>,
+    #[serde(default, rename = "launcherSidebarImageUrl")]
+    launcher_sidebar_image_url: Option<String>,
 }
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 struct Config {
