@@ -246,33 +246,20 @@ export default function PokedexView({ siteUrl }: { siteUrl: string }) {
   const [type2, setType2] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"grid" | "table">("grid");
   const [selected, setSelected] = useState<PokeEntry | null>(null);
-  const [secretBuffer, setSecretBuffer] = useState("");
   const [showEasterEgg, setShowEasterEgg] = useState(false);
 
   const base = siteUrl.replace(/\/$/, "");
 
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (showEasterEgg) return;
-      const key = e.key.toLowerCase();
-      if (key.length === 1 && /[a-z+=]/.test(key)) {
-        setSecretBuffer((prev) => {
-          const next = (prev + key).slice(-SECRET_CODE.length);
-          if (next === SECRET_CODE) {
-            setShowEasterEgg(true);
-            return "";
-          }
-          return next;
-        });
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [showEasterEgg]);
+  const handleSearchChange = useCallback((value: string) => {
+    setSearch(value);
+    if (value.toLowerCase() === SECRET_CODE) {
+      setShowEasterEgg(true);
+      setSearch("");
+    }
+  }, []);
 
   const closeEasterEgg = useCallback(() => {
     setShowEasterEgg(false);
-    setSecretBuffer("");
   }, []);
 
   useEffect(() => {
@@ -371,7 +358,7 @@ export default function PokedexView({ siteUrl }: { siteUrl: string }) {
               className="pokedex-search"
               placeholder="Rechercher un Pokémon ou un nº..."
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) => handleSearchChange(e.target.value)}
             />
           </div>
           <div className="pokedex-view-toggle" role="group">
