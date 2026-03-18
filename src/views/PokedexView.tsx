@@ -20,13 +20,12 @@ import { getTypeStyle, getTypeLabel } from "../utils/typeStyles";
 
 const SECRET_CODE = "phaston+dylan=gighaston";
 
-type EasterPhase = "idle" | "glitch" | "video" | "card";
+type EasterPhase = "idle" | "glitch" | "card";
 
 function GighastonEasterEgg({ onClose }: { onClose: () => void }) {
   const [phase, setPhase] = useState<EasterPhase>("glitch");
   const [glitchNumbers, setGlitchNumbers] = useState("0x00000000");
   const [countdown, setCountdown] = useState(15);
-  const videoRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
     if (phase !== "glitch") return;
@@ -36,21 +35,9 @@ function GighastonEasterEgg({ onClose }: { onClose: () => void }) {
     }, 50);
     const timeout = setTimeout(() => {
       clearInterval(interval);
-      setPhase("video");
+      setPhase("card");
     }, 2000);
     return () => { clearInterval(interval); clearTimeout(timeout); };
-  }, [phase]);
-
-  useEffect(() => {
-    if (phase !== "video") return;
-    const vid = videoRef.current;
-    if (vid) {
-      vid.currentTime = 31;
-      vid.muted = true;
-      vid.play().catch(() => {});
-    }
-    const timeout = setTimeout(() => setPhase("card"), 2000);
-    return () => clearTimeout(timeout);
   }, [phase]);
 
   useEffect(() => {
@@ -70,21 +57,6 @@ function GighastonEasterEgg({ onClose }: { onClose: () => void }) {
           <div className="gighaston-hex">{glitchNumbers}</div>
           <div className="gighaston-scanlines" />
         </div>
-      </div>
-    );
-  }
-
-  if (phase === "video") {
-    return (
-      <div className="gighaston-overlay gighaston-video-phase">
-        <iframe
-          src="https://www.youtube.com/embed/sKTRwgS0Dvk?autoplay=1&mute=1&start=31&end=33&controls=0&showinfo=0&rel=0&modestbranding=1&loop=0"
-          allow="autoplay; encrypted-media"
-          allowFullScreen
-          className="gighaston-video-iframe"
-          title="???"
-        />
-        <div className="gighaston-video-overlay" />
       </div>
     );
   }
