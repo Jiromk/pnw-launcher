@@ -16,6 +16,7 @@ import {
   FaPaw,
   FaSkull,
   FaRadiation,
+  FaPersonRunning,
 } from "react-icons/fa6";
 import { getTypeStyle, getTypeLabel } from "../utils/typeStyles";
 
@@ -126,6 +127,10 @@ function GighastonEasterEgg({ onClose }: { onClose: () => void }) {
             style={{ width: `${((15 - countdown) / 15) * 100}%` }} 
           />
         </div>
+        <button type="button" className="gighaston-flee-btn" onClick={onClose}>
+          <FaPersonRunning className="gighaston-flee-icon" />
+          FUIR
+        </button>
       </div>
     </div>
   );

@@ -2710,4 +2710,26 @@ button.lore-banner{ font:inherit; text-align:inherit; background:none; }
   height:100%; background:linear-gradient(90deg, #f00, #ff3333);
   box-shadow:0 0 10px #f00; transition:width 1s linear;
 }
+.gighaston-flee-btn{
+  margin-top:1.25rem; display:inline-flex; align-items:center; justify-content:center; gap:.6rem;
+  padding:.9rem 2rem; font-size:1.1rem; font-weight:800; text-transform:uppercase; letter-spacing:.15em;
+  color:#fff; background:linear-gradient(135deg, #dc2626, #b91c1c); border:2px solid #f87171;
+  border-radius:12px; cursor:pointer; position:relative; overflow:hidden;
+  box-shadow:0 0 20px rgba(220,38,38,.5), 0 0 40px rgba(220,38,38,.3), inset 0 1px 0 rgba(255,255,255,.2);
+  transition:all .2s ease; animation:gighaston-flee-pulse 1s ease infinite;
+}
+.gighaston-flee-btn:hover{
+  transform:scale(1.05); background:linear-gradient(135deg, #ef4444, #dc2626);
+  box-shadow:0 0 30px rgba(239,68,68,.6), 0 0 60px rgba(239,68,68,.4);
+}
+.gighaston-flee-btn:active{ transform:scale(0.98); }
+.gighaston-flee-icon{ font-size:1.3rem; animation:gighaston-flee-run .4s steps(2) infinite; }
+@keyframes gighaston-flee-pulse{
+  0%, 100%{ box-shadow:0 0 20px rgba(220,38,38,.5), 0 0 40px rgba(220,38,38,.3); }
+  50%{ box-shadow:0 0 30px rgba(239,68,68,.7), 0 0 60px rgba(239,68,68,.4); }
+}
+@keyframes gighaston-flee-run{
+  0%{ transform:translateX(-2px); }
+  100%{ transform:translateX(2px); }
+}
 
