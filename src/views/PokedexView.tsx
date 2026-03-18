@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import {
   FaBookOpen,
   FaStar,
@@ -13,8 +13,150 @@ import {
   FaMapLocationDot,
   FaChevronDown,
   FaPaw,
+  FaSkull,
+  FaRadiation,
 } from "react-icons/fa6";
 import { getTypeStyle, getTypeLabel } from "../utils/typeStyles";
+
+const SECRET_CODE = "phaston+dylan=gighaston";
+
+type EasterPhase = "idle" | "glitch" | "video" | "card";
+
+function GighastonEasterEgg({ onClose }: { onClose: () => void }) {
+  const [phase, setPhase] = useState<EasterPhase>("glitch");
+  const [glitchNumbers, setGlitchNumbers] = useState("0x00000000");
+  const [countdown, setCountdown] = useState(15);
+  const videoRef = useRef<HTMLVideoElement>(null);
+
+  useEffect(() => {
+    if (phase !== "glitch") return;
+    const interval = setInterval(() => {
+      const hex = Math.floor(Math.random() * 0xFFFFFFFF).toString(16).toUpperCase().padStart(8, "0");
+      setGlitchNumbers(`0x${hex}`);
+    }, 50);
+    const timeout = setTimeout(() => {
+      clearInterval(interval);
+      setPhase("video");
+    }, 2000);
+    return () => { clearInterval(interval); clearTimeout(timeout); };
+  }, [phase]);
+
+  useEffect(() => {
+    if (phase !== "video") return;
+    const vid = videoRef.current;
+    if (vid) {
+      vid.currentTime = 31;
+      vid.muted = true;
+      vid.play().catch(() => {});
+    }
+    const timeout = setTimeout(() => setPhase("card"), 2000);
+    return () => clearTimeout(timeout);
+  }, [phase]);
+
+  useEffect(() => {
+    if (phase !== "card") return;
+    if (countdown <= 0) { onClose(); return; }
+    const interval = setInterval(() => setCountdown((c) => c - 1), 1000);
+    return () => clearInterval(interval);
+  }, [phase, countdown, onClose]);
+
+  if (phase === "glitch") {
+    return (
+      <div className="gighaston-overlay gighaston-glitch">
+        <div className="gighaston-glitch-content">
+          <pre className="gighaston-console">
+            <span className="gighaston-console-prompt">&gt;</span> console.log(<span className="gighaston-string">"Entrée Pokédex corrompue..."</span>);
+          </pre>
+          <div className="gighaston-hex">{glitchNumbers}</div>
+          <div className="gighaston-scanlines" />
+        </div>
+      </div>
+    );
+  }
+
+  if (phase === "video") {
+    return (
+      <div className="gighaston-overlay gighaston-video-phase">
+        <iframe
+          src="https://www.youtube.com/embed/sKTRwgS0Dvk?autoplay=1&mute=1&start=31&end=33&controls=0&showinfo=0&rel=0&modestbranding=1&loop=0"
+          allow="autoplay; encrypted-media"
+          allowFullScreen
+          className="gighaston-video-iframe"
+          title="???"
+        />
+        <div className="gighaston-video-overlay" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="gighaston-overlay gighaston-card-phase">
+      <div className="gighaston-card">
+        <div className="gighaston-card-glow" />
+        <div className="gighaston-card-inner">
+          <div className="gighaston-card-header">
+            <span className="gighaston-card-number">
+              <FaRadiation className="gighaston-icon-pulse" /> #???
+            </span>
+            <span className="gighaston-card-rarity">
+              <FaSkull /> Corrompu ⚠️
+            </span>
+          </div>
+          
+          <div className="gighaston-sprite-container">
+            <div className="gighaston-sprite-glitch" />
+            <img 
+              src="https://i.imgur.com/4ypJ2kX.gif" 
+              alt="???" 
+              className="gighaston-sprite"
+            />
+          </div>
+
+          <h2 className="gighaston-name">
+            <span className="gighaston-name-glitch">G̸̢͝i̶̛̱g̷̨̈́h̸̰̾a̵̰͝s̶̱͠t̷̨̛o̶̰̊n̸̰̈́</span>
+          </h2>
+
+          <div className="gighaston-info-box">
+            <div className="gighaston-warning-icon">
+              <FaRadiation size={20} />
+            </div>
+            <p className="gighaston-info-text">
+              Une anomalie a été détectée dans cette entrée.<br />
+              <span className="gighaston-info-warning">Le sujet semble réagir à la présence du lecteur.</span>
+            </p>
+          </div>
+
+          <div className="gighaston-stats">
+            <div className="gighaston-stat">
+              <span className="gighaston-stat-label">Type</span>
+              <span className="gighaston-stat-value gighaston-type-corrupted">???</span>
+            </div>
+            <div className="gighaston-stat">
+              <span className="gighaston-stat-label">Statut</span>
+              <span className="gighaston-stat-value gighaston-status-danger">INSTABLE</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="gighaston-eject-warning">
+        <div className="gighaston-eject-text">
+          <FaSkull className="gighaston-eject-icon" />
+          <span>Vous n'avez strictement rien à faire ici.</span>
+        </div>
+        <div className="gighaston-countdown">
+          Éjection dans <span className="gighaston-countdown-number">{countdown}</span> seconde{countdown !== 1 ? "s" : ""}
+        </div>
+        <div className="gighaston-progress-bar">
+          <div 
+            className="gighaston-progress-fill" 
+            style={{ width: `${((15 - countdown) / 15) * 100}%` }} 
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
 
 interface PokeEntry {
   num?: string;
@@ -104,8 +246,34 @@ export default function PokedexView({ siteUrl }: { siteUrl: string }) {
   const [type2, setType2] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"grid" | "table">("grid");
   const [selected, setSelected] = useState<PokeEntry | null>(null);
+  const [secretBuffer, setSecretBuffer] = useState("");
+  const [showEasterEgg, setShowEasterEgg] = useState(false);
 
   const base = siteUrl.replace(/\/$/, "");
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (showEasterEgg) return;
+      const key = e.key.toLowerCase();
+      if (key.length === 1 && /[a-z+=]/.test(key)) {
+        setSecretBuffer((prev) => {
+          const next = (prev + key).slice(-SECRET_CODE.length);
+          if (next === SECRET_CODE) {
+            setShowEasterEgg(true);
+            return "";
+          }
+          return next;
+        });
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [showEasterEgg]);
+
+  const closeEasterEgg = useCallback(() => {
+    setShowEasterEgg(false);
+    setSecretBuffer("");
+  }, []);
 
   useEffect(() => {
     Promise.all([
@@ -120,7 +288,9 @@ export default function PokedexView({ siteUrl }: { siteUrl: string }) {
           setExtradexEntries(extradexRes.extradex.entries);
         }
       })
-      .catch(() => {})
+      .catch((e) => {
+        console.warn("[PNW] Pokedex/Extradex:", e);
+      })
       .finally(() => setLoading(false));
   }, [base]);
 
@@ -160,6 +330,7 @@ export default function PokedexView({ siteUrl }: { siteUrl: string }) {
 
   return (
     <div className="space-y-5 animate-in">
+      {showEasterEgg && <GighastonEasterEgg onClose={closeEasterEgg} />}
       {/* Hero: Pokédex / Extradex (clic pour basculer) */}
       <div className="dex-hero-tabs">
         <button
