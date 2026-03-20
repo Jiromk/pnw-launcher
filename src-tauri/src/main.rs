@@ -48,6 +48,9 @@ struct Config {
     install_dir: Option<String>,
     #[serde(default)]
     install_etag: Option<String>,
+    /// "fr" | "en" — piste du jeu pour le manifest Launcher
+    #[serde(default)]
+    game_lang: Option<String>,
 } // dossier du jeu (parent de l’exe)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct InstallFileRecord {
@@ -94,7 +97,6 @@ struct AppState {
 
 /* ============== Constantes ============== */
 const DISCORD_APP_ID: u64 = 1483296386228289738;
-const PNW_SITE_URL: &str = "https://www.pokemonnewworld.fr";
 const PNW_DOWNLOAD_PAGE_URL: &str = "https://www.pokemonnewworld.fr/telechargement";
 const DISCORD_INVITE_URL: &str = "https://discord.gg/w5dfYbDNaq";
 const APP_DIR_NAME: &str = "PNW Launcher";
@@ -144,13 +146,6 @@ fn current_install_dir() -> Option<PathBuf> {
     cfg.install_dir
         .map(PathBuf::from)
         .or_else(|| default_install_dir().ok())
-}
-fn ensure_install_dir() -> Result<PathBuf> {
-    let dir = current_install_dir().ok_or_else(|| anyhow!("install_dir manquant"))?;
-    if !dir.exists() {
-        fs::create_dir_all(&dir).context("create install dir")?;
-    }
-    Ok(dir)
 }
 fn parse_total_from_content_range(s: &str) -> Option<u64> {
     s.rsplit('/').next()?.parse().ok()
@@ -376,6 +371,8 @@ fn cmd_fetch_manifest(manifest_url: String) -> Result<Manifest, String> {
 }
 #[tauri::command]
 fn cmd_get_install_info() -> Result<serde_json::Value, String> {
+    let cfg = read_config();
+    let game_lang = cfg.game_lang.clone();
     if let Some(dir) = current_install_dir() {
         let has_exe = find_game_exe_in_dir(&dir, 2).is_some();
         let ver = read_version(&dir).ok();
@@ -396,6 +393,7 @@ fn cmd_get_install_info() -> Result<serde_json::Value, String> {
           "missingFiles":integrity.missing_files,
           "hasManifest":integrity.manifest_present,
           "hasGame":has_game,
+          "gameLang":game_lang,
         }));
     }
     Ok(json!({
@@ -407,6 +405,7 @@ fn cmd_get_install_info() -> Result<serde_json::Value, String> {
       "missingFiles":0,
       "hasManifest":false,
       "hasGame":false,
+      "gameLang":game_lang,
     }))
 }
 #[tauri::command]
@@ -430,6 +429,22 @@ fn cmd_set_install_dir(path: String) -> Result<serde_json::Value, String> {
     cfg.install_dir = Some(path.clone());
     write_config(&cfg).map_err(errs)?;
     Ok(json!({"ok":true,"installDir":path}))
+}
+
+#[tauri::command]
+fn cmd_set_game_lang(lang: String) -> Result<serde_json::Value, String> {
+    let lang = lang.trim().to_lowercase();
+    if lang != "fr" && lang != "en" {
+        return Err("lang doit être fr ou en".into());
+    }
+    let mut cfg = read_config();
+    let prev = cfg.game_lang.as_deref();
+    if prev != Some(lang.as_str()) {
+        cfg.install_etag = None;
+    }
+    cfg.game_lang = Some(lang.clone());
+    write_config(&cfg).map_err(errs)?;
+    Ok(json!({"ok":true,"gameLang":lang}))
 }
 #[tauri::command]
 fn cmd_download_and_install(
@@ -921,9 +936,9 @@ fn discord_build_activity(
     details: Option<&str>,
 ) -> Activity {
     let (state_label, large_image_key) = match kind {
-        "game" => ("En jeu", "pp1"),
+        "game" => ("En jeu", "logojeu"),
         "map" => ("Sur la carte", "carte"),
-        "battle" => ("En combat", "pp1"),
+        "battle" => ("En combat", "logojeu"),
         _ => ("Dans le menu", "logo_2_0"),
     };
     let mut act = Activity::new()
@@ -948,7 +963,20 @@ fn discord_set_presence(
     details: Option<&str>,
 ) -> Result<(), String> {
     let activity = discord_build_activity(kind, start_timestamp_secs, details);
-    client.set_activity(|_| activity).map_err(errs).map(|_| ())
+    // Retry jusqu'à 3 fois avec délai si la connexion n'est pas encore établie
+    for attempt in 0..3 {
+        match client.set_activity(|_| activity.clone()) {
+            Ok(_) => return Ok(()),
+            Err(e) => {
+                if attempt < 2 {
+                    thread::sleep(Duration::from_millis(500));
+                } else {
+                    return Err(errs(e));
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -1169,10 +1197,25 @@ fn cmd_list_saves() -> Result<Vec<SaveEntry>, String> {
 
 #[tauri::command]
 fn cmd_get_save_blob(save_path: String) -> Result<Option<SaveBlob>, String> {
+    // Sécurité : valider que le chemin est bien dans le dossier Saves du jeu
+    let game_dir = current_install_dir()
+        .ok_or_else(|| "Dossier du jeu non défini".to_string())?;
+    let saves_dir = game_dir.join("Saves");
+    
     let p = Path::new(&save_path);
     if !p.is_file() { return Ok(None); }
-    let bytes = fs::read(p).map_err(errs)?;
-    let modified = p.metadata().ok()
+    
+    // Canonicaliser les chemins pour éviter les attaques path traversal (../)
+    let canonical_path = p.canonicalize().map_err(errs)?;
+    let canonical_saves = saves_dir.canonicalize().unwrap_or_else(|_| saves_dir.clone());
+    
+    // Vérifier que le fichier est bien dans le dossier Saves
+    if !canonical_path.starts_with(&canonical_saves) {
+        return Err("Accès refusé : le fichier n'est pas dans le dossier Saves".to_string());
+    }
+    
+    let bytes = fs::read(&canonical_path).map_err(errs)?;
+    let modified = canonical_path.metadata().ok()
         .and_then(|m| m.modified().ok())
         .map(|t| t.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs())
         .unwrap_or(0);
@@ -1209,6 +1252,8 @@ fn cmd_latest_save_blob() -> Result<Option<SaveBlob>, String> {
 fn main() {
     let mut discord_client = DiscordClient::new(DISCORD_APP_ID);
     discord_client.start();
+    // Laisser le temps au client Discord de se connecter
+    thread::sleep(Duration::from_millis(500));
     let discord_arc = Arc::new(Mutex::new(discord_client));
 
     tauri::Builder::default()
@@ -1228,6 +1273,7 @@ fn main() {
             cmd_get_install_info,
             cmd_set_install_dir,
             cmd_set_default_install_dir,
+            cmd_set_game_lang,
             cmd_check_disk_space_for_update,
             cmd_download_and_install,
             cmd_pause_download,

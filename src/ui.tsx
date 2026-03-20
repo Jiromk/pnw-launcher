@@ -1,18 +1,12 @@
 import React from "react";
 
-/* Bouton générique piloté par la couleur d'accent via CSS var --accent.
-   Style sobre et élégant : dégradé discret, ombre légère, transitions douces. */
+/* Bouton générique : fond sombre + lueur intérieure accent (pas de remplissage coloré). */
 export function Button(
   { className = "", children, disabled, style, ...props }:
   React.ButtonHTMLAttributes<HTMLButtonElement>
 ) {
-  const finalStyle = {
-    backgroundImage:
-      style && ("background" in style || "backgroundImage" in style)
-        ? (style as any).backgroundImage
-        : "linear-gradient(180deg, color-mix(in srgb, var(--accent) 95%, white 8%) 0%, var(--accent) 100%)",
-    ...style,
-  } as React.CSSProperties;
+  const hasBg = style && ("background" in style || "backgroundImage" in style);
+  const finalStyle = hasBg ? (style as React.CSSProperties) : { backgroundImage: "none", ...style };
 
   return (
     <button
@@ -23,8 +17,9 @@ export function Button(
         "hover:ring-white/12 hover:shadow-[0_4px_16px_-4px_rgba(0,0,0,0.5)]",
         "active:scale-[0.99] transition-all duration-200",
         "disabled:opacity-50 disabled:cursor-not-allowed",
+        !hasBg ? "accent-glow-btn" : "",
         className,
-      ].join(" ")}
+      ].filter(Boolean).join(" ")}
       style={finalStyle}
       {...props}
     >
@@ -62,14 +57,10 @@ export function Card({
 export function Progress({ value = 0 }: { value?: number }) {
   const v = Math.max(0, Math.min(100, value));
   return (
-    <div className="w-full h-3 rounded-full bg-white/10 overflow-hidden ring-1 ring-white/10">
+    <div className="progress-track w-full h-3 rounded-full bg-white/10 overflow-hidden ring-1 ring-white/10">
       <div
-        className="h-full"
-        style={{
-          width: `${v}%`,
-          backgroundImage:
-            "linear-gradient(90deg, color-mix(in srgb, var(--accent), white 10%), var(--accent))",
-        }}
+        className="h-full progress-fill"
+        style={{ width: `${v}%` }}
       />
     </div>
   );
@@ -84,6 +75,7 @@ export function Modal({
   onConfirm,
   confirmLabel = "OK",
   cancelLabel = "Annuler",
+  hideActions = false,
 }: {
   open: boolean;
   title?: React.ReactNode;
@@ -92,32 +84,32 @@ export function Modal({
   onConfirm?: () => void;
   confirmLabel?: string;
   cancelLabel?: string;
+  /** Masque les boutons Annuler / Confirmer (contenu entièrement custom dans children). */
+  hideActions?: boolean;
 }) {
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-[9999] flex items-center justify-center">
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onCancel} />
-      <div className="relative w-[min(520px,92vw)] rounded-2xl border border-white/12 bg-gradient-to-b from-[#0f1629] to-[#0c1222] shadow-2xl p-5">
+      <div className="pnw-modal-overlay absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onCancel} />
+      <div className="pnw-modal-content relative w-[min(520px,92vw)] rounded-2xl border border-white/12 bg-gradient-to-b from-[#0f1629] to-[#0c1222] shadow-2xl p-5">
         {title ? <div className="text-lg font-semibold mb-3">{title}</div> : null}
         <div className="text-sm">{children}</div>
-        <div className="mt-5 flex items-center justify-end gap-2">
-          <button
-            className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/15 ring-1 ring-white/15"
-            onClick={onCancel}
-          >
-            {cancelLabel}
-          </button>
-          <button
-            className="px-4 py-2 rounded-xl text-white ring-1 ring-white/10"
-            style={{
-              backgroundImage:
-                "linear-gradient(135deg, var(--accent) 0%, color-mix(in srgb, var(--accent), white 15%) 100%)",
-            }}
-            onClick={onConfirm}
-          >
-            {confirmLabel}
-          </button>
-        </div>
+        {!hideActions ? (
+          <div className="mt-5 flex items-center justify-end gap-2">
+            <button
+              className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/15 ring-1 ring-white/15"
+              onClick={onCancel}
+            >
+              {cancelLabel}
+            </button>
+            <button
+              className="accent-glow-btn px-4 py-2 rounded-xl text-white ring-1 ring-white/10"
+              onClick={onConfirm}
+            >
+              {confirmLabel}
+            </button>
+          </div>
+        ) : null}
       </div>
     </div>
   );

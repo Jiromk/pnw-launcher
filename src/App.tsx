@@ -28,6 +28,7 @@ import {
   FaPlus,
   FaFileImport,
   FaChevronDown,
+  FaFloppyDisk,
 } from "react-icons/fa6";
 import { ThemeMenu, useTheme, PfpMenu, usePfp } from "./themes";
 import Sidebar from "./Sidebar";
@@ -43,8 +44,8 @@ import TeamView from "./views/TeamView";
 import ContactView from "./views/ContactView";
 
 /* ==================== Constantes ==================== */
-const MANIFEST_URL =
-  "https://www.pokemonnewworld.fr/api/downloads/manifest";
+const PNW_SITE_BASE = import.meta.env.VITE_PNW_SITE_URL?.replace(/\/$/, "") || "https://www.pokemonnewworld.fr";
+const MANIFEST_BASE = `${PNW_SITE_BASE}/api/downloads/manifest`;
 
 /**
  * URL du site Pokémon New World. Toutes les vues (Lore, Pokédex, Extradex, EVs, BST, etc.)
@@ -52,9 +53,7 @@ const MANIFEST_URL =
  * Tout contenu ajouté ou modifié sur le site est donc automatiquement reflété dans le launcher
  * à chaque chargement de vue (aucun cache de contenu côté launcher).
  */
-const PNW_SITE_URL =
-  import.meta.env.VITE_PNW_SITE_URL ||
-  "https://www.pokemonnewworld.fr";
+const PNW_SITE_URL = PNW_SITE_BASE;
 
 type DlEvent = {
   stage: "download" | "extract" | "paused" | "canceled" | "done" | "reconnect";
@@ -254,12 +253,10 @@ function IconButton({
     },
   }[size];
   const tones = {
-    primary:
-      "bg-[color-mix(in_srgb,var(--accent)_90%,white)] hover:bg-[color-mix(in_srgb,var(--accent)_95%,white)] ring-1 ring-white/8 hover:ring-white/12",
+    primary: "accent-glow-btn ring-1 ring-white/5",
     secondary: "bg-white/8 hover:bg-white/12 ring-1 ring-white/8 hover:ring-white/12",
     ghost: "bg-white/5 hover:bg-white/10 ring-1 ring-white/6 hover:ring-white/10",
-    success:
-      "bg-[color-mix(in_srgb,#22c55e_90%,white)] hover:bg-[color-mix(in_srgb,#22c55e_95%,white)] ring-1 ring-white/8 hover:ring-white/12",
+    success: "accent-glow-btn ring-1 ring-white/5",
   };
   return (
     <Button
@@ -315,7 +312,7 @@ function FolderDropdown({
     <>
       <div className="fixed inset-0 z-[9998]" onClick={onClose} />
       <div
-        className="fixed w-64 rounded-xl bg-black/90 text-white/90 ring-1 ring-white/15 backdrop-blur-xl shadow-2xl z-[9999]"
+        className="pnw-folder-menu fixed w-64 rounded-xl bg-black/90 text-white/90 ring-1 ring-white/15 backdrop-blur-xl shadow-2xl z-[9999]"
         style={{ top: pos.top, right: pos.right }}
       >
         <button
@@ -360,6 +357,12 @@ export default function App() {
   const [showInitialChoice, setShowInitialChoice] = useState(false);
   const [showInstallPrompt, setShowInstallPrompt] = useState(false);
   const [showUpdateNotice, setShowUpdateNotice] = useState(false);
+  /** Langue du jeu (piste manifest). null = pas encore enregistré côté config. */
+  const [gameLang, setGameLang] = useState<"fr" | "en" | null>(null);
+  const [showPickGameLang, setShowPickGameLang] = useState(false);
+  const [showMigrationLangDialog, setShowMigrationLangDialog] = useState(false);
+  const [showLangSwitchConfirm, setShowLangSwitchConfirm] = useState(false);
+  const [pendingLang, setPendingLang] = useState<"fr" | "en" | null>(null);
 
   const [profile, setProfile] = useState<PlayerProfile | null>(null);
   const [profileState, setProfileState] =
@@ -373,8 +376,10 @@ export default function App() {
   const pollingRef = useRef<number | null>(null);
   const initialCheckDone = useRef(false);
   const autoUpdateStarted = useRef(false);
+  /** Évite de re-scanner les version-hints tant que l’utilisateur n’a pas choisi la langue installée. */
+  const awaitingMigrationChoiceRef = useRef(false);
 
-  const { bgUrl, setBgPublic } = useTheme();
+  const { theme, bgUrl, setBgPublic } = useTheme();
   const { pfpUrl } = usePfp();
 
   /* ====== Events de téléchargement ====== */
@@ -446,11 +451,18 @@ export default function App() {
   }, [manifest]);
 
   /* ====== Backend helpers ====== */
-  async function fetchManifest(): Promise<Manifest | null> {
+  async function fetchManifest(opts?: { lang?: "fr" | "en" }): Promise<Manifest | null> {
+    const L: "fr" | "en" =
+      opts?.lang ?? (gameLang === "fr" || gameLang === "en" ? gameLang : "fr");
+    const url = `${MANIFEST_BASE}?lang=${L}`;
     try {
-      const m = await invoke<Manifest>("cmd_fetch_manifest", { manifestUrl: MANIFEST_URL });
+      const m = await invoke<Manifest>("cmd_fetch_manifest", { manifestUrl: url });
       setManifest(m);
-      if (m?.launcherBackgroundUrl) setBgPublic(m.launcherBackgroundUrl);
+      // Mettre à jour le background depuis le manifest SAUF si l'utilisateur a choisi un fichier local
+      // (kind === "file" = fichier personnalisé choisi par l'utilisateur)
+      if (m?.launcherBackgroundUrl && theme.bg.kind !== "file") {
+        setBgPublic(m.launcherBackgroundUrl);
+      }
       setIsOffline(false);
       return m;
     } catch (err: any) {
@@ -472,12 +484,101 @@ export default function App() {
       hasIntegrity?: boolean;
       missingFiles?: number;
       hasManifest?: boolean;
+      gameLang?: string | null;
     }>("cmd_get_install_info", {});
     setInstallDir(info.installDir);
     setHasExe(info.hasExe);
     setHasVersion(info.hasVersion);
     setInstalledVersion(info.version);
+    const gl = info.gameLang;
+    if (gl === "fr" || gl === "en") {
+      setGameLang(gl);
+    } else {
+      setGameLang(null);
+    }
     return info;
+  }
+
+  function effectiveLangForInfo(info: { gameLang?: string | null }): "fr" | "en" {
+    if (info.gameLang === "fr" || info.gameLang === "en") return info.gameLang;
+    if (gameLang === "fr" || gameLang === "en") return gameLang;
+    return "fr";
+  }
+
+  /** Migration : anciens installs sans game_lang. Retourne si le flux doit s’arrêter (dialogue ouvert). */
+  async function tryResolveMigration(localV: string, info: { gameLang?: string | null }): Promise<boolean> {
+    if (info.gameLang === "fr" || info.gameLang === "en") return false;
+    if (awaitingMigrationChoiceRef.current) return true;
+    try {
+      const r = await fetch(`${PNW_SITE_BASE}/api/downloads/version-hints`);
+      if (!r.ok) throw new Error(String(r.status));
+      const hints = await r.json();
+      const vFr = hints.fr?.version as string | undefined;
+      const vEn = hints.en?.version as string | undefined;
+      const frEq = !!(vFr && cmpSemver(localV, vFr) === 0);
+      const enEq = !!(vEn && cmpSemver(localV, vEn) === 0);
+      if (frEq && !enEq) {
+        await invoke("cmd_set_game_lang", { lang: "fr" });
+        setGameLang("fr");
+        awaitingMigrationChoiceRef.current = false;
+        return false;
+      }
+      if (enEq && !frEq) {
+        await invoke("cmd_set_game_lang", { lang: "en" });
+        setGameLang("en");
+        awaitingMigrationChoiceRef.current = false;
+        return false;
+      }
+      awaitingMigrationChoiceRef.current = true;
+      setShowMigrationLangDialog(true);
+      return true;
+    } catch {
+      awaitingMigrationChoiceRef.current = true;
+      setShowMigrationLangDialog(true);
+      return true;
+    }
+  }
+
+  async function confirmMigrationLang(lang: "fr" | "en") {
+    try {
+      await invoke("cmd_set_game_lang", { lang });
+      setGameLang(lang);
+      setShowMigrationLangDialog(false);
+      awaitingMigrationChoiceRef.current = false;
+      autoUpdateStarted.current = false;
+      const info = await readInstallInfo();
+      const m = await fetchManifest({ lang: effectiveLangForInfo(info) });
+      if (m) processInstallStatus(m, info, info.hasExe === true);
+    } catch (e: any) {
+      setLog((l) => prependUnique(l, `❌ Langue : ${String(e)}`));
+    }
+  }
+
+  async function applyGameLangChange(lang: "fr" | "en") {
+    try {
+      await invoke("cmd_set_game_lang", { lang });
+      setGameLang(lang);
+      setShowLangSwitchConfirm(false);
+      setPendingLang(null);
+      autoUpdateStarted.current = false;
+      const info = await readInstallInfo();
+      const m = await fetchManifest({ lang: effectiveLangForInfo(info) });
+      if (m) processInstallStatus(m, info, info.hasExe === true);
+    } catch (e: any) {
+      setLog((l) => prependUnique(l, `❌ Langue : ${String(e)}`));
+    }
+  }
+
+  function requestGameLangChange(newLang: "fr" | "en") {
+    if (newLang === gameLang) return;
+    if (hasExe) {
+      setPendingLang(newLang);
+      setShowLangSwitchConfirm(true);
+    } else {
+      applyGameLangChange(newLang).catch((e) =>
+        setLog((l) => prependUnique(l, `❌ ${String(e)}`)),
+      );
+    }
   }
   
   async function detectExistingGamePath(): Promise<string | null> {
@@ -594,21 +695,47 @@ export default function App() {
   async function check() {
     try {
       setStatus("checking");
-      const info = await readInstallInfo();
-      const isInstalled = info.hasExe === true;
+      let info = await readInstallInfo();
+      const installed = info.hasExe === true;
 
+      // 1) Pas d’installation : choisir la langue du jeu avant le reste
+      if (!installed && info.gameLang !== "fr" && info.gameLang !== "en") {
+        setStatus("ready");
+        setShowPickGameLang(true);
+        return;
+      }
+
+      // 2) Installé sans game_lang : migration ou dialogue
+      if (installed && info.version && info.gameLang !== "fr" && info.gameLang !== "en") {
+        const stopForMigration = await tryResolveMigration(info.version, info);
+        if (stopForMigration) {
+          setStatus("ready");
+          return;
+        }
+        info = await readInstallInfo();
+      }
+
+      const langFetch = effectiveLangForInfo(info);
       let m: Manifest | null = null;
       try {
-        m = await fetchManifest();
+        m = await fetchManifest({ lang: langFetch });
       } catch (e: any) {
         const errStr = String(e ?? "");
         const networkError = !navigator.onLine || /connection|fetch|network|refused|timed out|timeout/i.test(errStr);
         const msg = formatErrorForUser(errStr);
         setLog((l) => prependUnique(l, `❌ ${msg}`));
+        if (/400|non configuré|anglais/i.test(errStr) && langFetch === "en") {
+          setLog((l) =>
+            prependUnique(
+              l,
+              "ℹ️ Build anglais non publié sur le site : repassez en Français ou configurez windowsEn + gameVersionEn.",
+            ),
+          );
+        }
         if (networkError) {
           setIsOffline(true);
           setStatus("ready");
-          if (isInstalled) {
+          if (installed) {
             setLog((l) => prependUnique(l, "📴 Mode hors-ligne : vous pouvez lancer le jeu."));
           }
           return;
@@ -617,14 +744,15 @@ export default function App() {
         return;
       }
 
-      if (!isInstalled && !initialCheckDone.current) {
+      // 3) Nouvelle installation : bienvenue (première fois / déjà installé) une fois la langue connue
+      if (!installed && !initialCheckDone.current) {
         setStatus("ready");
         setShowInitialChoice(true);
         initialCheckDone.current = true;
         return;
       }
 
-      processInstallStatus(m, info, isInstalled);
+      processInstallStatus(m, info, installed);
     } catch (e: any) {
       setStatus("error");
       setLog((l) => prependUnique(l, `❌ ${formatErrorForUser(String(e))}`));
@@ -661,13 +789,26 @@ export default function App() {
   }
 
   /* ====== Actions suite au choix initial ====== */
+  async function handlePickGameLang(lang: "fr" | "en") {
+    try {
+      await invoke("cmd_set_game_lang", { lang });
+      setGameLang(lang);
+      setShowPickGameLang(false);
+      await fetchManifest({ lang });
+      await check();
+    } catch (e: any) {
+      setLog((l) => prependUnique(l, `❌ Langue : ${String(e)}`));
+    }
+  }
+
   async function handleFirstTimeUser() {
     setShowInitialChoice(false);
     setLog((l) => prependUnique(l, "🆕 Nouvelle installation"));
     await invoke("cmd_set_default_install_dir");
     const info = await readInstallInfo();
     setInstallDir(info.installDir);
-    const m = manifest ?? (await fetchManifest());
+    const L: "fr" | "en" = info.gameLang === "fr" || info.gameLang === "en" ? info.gameLang : "fr";
+    const m = manifest ?? (await fetchManifest({ lang: L }));
     startInstallOrUpdate(m);
   }
 
@@ -690,7 +831,9 @@ export default function App() {
       setLog((l) => prependUnique(l, `📁 Dossier du jeu défini : ${dir}`));
 
       const newInfo = await readInstallInfo();
-      const m = manifest ?? (await fetchManifest());
+      const L: "fr" | "en" =
+        newInfo.gameLang === "fr" || newInfo.gameLang === "en" ? newInfo.gameLang : "fr";
+      const m = manifest ?? (await fetchManifest({ lang: L }));
       processInstallStatus(m, newInfo, newInfo.hasExe === true);
       await loadProfile();
     } catch (e: any) {
@@ -701,7 +844,9 @@ export default function App() {
   /* ====== Actions utilisateur ====== */
   async function handleInstallConfirm() {
     setShowInstallPrompt(false);
-    const m = manifest ?? (await fetchManifest());
+    const info = await readInstallInfo();
+    const L: "fr" | "en" = effectiveLangForInfo(info);
+    const m = manifest ?? (await fetchManifest({ lang: L }));
     startInstallOrUpdate(m);
   }
   
@@ -852,7 +997,12 @@ export default function App() {
           tone="primary"
           onClick={async () => {
             setShowUpdateNotice(true);
-            startInstallOrUpdate(manifest ?? (await fetchManifest()));
+            startInstallOrUpdate(
+              manifest ??
+                (await fetchManifest({
+                  lang: effectiveLangForInfo(await readInstallInfo()),
+                })),
+            );
           }}
         />
       );
@@ -948,11 +1098,11 @@ export default function App() {
             <img
               src="/logo.png"
               alt="Pokémon New World Launcher"
-              className="launcher-home-logo"
+              className="launcher-home-logo w-[72px] h-[72px] object-contain rounded-2xl ring-1 ring-white/15 bg-white/5 shadow-lg"
             />
           </div>
           <div className="launcher-home-actions">
-            <ThemeMenu />
+            <ThemeMenu defaultBgUrl={manifest?.launcherBackgroundUrl} />
             <PfpMenu />
             <IconButton
               tone="ghost"
@@ -970,45 +1120,55 @@ export default function App() {
 
         <section className="hero p-6">
           <div className="flex items-start gap-5 flex-wrap">
-            <div className="relative flex-shrink-0">
+            <div className="relative flex-shrink-0 accent-glow-inner rounded-2xl p-0.5 bg-white/5">
               <img
                 src="/logo.png"
                 alt=""
-                className="w-[72px] h-[72px] object-contain rounded-2xl ring-1 ring-white/15 bg-white/5 shadow-lg"
+                className="w-[72px] h-[72px] object-contain rounded-2xl"
               />
-              <div className="absolute -inset-2 -z-10 rounded-3xl bg-[var(--accent)] opacity-10 blur-xl" />
             </div>
 
             <div className="flex-1 min-w-0 space-y-2.5">
               <div className="text-xs text-white/50 font-medium tracking-wider uppercase">Répertoire d'installation</div>
-              <div className="text-sm text-white/85 font-mono bg-white/5 rounded-lg px-3 py-1.5 ring-1 ring-white/8 truncate">
+              <div className="accent-glow-inner text-sm text-white/85 font-mono bg-white/5 rounded-lg px-3 py-1.5 truncate">
                 {installDir || "Non défini"}
               </div>
 
               <div className="flex items-center flex-wrap gap-2 pt-1">
-                <span className={`inline-flex items-center gap-1.5 text-xs font-semibold rounded-full px-3 py-1 ring-1 ${
+                <span className={`inline-flex items-center gap-1.5 text-xs font-semibold rounded-full px-3 py-1 ${
                   !hasExe
-                    ? "bg-red-500/15 text-red-300 ring-red-400/30"
-                    : needUpdate
-                    ? "bg-amber-500/15 text-amber-300 ring-amber-400/30"
-                    : "bg-emerald-500/15 text-emerald-300 ring-emerald-400/30"
+                    ? "bg-red-500/15 text-red-300 ring-1 ring-red-400/30"
+                    : "accent-glow-badge"
                 }`}>
                   <span className={`w-1.5 h-1.5 rounded-full ${
-                    !hasExe ? "bg-red-400" : needUpdate ? "bg-amber-400" : "bg-emerald-400"
+                    !hasExe ? "bg-red-400" : "accent-glow-badge-dot"
                   }`} />
                   {!hasExe ? "Non installé" : needUpdate ? "Mise à jour disponible" : "À jour"}
                 </span>
 
                 {installedVersion && (
-                  <span className="text-xs text-white/60 bg-white/5 rounded-full px-2.5 py-1 ring-1 ring-white/8">
+                  <span className="accent-glow-badge text-xs text-white/80 rounded-full px-2.5 py-1">
                     v{installedVersion}
                   </span>
                 )}
-                {manifest?.version && installedVersion !== manifest.version && (
-                  <span className="text-xs text-[var(--accent)] bg-[var(--accent)]/10 rounded-full px-2.5 py-1 ring-1 ring-[var(--accent)]/25">
+                {manifest?.version && needUpdate && (
+                  <span className="accent-glow-badge text-xs text-white/90 rounded-full px-2.5 py-1">
                     → v{manifest.version}
                   </span>
                 )}
+
+                <label className="inline-flex items-center gap-1.5 text-xs text-white/55">
+                  <span className="whitespace-nowrap">Langue du jeu</span>
+                  <select
+                    className="rounded-lg bg-white/10 border border-white/15 px-2 py-1 text-white/90 text-xs font-medium cursor-pointer max-w-[9rem]"
+                    value={gameLang === "en" ? "en" : "fr"}
+                    onChange={(e) => requestGameLangChange(e.target.value as "fr" | "en")}
+                    aria-label="Langue du jeu"
+                  >
+                    <option value="fr">Français</option>
+                    <option value="en">English</option>
+                  </select>
+                </label>
               </div>
             </div>
 
@@ -1022,6 +1182,7 @@ export default function App() {
                     </span>
                   }
                   tone="ghost"
+                  className="accent-glow-inner"
                   onClick={() => setOpenFolderMenu((o) => !o)}
                 />
                 {openFolderMenu && createPortal(
@@ -1075,7 +1236,7 @@ export default function App() {
         <Card title={
           <div className="flex items-center justify-between gap-3">
             <span className="flex items-center gap-2">
-              <FaUser className="text-[14px] text-[var(--accent)] opacity-90" />
+              <FaUser className="section-header-icon text-[14px]" />
               Profil joueur
             </span>
             {saveList.length > 1 && (
@@ -1087,6 +1248,7 @@ export default function App() {
                   aria-expanded={openSaveMenu}
                   aria-haspopup="listbox"
                 >
+                  <FaFloppyDisk className="text-[11px] text-white/60 flex-shrink-0" />
                   <span className="min-w-0 truncate text-white/95">{saveList[selectedSaveIdx]?.name ?? "Save 1"}</span>
                   <FaChevronDown className={`text-[9px] text-white/55 flex-shrink-0 transition-transform duration-200 ${openSaveMenu ? "rotate-180" : ""}`} />
                 </button>
@@ -1135,7 +1297,7 @@ export default function App() {
                       alt=""
                     />
                   </div>
-                  <div className="absolute -inset-3 -z-10 rounded-3xl bg-[var(--accent)] opacity-[0.08] blur-2xl" />
+                  <div className="absolute -inset-3 -z-10 rounded-3xl opacity-0 pointer-events-none" aria-hidden />
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="text-xl font-bold leading-tight truncate tracking-tight">
@@ -1143,10 +1305,18 @@ export default function App() {
                   </div>
                   <div className="mt-1.5 flex items-center gap-2 flex-wrap">
                     <span className="inline-flex items-center gap-1.5 text-xs rounded-full bg-white/8 px-2.5 py-1 ring-1 ring-white/10 text-white/75">
-                      <FaIdCard className="text-[10px] opacity-70" />
+                      <FaIdCard className="section-header-icon text-[10px]" />
                       <span className="font-semibold text-white/90">
                         {profile.id != null ? profile.id.toString().padStart(5, "0") : "—"}
                       </span>
+                    </span>
+                    <span className="pokedex-badge pokedex-badge--vus inline-flex items-center gap-1.5 text-xs rounded-lg px-2.5 py-1 ring-1">
+                      <FaEye className="text-[10px]" />
+                      <b>{profile.pokedex?.seen ?? "?"}</b> vus
+                    </span>
+                    <span className="pokedex-badge pokedex-badge--caught inline-flex items-center gap-1.5 text-xs rounded-lg px-2.5 py-1 ring-1">
+                      <FaCircleCheck className="text-[10px]" />
+                      <b>{profile.pokedex?.caught ?? "?"}</b> capturés
                     </span>
                   </div>
                 </div>
@@ -1155,11 +1325,11 @@ export default function App() {
               {/* Grille de stats */}
               <div className="grid grid-cols-3 gap-2.5">
                 <div className="stat-tile">
-                  <div className="stat-tile-label"><FaCoins className="text-amber-400/80" /> Argent</div>
+                  <div className="stat-tile-label"><FaCoins className="stat-tile-icon" /> Argent</div>
                   <div className="stat-tile-value">{profile.money != null ? `${profile.money.toLocaleString()}₽` : "—"}</div>
                 </div>
                 <div className="stat-tile">
-                  <div className="stat-tile-label"><FaClock className="text-sky-400/80" /> Temps</div>
+                  <div className="stat-tile-label"><FaClock className="stat-tile-icon" /> Temps</div>
                   <div className="stat-tile-value stat-tile-value--time">
                     {profile.playTimeSec != null
                       ? formatPlayTime(profile.playTimeSec)
@@ -1167,7 +1337,7 @@ export default function App() {
                   </div>
                 </div>
                 <div className="stat-tile">
-                  <div className="stat-tile-label"><FaCalendarDays className="text-violet-400/80" /> Début</div>
+                  <div className="stat-tile-label"><FaCalendarDays className="stat-tile-icon" /> Début</div>
                   <div className="stat-tile-value">
                     {profile.startTime
                       ? new Date(
@@ -1180,28 +1350,11 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Pokédex */}
-              <div className="flex items-center gap-3 flex-wrap">
-                <span className="text-xs font-semibold uppercase tracking-wider text-white/50 flex items-center gap-1.5">
-                  <FaBookOpen className="text-[11px]" /> Pokédex
-                </span>
-                <div className="flex gap-2">
-                  <span className="inline-flex items-center gap-1.5 text-xs rounded-lg bg-sky-500/10 px-2.5 py-1.5 ring-1 ring-sky-400/20 text-sky-300">
-                    <FaEye className="text-[10px]" />
-                    <b>{profile.pokedex?.seen ?? "?"}</b> vus
-                  </span>
-                  <span className="inline-flex items-center gap-1.5 text-xs rounded-lg bg-emerald-500/10 px-2.5 py-1.5 ring-1 ring-emerald-400/20 text-emerald-300">
-                    <FaCircleCheck className="text-[10px]" />
-                    <b>{profile.pokedex?.caught ?? "?"}</b> capturés
-                  </span>
-                </div>
-              </div>
-
               {/* Équipe */}
               {profile.team?.length ? (
                 <div>
                   <div className="text-xs font-semibold uppercase tracking-wider text-white/50 mb-2.5 flex items-center gap-1.5">
-                    <FaGamepad className="text-[11px]" /> Équipe
+                    <FaGamepad className="section-header-icon text-[11px]" /> Équipe
                   </div>
                   <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
                     {profile.team.map((m, i) => {
@@ -1246,19 +1399,30 @@ export default function App() {
               {/* Boss (badges) — juste en-dessous de l'équipe */}
               <div className="boss-section mt-4">
                 <div className="text-xs font-semibold uppercase tracking-wider text-white/50 mb-3 flex items-center gap-2">
-                  <FaCrown className="text-amber-400/90 text-[12px]" />
+                  <FaCrown className="section-header-icon text-[12px]" />
                   Boss
                 </div>
                 <div className="boss-badges-row">
-                  {[1, 2, 3, 4, 5, 6, 7, 8].map((n) => {
-                    const obtained = (profile.badges ?? 0) >= n;
+                  {[1, 2, 3, 4, 5].map((n) => {
+                    // badgesList[n-1] = true si boss n vaincu (tableau 0-indexed)
+                    const obtained = profile.badgesList
+                      ? profile.badgesList[n - 1] === true
+                      : (profile.badges ?? 0) >= n;
+                    const root = lastSavePath ? rootFromSavePath(lastSavePath, installDir) : installDir;
+                    const bossIconPath = obtained
+                      ? toFileUrl(join(root, "graphics", "interface", `boss_icon_${n}.png`))
+                      : toFileUrl(join(root, "graphics", "interface", "boss_unknown.png"));
                     return (
                       <div
                         key={n}
                         className={`boss-badge ${obtained ? "boss-badge--obtained" : ""}`}
                         title={obtained ? `Boss ${n} vaincu` : `Boss ${n}`}
                       >
-                        <span className="boss-badge-id">B{n}</span>
+                        <img
+                          src={bossIconPath}
+                          alt={`Boss ${n}`}
+                          className="boss-badge-icon"
+                        />
                         <span className="boss-badge-label">Boss {n}</span>
                       </div>
                     );
@@ -1280,7 +1444,7 @@ export default function App() {
                     key={i}
                     className="flex items-start gap-2 py-1.5 text-white/75 text-[13px] leading-snug border-b border-white/[0.04] last:border-0"
                   >
-                    <span className="flex-shrink-0 mt-0.5 w-1.5 h-1.5 rounded-full bg-[var(--accent)] opacity-50" />
+                    <span className="flex-shrink-0 mt-0.5 w-1.5 h-1.5 rounded-full accent-glow-badge-dot opacity-80" />
                     <span>{l}</span>
                   </div>
                 ))
@@ -1290,6 +1454,88 @@ export default function App() {
         </div>
       </div>
         )}
+
+        {/* Langue du jeu avant toute installation */}
+        <Modal
+          open={showPickGameLang}
+          title="Langue du jeu"
+          hideActions
+          onCancel={undefined}
+        >
+          <div className="text-white/85 text-sm space-y-4">
+            <p className="text-base">Quelle version du jeu souhaitez-vous installer ? (FR / AN peuvent avoir des numéros différents.)</p>
+            <div className="grid grid-cols-2 gap-3 mt-2">
+              <button
+                type="button"
+                onClick={() => handlePickGameLang("fr")}
+                className="flex flex-col items-center gap-2 p-4 rounded-xl bg-gradient-to-br from-blue-500/20 to-indigo-500/20 hover:from-blue-500/30 hover:to-indigo-500/30 ring-1 ring-white/20 transition-all"
+              >
+                <span className="font-semibold">Français</span>
+                <span className="text-xs opacity-75">Build FR</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handlePickGameLang("en")}
+                className="flex flex-col items-center gap-2 p-4 rounded-xl bg-gradient-to-br from-cyan-500/20 to-teal-500/20 hover:from-cyan-500/30 hover:to-teal-500/30 ring-1 ring-white/20 transition-all"
+              >
+                <span className="font-semibold">English</span>
+                <span className="text-xs opacity-75">Build EN</span>
+              </button>
+            </div>
+          </div>
+        </Modal>
+
+        {/* Migration : installation existante sans game_lang en config */}
+        <Modal
+          open={showMigrationLangDialog}
+          title="Langue de votre installation"
+          hideActions
+          onCancel={undefined}
+        >
+          <div className="text-white/85 text-sm space-y-4">
+            <p>
+              Le launcher ne savait pas quelle langue était installée. Indiquez la langue du build actuellement sur ce PC
+              (pour comparer les mises à jour avec la bonne piste).
+            </p>
+            <div className="grid grid-cols-2 gap-3 mt-2">
+              <button
+                type="button"
+                onClick={() => void confirmMigrationLang("fr")}
+                className="flex flex-col items-center gap-2 p-4 rounded-xl bg-gradient-to-br from-blue-500/20 to-indigo-500/20 hover:from-blue-500/30 hover:to-indigo-500/30 ring-1 ring-white/20 transition-all"
+              >
+                <span className="font-semibold">Français</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => void confirmMigrationLang("en")}
+                className="flex flex-col items-center gap-2 p-4 rounded-xl bg-gradient-to-br from-cyan-500/20 to-teal-500/20 hover:from-cyan-500/30 hover:to-teal-500/30 ring-1 ring-white/20 transition-all"
+              >
+                <span className="font-semibold">English</span>
+              </button>
+            </div>
+          </div>
+        </Modal>
+
+        {/* Confirmation changement de langue (jeu déjà installé) */}
+        <Modal
+          open={showLangSwitchConfirm}
+          title="Changer la langue du jeu"
+          onCancel={() => {
+            setShowLangSwitchConfirm(false);
+            setPendingLang(null);
+          }}
+          onConfirm={() => {
+            if (pendingLang) void applyGameLangChange(pendingLang);
+          }}
+          confirmLabel="Confirmer"
+          cancelLabel="Annuler"
+        >
+          <p>
+            Le prochain téléchargement utilisera l’archive{" "}
+            <strong>{pendingLang === "en" ? "anglaise" : "française"}</strong> et remplacera l’installation actuelle
+            (les sauvegardes sont conservées comme d’habitude).
+          </p>
+        </Modal>
 
         {/* Modal de choix initial */}
         <Modal
