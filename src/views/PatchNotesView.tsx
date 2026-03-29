@@ -42,7 +42,9 @@ export default function PatchNotesView({ siteUrl }: { siteUrl: string }) {
       .then((res) => {
         if (!cancelled && res?.success && res?.patchnotes) setData(res.patchnotes);
       })
-      .catch(() => {})
+      .catch((e) => {
+        console.warn("[PNW] PatchNotes:", e);
+      })
       .finally(() => {
         if (!cancelled) setLoading(false);
       });

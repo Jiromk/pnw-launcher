@@ -197,7 +197,7 @@ export default function GuideView({
           });
         }
       })
-      .catch(() => {})
+      .catch((e) => { console.warn("[PNW] Guide:", e); })
       .finally(() => setLoading(false));
   }, [siteUrl]);
 

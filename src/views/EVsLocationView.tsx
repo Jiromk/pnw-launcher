@@ -96,7 +96,7 @@ export default function EVsLocationView({ siteUrl }: { siteUrl: string }) {
           setPokedexLookup(buildPokedexLookup(pokedexRes.pokedex.entries));
         }
       })
-      .catch(() => {})
+      .catch((e) => { console.warn("[PNW] EVs location:", e); })
       .finally(() => setLoading(false));
   }, [base]);
 

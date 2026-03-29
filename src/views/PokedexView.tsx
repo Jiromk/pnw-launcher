@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
+import { invoke } from "@tauri-apps/api/core";
 import {
   FaBookOpen,
   FaStar,
@@ -17,8 +18,13 @@ import {
   FaSkull,
   FaRadiation,
   FaPersonRunning,
+  FaEye,
+  FaCircleCheck,
+  FaCrosshairs,
+  FaBurst,
 } from "react-icons/fa6";
 import { getTypeStyle, getTypeLabel } from "../utils/typeStyles";
+import type { PlayerProfile } from "../types";
 
 const SECRET_HASH = "53f7981a8813ea030341e0e6fb3c146a2977a230cc0ef43070f5579228bf898c";
 
@@ -160,6 +166,24 @@ function normalize(str: string) {
   return str.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
 }
 
+/** Alias manuels : nom Data/2.dat → nom(s) utilisé(s) sur le site. */
+const NAME_ALIASES: Record<string, string[]> = {
+  "scovillain": ["scovilain"],
+  "scorrompu": ["scorruption"],
+  "medhyena": ["medhyena"],
+  "grahyena": ["grahyena"],
+  "chamallot": ["chamallot"],
+  "camerupt": ["camerupt"],
+  "grelacon": ["grelacon"],
+  "seracrawl": ["seracrawl"],
+  "kungfouine": ["kungfouine"],
+  "farigiraf": ["farigiraf"],
+  "galvaptor": ["galvaptor"],
+  "gigagla": ["gigagla"],
+  "ixon": ["ixon"],
+  "dogrino": ["dogrino"],
+};
+
 function TypeDropdown({
   value,
   options,
@@ -222,7 +246,7 @@ function TypeDropdown({
   );
 }
 
-export default function PokedexView({ siteUrl }: { siteUrl: string }) {
+export default function PokedexView({ siteUrl, profile }: { siteUrl: string; profile?: PlayerProfile | null }) {
   const [entries, setEntries] = useState<PokeEntry[]>([]);
   const [extradexEntries, setExtradexEntries] = useState<PokeEntry[]>([]);
   const [activeDex, setActiveDex] = useState<"pokedex" | "extradex">("pokedex");
@@ -231,10 +255,78 @@ export default function PokedexView({ siteUrl }: { siteUrl: string }) {
   const [type1, setType1] = useState<string | null>(null);
   const [type2, setType2] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"grid" | "table">("grid");
+  const [statusFilter, setStatusFilter] = useState<"all" | "seen" | "caught" | "unseen">("all");
   const [selected, setSelected] = useState<PokeEntry | null>(null);
   const [showEasterEgg, setShowEasterEgg] = useState(false);
 
   const base = siteUrl.replace(/\/$/, "");
+
+  // Table des noms d'espèces depuis les fichiers du jeu (index = ID interne PSDK)
+  const [speciesNames, setSpeciesNames] = useState<string[]>([]);
+  useEffect(() => {
+    invoke<string>("cmd_psdk_french_species_names")
+      .then((json) => { try { setSpeciesNames(JSON.parse(json)); } catch {} })
+      .catch(() => {});
+  }, []);
+
+  // Données du Pokédex du joueur (depuis la sauvegarde)
+  const capturedIds = profile?.pokedex?.capturedIds ?? [];
+  const seenIds = profile?.pokedex?.seenIds ?? [];
+  const foughtCounts = profile?.pokedex?.foughtCounts;
+  const capturedCounts = profile?.pokedex?.capturedCounts;
+
+  // Mapping : nom normalisé → { seen, caught, internalId }
+  const nameStatusMap = useMemo(() => {
+    const map = new Map<string, { seen: boolean; caught: boolean; internalId: number }>();
+    if (speciesNames.length === 0) return map;
+    const seenSet = new Set(seenIds);
+    const capturedSet = new Set(capturedIds);
+    for (let i = 0; i < speciesNames.length; i++) {
+      const name = speciesNames[i];
+      if (!name) continue;
+      const id1 = i + 1;
+      if (seenSet.has(id1) || capturedSet.has(id1)) {
+        const norm = normalize(name);
+        const status = {
+          seen: seenSet.has(id1),
+          caught: capturedSet.has(id1),
+          internalId: id1,
+        };
+        map.set(norm, status);
+        // Enregistrer aussi les alias (noms alternatifs utilisés sur le site)
+        const aliases = NAME_ALIASES[norm];
+        if (aliases) {
+          for (const alias of aliases) map.set(alias, status);
+        }
+      }
+    }
+    return map;
+  }, [speciesNames, seenIds, capturedIds]);
+
+  const hasSaveData = nameStatusMap.size > 0;
+
+  // Lookup pour une entrée du Pokédex
+  const getStatus = useCallback((entry: PokeEntry) => {
+    return nameStatusMap.get(normalize(entry.name)) ?? null;
+  }, [nameStatusMap]);
+
+  // Compteurs filtrés par les entrées existantes dans le Pokédex du site
+  const { matchedCaught, matchedSeenOnly } = useMemo(() => {
+    let caught = 0;
+    let seenOnly = 0;
+    entries.forEach((e) => {
+      const s = nameStatusMap.get(normalize(e.name));
+      if (s?.caught) caught++;
+      else if (s?.seen) seenOnly++;
+    });
+    return { matchedCaught: caught, matchedSeenOnly: seenOnly };
+  }, [entries, nameStatusMap]);
+
+  // Debug: diagnostic matching (console uniquement)
+  useEffect(() => {
+    if (speciesNames.length === 0 || entries.length === 0) return;
+    console.log(`[PNW Pokédex] Sauvegarde: ${seenIds.length} vus, ${capturedIds.length} capturés | Matchés sur le site: ${matchedCaught} capturés, ${matchedSeenOnly} vus seulement`);
+  }, [speciesNames, entries, seenIds, capturedIds, matchedCaught, matchedSeenOnly]);
 
   const handleSearchChange = useCallback(async (value: string) => {
     setSearch(value);
@@ -289,10 +381,18 @@ export default function PokedexView({ siteUrl }: { siteUrl: string }) {
         const et = (e.types || []).map((t) => t.toLowerCase());
         if (!types.every((t) => et.includes(t))) return false;
       }
+      if (hasSaveData && statusFilter !== "all") {
+        const s = nameStatusMap.get(normalize(e.name));
+        const seen = s?.seen ?? false;
+        const caught = s?.caught ?? false;
+        if (statusFilter === "caught" && !caught) return false;
+        if (statusFilter === "seen" && (!seen || caught)) return false;
+        if (statusFilter === "unseen" && seen) return false;
+      }
       return true;
     });
     return [...list].sort(sortByNum);
-  }, [currentEntries, search, type1, type2]);
+  }, [currentEntries, search, type1, type2, statusFilter, hasSaveData, nameStatusMap]);
 
   const fullImageUrl = (url: string | undefined) => {
     if (!url) return "";
@@ -318,6 +418,16 @@ export default function PokedexView({ siteUrl }: { siteUrl: string }) {
           <div>
             <h1 className="dex-panel-title">Pokédex</h1>
             <p className="dex-panel-subtitle">Pokémon New World — {entries.length} créatures</p>
+            {hasSaveData && activeDex === "pokedex" && (
+              <div className="dex-panel-progress">
+                <span className="dex-progress-item dex-progress-item--seen">
+                  <FaEye size={11} /> {seenIds.length} vus
+                </span>
+                <span className="dex-progress-item dex-progress-item--caught">
+                  <FaCircleCheck size={11} /> {capturedIds.length} capturés
+                </span>
+              </div>
+            )}
           </div>
         </button>
         <button
@@ -375,6 +485,43 @@ export default function PokedexView({ siteUrl }: { siteUrl: string }) {
             <TypeDropdown label="Type 2" value={type2} options={allTypes} onChange={setType2} />
           </div>
         </div>
+        {hasSaveData && (
+          <div className="pokedex-status-filter">
+            <span className="pokedex-filter-label">
+              <FaEye /> Progression
+            </span>
+            <div className="pokedex-status-filter-btns" role="group">
+              <button
+                type="button"
+                className={`pokedex-status-btn ${statusFilter === "all" ? "active" : ""}`}
+                onClick={() => setStatusFilter("all")}
+              >
+                Tous
+              </button>
+              <button
+                type="button"
+                className={`pokedex-status-btn pokedex-status-btn--caught ${statusFilter === "caught" ? "active" : ""}`}
+                onClick={() => setStatusFilter("caught")}
+              >
+                <FaCircleCheck size={11} /> Capturés
+              </button>
+              <button
+                type="button"
+                className={`pokedex-status-btn pokedex-status-btn--seen ${statusFilter === "seen" ? "active" : ""}`}
+                onClick={() => setStatusFilter("seen")}
+              >
+                <FaEye size={11} /> Vus
+              </button>
+              <button
+                type="button"
+                className={`pokedex-status-btn pokedex-status-btn--unseen ${statusFilter === "unseen" ? "active" : ""}`}
+                onClick={() => setStatusFilter("unseen")}
+              >
+                <FaXmark size={11} /> Non vus
+              </button>
+            </div>
+          </div>
+        )}
       </section>
 
       <p className="pokedex-count">
@@ -385,29 +532,47 @@ export default function PokedexView({ siteUrl }: { siteUrl: string }) {
       <div style={{ maxHeight: "calc(100vh - 380px)", overflowY: "auto", paddingRight: 4 }}>
         {viewMode === "grid" && (
           <div className="pokedex-grid">
-            {filtered.map((p, i) => (
-              <button
-                key={`${p.num}-${p.name}-${i}`}
-                type="button"
-                className="pokedex-card"
-                onClick={() => setSelected(p)}
-              >
-                <div className="pokedex-card-sprite">
-                  {fullImageUrl(p.imageUrl) ? (
-                    <img src={fullImageUrl(p.imageUrl)} alt="" loading="lazy" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
-                  ) : (
-                    <FaPaw size={32} style={{ color: "var(--muted)", opacity: 0.6 }} />
+            {filtered.map((p, i) => {
+              const st = hasSaveData ? getStatus(p) : null;
+              const isSeen = st?.seen ?? false;
+              const isCaught = st?.caught ?? false;
+              return (
+                <button
+                  key={`${p.num}-${p.name}-${i}`}
+                  type="button"
+                  className={`pokedex-card${isCaught ? " pokedex-card--caught" : isSeen ? " pokedex-card--seen" : ""}`}
+                  onClick={() => setSelected(p)}
+                >
+                  {hasSaveData && (
+                    <div className="pokedex-card-badges">
+                      {isCaught ? (
+                        <span className="pokedex-badge pokedex-badge--caught" title="Capturé">
+                          <FaCircleCheck size={13} />
+                        </span>
+                      ) : isSeen ? (
+                        <span className="pokedex-badge pokedex-badge--seen" title="Vu">
+                          <FaEye size={13} />
+                        </span>
+                      ) : null}
+                    </div>
                   )}
-                </div>
-                <span className="pokedex-card-num">#{p.num ?? p.number ?? "?"}</span>
-                <span className="pokedex-card-name">{p.name}</span>
-                <div className="pokedex-card-types">
-                  {p.types?.map((t) => (
-                    <span key={t} className="pokedex-type-pill" style={getTypeStyle(t)}>{t}</span>
-                  ))}
-                </div>
-              </button>
-            ))}
+                  <div className="pokedex-card-sprite">
+                    {fullImageUrl(p.imageUrl) ? (
+                      <img src={fullImageUrl(p.imageUrl)} alt="" loading="lazy" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+                    ) : (
+                      <FaPaw size={32} style={{ color: "var(--muted)", opacity: 0.6 }} />
+                    )}
+                  </div>
+                  <span className="pokedex-card-num">#{p.num ?? p.number ?? "?"}</span>
+                  <span className="pokedex-card-name">{p.name}</span>
+                  <div className="pokedex-card-types">
+                    {p.types?.map((t) => (
+                      <span key={t} className="pokedex-type-pill" style={getTypeStyle(t)}>{t}</span>
+                    ))}
+                  </div>
+                </button>
+              );
+            })}
           </div>
         )}
         {viewMode === "table" && (
@@ -415,6 +580,7 @@ export default function PokedexView({ siteUrl }: { siteUrl: string }) {
             <table className="w-full text-sm">
               <thead className="sticky top-0 z-10" style={{ background: "var(--bg)" }}>
                 <tr style={{ color: "var(--muted)" }}>
+                  {hasSaveData && <th className="text-center py-2 px-2" style={{ width: 40 }}>Statut</th>}
                   <th className="text-left py-2 px-2">N°</th>
                   <th className="text-left py-2 px-2">Pokémon</th>
                   <th className="text-left py-2 px-2">Image</th>
@@ -424,13 +590,26 @@ export default function PokedexView({ siteUrl }: { siteUrl: string }) {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((p, i) => (
+                {filtered.map((p, i) => {
+                  const st = hasSaveData ? getStatus(p) : null;
+                  const isSeen = st?.seen ?? false;
+                  const isCaught = st?.caught ?? false;
+                  return (
                   <tr
                     key={`table-${i}-${p.num}-${p.name}`}
                     className="border-b cursor-pointer hover:bg-white/5"
                     style={{ borderColor: "rgba(255,255,255,.06)" }}
                     onClick={() => setSelected(p)}
                   >
+                    {hasSaveData && (
+                      <td className="py-2 px-2 text-center">
+                        {isCaught ? (
+                          <FaCircleCheck size={14} style={{ color: "#4ade80" }} />
+                        ) : isSeen ? (
+                          <FaEye size={14} style={{ color: "#60a5fa" }} />
+                        ) : null}
+                      </td>
+                    )}
                     <td className="py-2 px-2">#{p.num ?? p.number ?? "?"}</td>
                     <td className="py-2 px-2 font-semibold">{p.name}</td>
                     <td className="py-2 px-2">
@@ -448,15 +627,16 @@ export default function PokedexView({ siteUrl }: { siteUrl: string }) {
                     <td className="py-2 px-2">{p.rarity ?? "—"}</td>
                     <td className="py-2 px-2">{p.obtention ?? "—"}</td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
         )}
       </div>
 
-      {/* Modal détail */}
-      {selected && (
+      {/* Modal détail — portail sur document.body pour couvrir tout l'écran */}
+      {selected && createPortal(
         <div
           className="pokedex-modal-overlay"
           onClick={() => setSelected(null)}
@@ -506,9 +686,49 @@ export default function PokedexView({ siteUrl }: { siteUrl: string }) {
                   <span>{selected.obtention || selected.location}</span>
                 </div>
               )}
+              {hasSaveData && (() => {
+                const st = getStatus(selected);
+                const isSeen = st?.seen ?? false;
+                const isCaught = st?.caught ?? false;
+                const internalId = st?.internalId ?? 0;
+                const fought = foughtCounts && internalId > 0 ? (foughtCounts[internalId] ?? 0) : 0;
+                const caught = capturedCounts && internalId > 0 ? (capturedCounts[internalId] ?? 0) : 0;
+                if (!isSeen && !isCaught) return null;
+                return (
+                  <div className="pokedex-modal-save-stats">
+                    <div className="pokedex-modal-save-title">Progression du joueur</div>
+                    <div className="pokedex-modal-save-row">
+                      {isCaught ? (
+                        <span className="pokedex-save-tag pokedex-save-tag--caught">
+                          <FaCircleCheck size={12} /> Capturé
+                        </span>
+                      ) : isSeen ? (
+                        <span className="pokedex-save-tag pokedex-save-tag--seen">
+                          <FaEye size={12} /> Vu
+                        </span>
+                      ) : null}
+                    </div>
+                    {(fought > 0 || caught > 0) && (
+                      <div className="pokedex-modal-save-details">
+                        {fought > 0 && (
+                          <span className="pokedex-save-detail">
+                            <FaCrosshairs size={11} /> {fought} combat{fought > 1 ? "s" : ""}
+                          </span>
+                        )}
+                        {caught > 0 && (
+                          <span className="pokedex-save-detail">
+                            <FaBurst size={11} /> {caught} capture{caught > 1 ? "s" : ""}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

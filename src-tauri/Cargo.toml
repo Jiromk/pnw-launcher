@@ -1,10 +1,10 @@
 [package]
 name = "pnw-launcher"
-version = "1.0.0"
+version = "1.0.4"
 edition = "2021"
 
 [dependencies]
-tauri = { version = "2", features = ["protocol-asset"] }
+tauri = { version = "2", features = ["protocol-asset", "devtools"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
@@ -20,6 +20,7 @@ reqwest = { version = "0.12", default-features = false, features = [
 ] }
 
 walkdir = "2"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 zip = { version = "0.6", default-features = false, features = ["deflate"] }
 dirs = "5"
 base64 = "0.22"
@@ -29,6 +30,13 @@ tauri-plugin-dialog = "2"
 
 # Espace disque (vérif avant mise à jour)
 sysinfo = "0.31"
+
+# Discord Rich Presence
+discord-presence = "3.2"
+
+# Ouvrir URL (navigateur / installateur)
+open = "5"
+tauri-plugin-updater = "2"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

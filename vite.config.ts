@@ -10,7 +10,15 @@ export default defineConfig({
   },
   server: {
     port: 5174,
-    strictPort: false
+    strictPort: false,
+    /** Proxy GTS : évite le blocage CORS en `vite` seul (sans shell Tauri). */
+    proxy: {
+      "/gts-proxy": {
+        target: "http://gts.kawasemi.de",
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/gts-proxy/, ""),
+      },
+    },
   },
   clearScreen: false
 });

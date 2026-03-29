@@ -92,7 +92,9 @@ export function Modal({
     <div className="fixed inset-0 z-[9999] flex items-center justify-center">
       <div className="pnw-modal-overlay absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onCancel} />
       <div className="pnw-modal-content relative w-[min(520px,92vw)] rounded-2xl border border-white/12 bg-gradient-to-b from-[#0f1629] to-[#0c1222] shadow-2xl p-5">
-        {title ? <div className="text-lg font-semibold mb-3">{title}</div> : null}
+        {title ? (
+          <div className="text-lg font-semibold mb-4 text-white/95 tracking-tight">{title}</div>
+        ) : null}
         <div className="text-sm">{children}</div>
         {!hideActions ? (
           <div className="mt-5 flex items-center justify-end gap-2">

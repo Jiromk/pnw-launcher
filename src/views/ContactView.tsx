@@ -70,7 +70,7 @@ export default function ContactView({
       .then((d) => {
         if (d?.backgroundImage) setBgImage(d.backgroundImage);
       })
-      .catch(() => {});
+      .catch((e) => { console.warn("[PNW] Contact config:", e); });
   }, [apiBase]);
 
   const canSubmit =

@@ -76,7 +76,7 @@ export default function ItemLocationView({ siteUrl }: { siteUrl: string }) {
           else if (Array.isArray(cfg)) setEntries(cfg);
         }
       })
-      .catch(() => {})
+      .catch((e) => { console.warn("[PNW] Item location:", e); })
       .finally(() => setLoading(false));
   }, [siteUrl]);
 

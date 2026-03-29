@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/schema.json",
   "productName": "PNW Launcher",
-  "version": "1.0.0",
+  "version": "1.0.4",
   "identifier": "com.pnw.launcher",
 
   "build": {
@@ -30,8 +30,18 @@
     }
   },
 
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://pokemonnewworld.com/api/downloads/launcher-update?target={{target}}&arch={{arch}}&current_version={{current_version}}"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEM1NTgwNzZENTE3MzVCNEIKUldSTFczTlJiUWRZeGFyVkFXUHQ2R3NnRHYzMnZtMDAxVlQrcFdwQlpQN0R4b1pacngrZlVMZGoK"
+    }
+  },
+
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": ["nsis"],
     "icon": ["icons/icon.ico"],
     "windows": {
@@ -42,7 +52,8 @@
         "sidebarImage": null,
         "installMode": "currentUser",
         "languages": ["French", "English"],
-        "startMenuFolder": "Pokemon New World"
+        "startMenuFolder": "Pokemon New World",
+        "installerHooks": "bundler/nsis/hooks.nsh"
       }
     }
   }

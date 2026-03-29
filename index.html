@@ -9,6 +9,18 @@
     <title>PNW — Launcher</title>
   </head>
   <body>
+    <script>
+      (function(){
+        try {
+          var raw = localStorage.getItem("pnw.theme");
+          if (raw) {
+            var t = JSON.parse(raw);
+            if (t && t.mode === "light") document.documentElement.setAttribute("data-theme", "light");
+            else document.documentElement.setAttribute("data-theme", "dark");
+          } else document.documentElement.setAttribute("data-theme", "dark");
+        } catch (_) { document.documentElement.setAttribute("data-theme", "dark"); }
+      })();
+    </script>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

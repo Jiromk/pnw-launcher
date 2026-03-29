@@ -1,7 +1,7 @@
 {
   "name": "pnw-launcher",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.0.4",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -9,24 +9,27 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "cross-env CARGO_TARGET_DIR=target tauri dev",
-    "tauri:build": "cross-env CARGO_TARGET_DIR=target tauri build"
+    "tauri:build": "cross-env CARGO_TARGET_DIR=target tauri build",
+    "push-update": "node scripts/push-update.mjs"
   },
   "dependencies": {
     "@hyrious/marshal": "^0.3.3",
+    "@supabase/supabase-js": "^2.100.1",
     "@tauri-apps/api": "^2.8.0",
     "@tauri-apps/plugin-dialog": "^2.4.0",
+    "@tauri-apps/plugin-updater": "^2.10.0",
     "fflate": "^0.8.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-icons": "^5.5.0"
   },
   "devDependencies": {
-    "cross-env": "^7.0.3",
     "@tauri-apps/cli": "^2.8.4",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^5.0.2",
     "autoprefixer": "^10.4.20",
+    "cross-env": "^7.0.3",
     "postcss": "^8.4.45",
     "tailwindcss": "^3.4.10",
     "typescript": "^5.6.2",

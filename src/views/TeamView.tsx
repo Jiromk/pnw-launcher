@@ -65,7 +65,7 @@ export default function TeamView({
         );
         setThanks(Array.isArray(config.thanks) ? config.thanks : []);
       })
-      .catch(() => {})
+      .catch((e) => { console.warn("[PNW] Team config:", e); })
       .finally(() => {
         if (!cancelled) setLoading(false);
       });

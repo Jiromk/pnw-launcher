@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { FaScroll, FaMusic, FaBolt, FaArrowRight, FaArrowLeft, FaClock } from "react-icons/fa6";
+import { renderInlineMarkdown } from "../utils/inlineMarkdown";
 
 interface LoreStory {
   slug: string;
@@ -27,56 +28,16 @@ const CHAPTER_BANNER_IMAGES = [
   "https://i.ibb.co/SDW19HLT/background-administrateur2.jpg",
 ];
 
-/** Parse **gras** et *italique* comme sur le site */
-function renderMarkdown(text: string): React.ReactNode {
-  if (!text || typeof text !== "string") return text;
-  let k = 0;
-  function parseBold(str: string): React.ReactNode[] {
-    const out: React.ReactNode[] = [];
-    let rest = str;
-    while (rest) {
-      const a = rest.indexOf("**");
-      if (a === -1) {
-        out.push(...parseItalic(rest));
-        break;
-      }
-      const b = rest.indexOf("**", a + 2);
-      if (b === -1) {
-        out.push(...parseItalic(rest));
-        break;
-      }
-      if (a > 0) out.push(...parseItalic(rest.slice(0, a)));
-      out.push(<strong key={`b${k++}`}>{parseItalic(rest.slice(a + 2, b))}</strong>);
-      rest = rest.slice(b + 2);
-    }
-    return out;
-  }
-  function parseItalic(str: string): React.ReactNode[] {
-    const out: React.ReactNode[] = [];
-    let rest = str;
-    while (rest) {
-      const a = rest.indexOf("*");
-      if (a === -1) {
-        if (rest) out.push(rest);
-        break;
-      }
-      const b = rest.indexOf("*", a + 1);
-      if (b === -1) {
-        out.push(rest);
-        break;
-      }
-      if (a > 0) out.push(rest.slice(0, a));
-      out.push(<em key={`i${k++}`}>{rest.slice(a + 1, b)}</em>);
-      rest = rest.slice(b + 1);
-    }
-    return out;
-  }
-  const parts = parseBold(text);
-  return parts.length ? parts : text;
+/** Titres markdown ATX (# … ## …) sur une seule ligne, comme sur le site */
+function parseAtxHeading(p: string): { level: number; text: string } | null {
+  const m = p.trim().match(/^(#{1,6})\s+(.+)$/);
+  if (!m) return null;
+  return { level: m[1].length, text: m[2].trim() };
 }
 
 function RenderContent({ paragraphs }: { paragraphs: string[] }) {
   if (!Array.isArray(paragraphs) || paragraphs.length === 0) return null;
+  const headingTags = ["h2", "h3", "h4", "h5", "h6"] as const;
   return (
     <>
       {paragraphs.map((p, i) => {
@@ -86,9 +47,26 @@ function RenderContent({ paragraphs }: { paragraphs: string[] }) {
           if (src) return <img key={i} src={src} alt="" className="lore-story-image" />;
           return null;
         }
+        const atx = typeof p === "string" ? parseAtxHeading(p) : null;
+        if (atx) {
+          const Tag = headingTags[Math.min(atx.level - 1, 5)];
+          return (
+            <Tag
+              key={i}
+              className={`lore-story-md-heading lore-story-md-heading--${atx.level}`}
+            >
+              {renderInlineMarkdown(atx.text)}
+            </Tag>
+          );
+        }
+        const isTitleOnly =
+          typeof p === "string" && /^\s*\[TITLE\].*\[\/TITLE\]\s*$/.test(p);
         return (
-          <p key={i} className="lore-story-p">
-            {renderMarkdown(p)}
+          <p
+            key={i}
+            className={`lore-story-p${isTitleOnly ? " lore-story-p--title" : ""}`}
+          >
+            {renderInlineMarkdown(p)}
           </p>
         );
       })}
@@ -124,7 +102,7 @@ export default function LoreView({ siteUrl }: { siteUrl: string }) {
           if (d.lore?.pageBackground?.trim()) setPageBg(d.lore.pageBackground.trim());
         }
       })
-      .catch(() => {})
+      .catch((e) => { console.warn("[PNW] Lore:", e); })
       .finally(() => setLoading(false));
   }, [base]);
 
@@ -156,7 +134,7 @@ export default function LoreView({ siteUrl }: { siteUrl: string }) {
           <div className="lore-story-hero-inner">
             <h1 className="lore-story-hero-title">{title}</h1>
             {description && (
-              <p className="lore-story-hero-description">{renderMarkdown(description)}</p>
+              <p className="lore-story-hero-description">{renderInlineMarkdown(description)}</p>
             )}
           </div>
         </header>
@@ -179,7 +157,7 @@ export default function LoreView({ siteUrl }: { siteUrl: string }) {
             <span className="lore-story-chapter-label">Chapitre</span>
             <h2 className="lore-story-content-title">{title}</h2>
             <div className="lore-story-meta">
-              {intro && <p className="lore-story-intro">{renderMarkdown(intro)}</p>}
+              {intro && <p className="lore-story-intro">{renderInlineMarkdown(intro)}</p>}
               {author && <p className="lore-story-author">Rapporté par {author}.</p>}
             </div>
             <div className="lore-story-body">

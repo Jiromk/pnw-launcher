@@ -2,7 +2,7 @@
 import React from "react";
 import { Button } from "./ui";
 import { FaDownload, FaX, FaSpinner } from "react-icons/fa6";
-import type { RemoteManifest } from "./types";
+import type { Manifest as RemoteManifest } from "./types";
 
 type UpdateDialogProps = {
   open: boolean;
@@ -35,12 +35,12 @@ export function UpdateDialog({
 
   return (
     <div className="fixed inset-0 z-[9999] flex items-center justify-center">
-      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={!isUpdating ? onCancel : undefined} />
-      <div className="relative w-[min(600px,92vw)] rounded-2xl border border-white/20 bg-gradient-to-b from-[#1a1f3a] via-[#0f1629] to-[#0c1222] shadow-2xl p-6">
+      <div className="pnw-update-overlay absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={!isUpdating ? onCancel : undefined} />
+      <div className="pnw-update-content relative w-[min(600px,92vw)] rounded-2xl border border-white/20 bg-gradient-to-b from-[#1a1f3a] via-[#0f1629] to-[#0c1222] shadow-2xl p-6">
         {/* Header avec icône */}
         <div className="flex items-center gap-4 mb-6">
-          <div className="w-16 h-16 rounded-xl bg-gradient-to-br from-blue-500/20 to-indigo-500/20 ring-2 ring-blue-500/30 flex items-center justify-center">
-            <FaDownload className="text-3xl text-blue-400" />
+          <div className="w-16 h-16 rounded-xl accent-glow-inner flex items-center justify-center ring-1 ring-white/10 bg-white/5">
+            <FaDownload className="text-3xl text-[var(--accent)]" />
           </div>
           <div className="flex-1">
             <h2 className="text-2xl font-bold text-white mb-1">Mise à jour disponible</h2>
@@ -57,7 +57,7 @@ export function UpdateDialog({
         </div>
 
         {/* Version info avec badge */}
-        <div className="mb-6 p-4 rounded-xl bg-gradient-to-br from-blue-500/10 to-indigo-500/10 ring-1 ring-blue-500/20">
+        <div className="mb-6 p-4 rounded-xl accent-glow-inner bg-white/5 ring-1 ring-white/10">
           <div className="flex items-center justify-between mb-2">
             <span className="text-sm text-white/70">Version actuelle</span>
             <span className="px-3 py-1 rounded-lg bg-white/10 text-sm font-semibold text-white/90">
@@ -66,7 +66,7 @@ export function UpdateDialog({
           </div>
           <div className="flex items-center justify-between">
             <span className="text-sm text-white/70">Nouvelle version</span>
-            <span className="px-3 py-1 rounded-lg bg-gradient-to-br from-blue-500/90 to-indigo-500/90 text-sm font-bold text-white shadow-lg">
+            <span className="px-3 py-1 rounded-lg accent-glow-badge text-sm font-bold text-white/95">
               v{remoteManifest.version}
             </span>
           </div>
@@ -135,7 +135,7 @@ export function UpdateDialog({
               </Button>
               <Button
                 onClick={onUpdate}
-                className="flex-1 bg-gradient-to-br from-blue-500/90 to-indigo-500/90 hover:from-blue-500 hover:to-indigo-500 text-white font-semibold shadow-lg"
+                className="flex-1 accent-glow-btn hover:brightness-110 text-white font-semibold shadow-lg"
               >
                 <FaDownload className="mr-2" />
                 Mettre à jour
@@ -144,7 +144,7 @@ export function UpdateDialog({
           ) : (
             <Button
               disabled
-              className="flex-1 bg-gradient-to-br from-blue-500/90 to-indigo-500/90 text-white font-semibold shadow-lg cursor-not-allowed"
+              className="flex-1 accent-glow-btn text-white font-semibold shadow-lg cursor-not-allowed opacity-70"
             >
               <FaSpinner className="mr-2 animate-spin" />
               Mise à jour en cours...

@@ -1,8 +1,9 @@
 // src/profile.ts
-// Decode PSDK/Essentials save (Ruby Marshal) — version sans shiny
+// Decode PSDK/Essentials save (Ruby Marshal)
 import { load } from "@hyrious/marshal";
 import { gunzipSync, unzlibSync } from "fflate";
-import type { PlayerProfile, TeamMember, PokedexInfo } from "./types";
+import type { PlayerProfile, TeamMember, PokedexInfo, BoxPokemon, PCBox } from "./types";
+import { detectShinyFromMarshal } from "./shinyDetect";
 
 type AnyObj = Record<string | symbol, any>;
 const TD = new TextDecoder();
@@ -65,6 +66,16 @@ function getIvar<T = any>(obj: any, names: string[]): T | undefined {
   for (const k of Reflect.ownKeys(obj)) {
     const n = k2s(k as any);
     if (names.includes(n)) return (obj as any)[k as any];
+  }
+  return undefined;
+}
+/** Comme getIvar mais respecte l’ordre de `names` (première clé existante gagne). À utiliser quand plusieurs alias coexistent (@id vs @species_id). */
+function getIvarOrdered<T = any>(obj: any, names: string[]): T | undefined {
+  if (!obj || typeof obj !== "object") return undefined;
+  for (const want of names) {
+    for (const k of Reflect.ownKeys(obj)) {
+      if (k2s(k as any) === want) return (obj as any)[k as any];
+    }
   }
   return undefined;
 }
@@ -184,6 +195,22 @@ export function parseSave(raw: Uint8Array): PlayerProfile | null {
     asInt(bfs(root, (k) => ["@start_time","@start_date","@start"].includes(k)));
   if (start != null) out.startTime = start;
 
+  // Badges (boss / gym) — PSDK utilise @badges comme tableau de booléens
+  const badgesRaw =
+    getIvar(trainer, ["@badges","@gym_badges","@boss_badges"]) ??
+    bfs(root, (k) => ["@badges","@gym_badges","@boss_badges"].includes(k));
+  
+  if (Array.isArray(badgesRaw)) {
+    // @badges est un tableau de booléens : [true, false, false, ...]
+    // On compte le nombre de true pour avoir le total, et on garde aussi le détail
+    const badgesList: boolean[] = badgesRaw.map((v) => v === true);
+    out.badges = badgesList.filter(Boolean).length;
+    out.badgesList = badgesList;
+  } else {
+    const badges = asInt(badgesRaw);
+    if (badges != null && badges >= 0) out.badges = badges;
+  }
+
   // Pokédex (PSDK: root[@pokedex] avec @seen, @captured, @has_captured)
   const dex = getByKey(root, "@pokedex") ?? getIvar(trainer, ["@pokedex","@dex"]) ?? bfs(root, (k) => k === "@pokedex" || k === "@dex");
   const pokedex: PokedexInfo = {};
@@ -203,32 +230,105 @@ export function parseSave(raw: Uint8Array): PlayerProfile | null {
       }
       pokedex.capturedIds = ids;
     }
+    const hasSeenAndForms = get("@has_seen_and_forms");
+    if (Array.isArray(hasSeenAndForms)) {
+      const ids: number[] = [];
+      for (let i = 0; i < hasSeenAndForms.length; i++) {
+        const v = typeof hasSeenAndForms[i] === "number" ? hasSeenAndForms[i] : 0;
+        if (v > 0) ids.push(i + 1);
+      }
+      pokedex.seenIds = ids;
+    }
+    const nbFought = get("@nb_fought");
+    if (Array.isArray(nbFought)) {
+      pokedex.foughtCounts = nbFought.map((v: unknown) => (typeof v === "number" ? v : 0));
+    }
+    const nbCaptured = get("@nb_captured");
+    if (Array.isArray(nbCaptured)) {
+      pokedex.capturedCounts = nbCaptured.map((v: unknown) => (typeof v === "number" ? v : 0));
+    }
   }
   out.pokedex = pokedex;
 
-  // Équipe (sans shiny)
+  // Helper: parse un objet PFM::Pokemon Marshal → TeamMember
+  function parsePokemon(pm: any): TeamMember {
+    const dexId = getIvarOrdered(pm, ["@id", "@dex_id", "@species_id"]);
+    const level = getIvar(pm, ["@level"]);
+    const nick  = getIvar(pm, ["@given_name","@nickname"]);
+    const form  = getIvar(pm, ["@form","@forme","@form_index"]);
+    const gdr   = getIvar(pm, ["@gender","@sex"]);
+    const speciesId = asInt(dexId) ?? 0;
+    return {
+      code: speciesId,
+      form: asInt(form) ?? null,
+      level: asInt(level),
+      nickname: asStr(nick) ?? null,
+      speciesName: null,
+      gender: ((): 0 | 1 | 2 | undefined => {
+        const v = asInt(gdr);
+        return v == null ? undefined : (v === 1 ? 1 : 0);
+      })(),
+      isShiny: detectShinyFromMarshal(pm, speciesId),
+      ivHp:  asInt(getIvar(pm, ["@iv_hp"]))  ?? 0,
+      ivAtk: asInt(getIvar(pm, ["@iv_atk"])) ?? 0,
+      ivDfe: asInt(getIvar(pm, ["@iv_dfe"])) ?? 0,
+      ivSpd: asInt(getIvar(pm, ["@iv_spd"])) ?? 0,
+      ivAts: asInt(getIvar(pm, ["@iv_ats"])) ?? 0,
+      ivDfs: asInt(getIvar(pm, ["@iv_dfs"])) ?? 0,
+      nature: asInt(getIvar(pm, ["@nature"])) ?? null,
+      ability: asInt(getIvar(pm, ["@ability", "@ability_index"])) ?? null,
+      itemHolding: asInt(getIvar(pm, ["@item_holding"])) ?? null,
+      exp: asInt(getIvar(pm, ["@exp"])) ?? null,
+      trainerName: asStr(getIvar(pm, ["@trainer_name"])) ?? null,
+      moves: (() => {
+        const skills = getIvar(pm, ["@skills_set"]);
+        if (!Array.isArray(skills)) return [];
+        const ids: number[] = [];
+        for (const sk of skills) {
+          const mid = asInt(getIvar(sk, ["@id"]));
+          if (mid != null && mid > 0) ids.push(mid);
+        }
+        return ids;
+      })(),
+    };
+  }
+
+  // Équipe (avec shiny + IVs)
   const party =
     getIvar(trainer, PARTY_KEYS) ??
     bfs(root, (k, v) => PARTY_KEYS.includes(k) && Array.isArray(v));
   if (Array.isArray(party)) {
-    out.team = party.slice(0, 6).map((pm: any): TeamMember => {
-      const dexId = getIvar(pm, ["@id","@dex_id","@species_id"]);
-      const level = getIvar(pm, ["@level"]);
-      const nick  = getIvar(pm, ["@given_name","@nickname"]);
-      const form  = getIvar(pm, ["@form","@forme","@form_index"]);
-      const gdr   = getIvar(pm, ["@gender","@sex"]);
-      return {
-        code: asInt(dexId),
-        form: asInt(form) ?? null,
-        level: asInt(level),
-        nickname: asStr(nick) ?? null,
-        speciesName: null,
-        gender: ((): 0 | 1 | 2 | undefined => {
-          const v = asInt(gdr);
-          return v == null ? undefined : (v === 1 ? 1 : 0);
-        })(),
-      };
-    });
+    out.team = party.slice(0, 6).map((pm: any): TeamMember => parsePokemon(pm));
+  }
+
+  // Boîtes PC (PFM::Storage → @boxes)
+  const storage =
+    getByKey(root, "@storage") ??
+    bfs(root, (k) => k === "@storage");
+  if (storage && typeof storage === "object") {
+    const boxesRaw = getIvar(storage, ["@boxes"]);
+    if (Array.isArray(boxesRaw)) {
+      const boxes: PCBox[] = [];
+      for (let b = 0; b < boxesRaw.length; b++) {
+        const box = boxesRaw[b];
+        if (!box || typeof box !== "object") continue;
+        const boxName = asStr(getIvar(box, ["@name"])) ?? `Boîte ${b + 1}`;
+        const content = getIvar(box, ["@content"]);
+        const pokemon: (BoxPokemon | null)[] = [];
+        if (Array.isArray(content)) {
+          for (let s = 0; s < content.length; s++) {
+            const pm = content[s];
+            if (!pm || typeof pm !== "object" || !getIvar(pm, ["@id", "@dex_id", "@species_id"])) {
+              pokemon.push(null);
+            } else {
+              pokemon.push({ ...parsePokemon(pm), slot: s });
+            }
+          }
+        }
+        boxes.push({ name: boxName, pokemon });
+      }
+      out.boxes = boxes;
+    }
   }
 
   return out;

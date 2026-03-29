@@ -351,7 +351,7 @@ export default function NerfsAndBuffsView({
           setPokedexLookup(buildPokedexLookup(pokedexRes.pokedex.entries));
         }
       })
-      .catch(() => {})
+      .catch((e) => { console.warn("[PNW] NerfsAndBuffs:", e); })
       .finally(() => setLoading(false));
   }, [base]);
 
