@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "cross-env CARGO_TARGET_DIR=target tauri dev",
-    "tauri:build": "cross-env CARGO_TARGET_DIR=target tauri build",
+    "tauri:build": "cross-env CARGO_TARGET_DIR=target tauri build && node scripts/push-update.mjs",
     "push-update": "node scripts/push-update.mjs"
   },
   "dependencies": {
