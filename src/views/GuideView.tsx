@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
-import { FaArrowLeft, FaTriangleExclamation, FaBookOpen, FaXmark, FaSpinner } from "react-icons/fa6";
+import { FaArrowLeft, FaTriangleExclamation, FaBookOpen, FaXmark, FaSpinner, FaCrown } from "react-icons/fa6";
 
 interface GuideStep {
   num: number;
@@ -171,9 +171,11 @@ function StepCard({
 export default function GuideView({
   siteUrl,
   onBack,
+  onNavigateBoss,
 }: {
   siteUrl: string;
   onBack?: () => void;
+  onNavigateBoss?: () => void;
 }) {
   const [data, setData] = useState<GuideData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -213,17 +215,29 @@ export default function GuideView({
       <div className="guide-wrap">
         <header className="guide-hero">
           <div className="container guide-hero-content">
-            {onBack && (
-              <button
-                type="button"
-                className="guide-back"
-                onClick={onBack}
-                aria-label="Retour"
-              >
-                <FaArrowLeft size={14} aria-hidden />
-                Retour
-              </button>
-            )}
+            <div className="guide-nav-row" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: ".6rem", flexWrap: "wrap" }}>
+              {onBack && (
+                <button
+                  type="button"
+                  className="guide-back"
+                  onClick={onBack}
+                  aria-label="Retour"
+                >
+                  <FaArrowLeft size={14} aria-hidden />
+                  Retour
+                </button>
+              )}
+              {onNavigateBoss && (
+                <button
+                  type="button"
+                  className="guide-boss-btn"
+                  onClick={onNavigateBoss}
+                >
+                  <FaCrown size={14} aria-hidden />
+                  Boss du jeu
+                </button>
+              )}
+            </div>
             <div className="guide-title-block">
               <h1 className="guide-title">{title}</h1>
               {subtitle && <p className="guide-subtitle">{subtitle}</p>}

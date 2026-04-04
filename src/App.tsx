@@ -4,12 +4,14 @@ import { createPortal } from "react-dom";
 import { useEffect, useRef, useState, useCallback } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { invoke, convertFileSrc } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { Card, Button, Progress, Modal } from "./ui";
 import { check as checkUpdater } from "@tauri-apps/plugin-updater";
-import type { Manifest, PlayerProfile } from "./types";
+import type { Manifest, PlayerProfile, ChatProfile } from "./types";
+import { getSession, getChatProfile, onAuthStateChange } from "./chatAuth";
+import type { Session } from "@supabase/supabase-js";
 import { LauncherSelfUpdateDialog } from "./LauncherSelfUpdateDialog";
 import { parseSave } from "./profile";
 import {
@@ -26,7 +28,6 @@ import {
   FaCoins,
   FaCalendarDays,
   FaClock,
-  FaBookOpen,
   FaEye,
   FaCircleCheck,
   FaGamepad,
@@ -56,6 +57,7 @@ import {
 import { NATURE_FR } from "./gtsDepositedPokemon";
 import { ThemeMenu, useTheme, usePfp, LauncherMenu } from "./themes";
 import Sidebar from "./Sidebar";
+import Titlebar from "./Titlebar";
 import LoreView from "./views/LoreView";
 import GuideView from "./views/GuideView";
 import PatchNotesView from "./views/PatchNotesView";
@@ -67,6 +69,7 @@ import NerfsAndBuffsView from "./views/NerfsAndBuffsView";
 import TeamView from "./views/TeamView";
 import ContactView from "./views/ContactView";
 import GTSView from "./views/GTSView";
+import BossView from "./views/BossView";
 import ChatView from "./views/ChatView";
 import {
   formatErrorForUser,
@@ -150,9 +153,8 @@ function prependUnique(list: string[], line: string) {
 }
 
 /* ===== Helpers chemins + sprites/ico ===== */
-const norm = (p: string) => p.replaceAll("\\", "/");
-const join = (...parts: string[]) =>
-  parts.map((p) => norm(p).replace(/^\/+|\/+$/g, "")).join("/");
+import { normPath as norm, joinPath as join, pad2, pad3, toFileUrl, rootFromSavePath, monIconCandidates } from "./utils/monSprite";
+
 
 /** Sous-dossier dédié sous le dossier parent choisi (évite d’extraire à la racine du Bureau). */
 function childFolderForNewLangInstall(lang: "fr" | "en"): string {
@@ -165,11 +167,6 @@ function installRootFromParentDirectory(parentPath: string, lang: "fr" | "en"): 
   return j.replaceAll("/", "\\");
 }
 
-const pad2 = (n: number) => String(n).padStart(2, "0");
-const pad3 = (n: number) => String(n).padStart(3, "0");
-
-/** URL asset:// pour un chemin absolu */
-const toFileUrl = (p: string) => convertFileSrc(p.replaceAll("\\", "/"));
 
 /* Dossier AppData\Local\PNW Launcher */
 function looksLikeLauncherDir(p?: string | null) {
@@ -219,37 +216,6 @@ function playerSpriteUrl(p?: PlayerProfile | null) {
   const ch = (p.charset || "").toLowerCase();
   if (/female|girl|heroin/.test(ch)) return "/female_sprite.png";
   return "/male_sprite.png";
-}
-function rootFromSavePath(savePath: string, fallback: string) {
-  const s = norm(savePath).toLowerCase();
-  const idx = s.lastIndexOf("/saves/");
-  return idx >= 0 ? savePath.slice(0, idx) : fallback;
-}
-
-/* Icônes pokémon */
-function monIconCandidates(root: string, m: any): { list: string[] } {
-  const dirN = join(root, "graphics", "pokedex", "pokefront");
-
-  const names: string[] = [];
-  if (m.code != null) {
-    const raw = String(m.code);
-    const base = /^\d+$/.test(raw) ? pad3(parseInt(raw, 10)) : raw;
-    if (m.form != null && m.form !== "" && !Number.isNaN(Number(m.form))) {
-      names.push(`${base}_${pad2(parseInt(String(m.form), 10))}`);
-    }
-    names.push(`${base}_00`, base);
-  }
-  if (m.speciesName) {
-    const s = String(m.speciesName).trim();
-    names.push(s, s.toLowerCase(), s.replace(/\s+/g, "_"));
-  }
-  const uniqNames = Array.from(new Set(names));
-  const exts = [".png", ".gif", ".webp"];
-
-  const list: string[] = [];
-  for (const nm of uniqNames) for (const ext of exts) list.push(toFileUrl(join(dirN, `${nm}${ext}`)));
-  for (const ext of exts) list.push(toFileUrl(join(dirN, `000${ext}`)));
-  return { list };
 }
 
 /** Badge boss : PNG du jeu, ou icône FA si le fichier est absent / illisible. */
@@ -349,7 +315,7 @@ function IconButton({
 }
 
 /* ==================== Types de vues ==================== */
-type ViewName = "launcher" | "lore" | "pokedex" | "guide" | "patchnotes" | "items" | "evs" | "bst" | "nerfs" | "team" | "contact" | "gts";
+type ViewName = "launcher" | "lore" | "pokedex" | "guide" | "boss" | "patchnotes" | "items" | "evs" | "bst" | "nerfs" | "team" | "contact" | "gts";
 
 /* ==================== Dropdown Dossier (portail) ==================== */
 function FolderDropdown({
@@ -504,6 +470,19 @@ export default function App() {
   const [log, setLog] = useState<string[]>([]);
   const [manifest, setManifest] = useState<Manifest | null>(null);
 
+  // ─── Chat session (lifté pour le GTS wishlist) ───
+  const [chatSession, setChatSession] = useState<Session | null>(null);
+  const [chatProfile, setChatProfile] = useState<ChatProfile | null>(null);
+  useEffect(() => {
+    getSession().then(setChatSession);
+    const sub = onAuthStateChange(setChatSession);
+    return () => sub.unsubscribe();
+  }, []);
+  useEffect(() => {
+    if (!chatSession?.user?.id) { setChatProfile(null); return; }
+    getChatProfile(chatSession.user.id).then(setChatProfile);
+  }, [chatSession?.user?.id]);
+
   const [installDir, setInstallDir] = useState("");
   const [installedVersion, setInstalledVersion] = useState<string | null>(null);
   const [hasExe, setHasExe] = useState(false);
@@ -556,6 +535,7 @@ export default function App() {
   const [chatUnread, setChatUnread] = useState(0);
   const [gtsSharePending, setGtsSharePending] = useState<import("./types").GtsShareData | null>(null);
   const [gtsPendingOnlineId, setGtsPendingOnlineId] = useState<string | number | null>(null);
+  const [gtsWishlistMatches, setGtsWishlistMatches] = useState(0);
 
   /* Noms d'espèces PSDK (index = ID interne) */
   const [speciesNames, setSpeciesNames] = useState<string[] | null>(null);
@@ -565,6 +545,8 @@ export default function App() {
   const [abilityNames, setAbilityNames] = useState<string[] | null>(null);
   /* Noms d'objets PSDK (index = ID interne, singulier) */
   const [itemNames, setItemNames] = useState<string[] | null>(null);
+  /* Noms de talents depuis le game_state.json (clé = speciesId_form → ability_name) */
+  const [liveAbilityNames, setLiveAbilityNames] = useState<Record<string, string>>({});
 
   const [profile, setProfile] = useState<PlayerProfile | null>(null);
   const [profileState, setProfileState] =
@@ -573,11 +555,15 @@ export default function App() {
   /* Cache sprites shiny pour l'équipe (clé = "speciesId_form", valeur = data URL ou null) */
   const [teamShinySpriteCache, setTeamShinySpriteCache] = useState<Record<string, string | null>>({});
   const teamShinyRequestedRef = useRef<Set<string>>(new Set());
+  /* Cache sprites alt shiny pour l'équipe (loose files {id}a.png) */
+  const [teamAltShinySpriteCache, setTeamAltShinySpriteCache] = useState<Record<string, string | null>>({});
+  const teamAltShinyRequestedRef = useRef<Set<string>>(new Set());
   /* Cache sprites normaux pour l'équipe (fallback VD quand les fichiers pokefront n'existent pas) */
   const [teamNormalSpriteCache, setTeamNormalSpriteCache] = useState<Record<string, string | null>>({});
   const teamNormalRequestedRef = useRef<Set<string>>(new Set());
   const [saveList, setSaveList] = useState<{ path: string; name: string; modified: number; size: number }[]>([]);
   const [selectedSaveIdx, setSelectedSaveIdx] = useState(0);
+  const selectedSaveIdxRef = useRef(0);
   const [openSaveMenu, setOpenSaveMenu] = useState(false);
   const saveMenuRef = useRef<HTMLDivElement>(null);
 
@@ -1006,7 +992,7 @@ export default function App() {
         setProfileState("none");
         return;
       }
-      const idx = forceIdx ?? 0;
+      const idx = forceIdx ?? selectedSaveIdxRef.current;
       setSelectedSaveIdx(idx);
       const blob = await invoke<{ path: string; modified: number; bytes_b64: string } | null>(
         "cmd_get_save_blob",
@@ -1108,6 +1094,42 @@ export default function App() {
       .catch(() => setAbilityNames([]));
   }, [abilityNames]);
 
+  /* ====== Ability names : game_state.json → localStorage ====== */
+  useEffect(() => {
+    try {
+      const cached = localStorage.getItem("pnw_ability_names");
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (parsed && typeof parsed === "object") setLiveAbilityNames(parsed);
+      }
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const poll = () => {
+      invoke<any>("cmd_read_game_state").then((gs) => {
+        if (cancelled || !gs?.party) return;
+        const names: Record<string, string> = {};
+        gs.party.forEach((pk: any) => {
+          if (pk?.ability_name && pk?.species_id != null) {
+            names[`${pk.species_id}_${pk.form ?? 0}`] = pk.ability_name;
+          }
+        });
+        if (Object.keys(names).length > 0) {
+          setLiveAbilityNames((prev: any) => {
+            const merged = { ...prev, ...names };
+            try { localStorage.setItem("pnw_ability_names", JSON.stringify(merged)); } catch {}
+            return merged;
+          });
+        }
+      }).catch(() => {});
+    };
+    poll();
+    const interval = setInterval(poll, 5000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, []);
+
   /* ====== Charger les noms d'objets PSDK ====== */
   useEffect(() => {
     if (itemNames != null) return;
@@ -1130,7 +1152,7 @@ export default function App() {
     if (!profile?.team) return;
     if (import.meta.env.DEV) {
       for (const m of profile.team) {
-        console.debug("[Team] Pokémon:", { code: m.code, form: m.form, isShiny: m.isShiny, ivHp: m.ivHp });
+        console.debug("[Team] Pokémon:", { code: m.code, form: m.form, isShiny: m.isShiny, isAltShiny: m.isAltShiny, ivHp: m.ivHp });
       }
     }
     const toFetch: { key: string; speciesId: number; form: number }[] = [];
@@ -1170,6 +1192,39 @@ export default function App() {
       cancelled = true;
       /* StrictMode : nettoyer le ref pour que la 2e exécution puisse re-fetch */
       for (const { key } of toFetch) teamShinyRequestedRef.current.delete(key);
+    };
+  }, [profile?.team]);
+
+  /* ====== Charger les sprites alt shiny pour l'équipe (loose files) ====== */
+  useEffect(() => {
+    if (!profile?.team) return;
+    const toFetch: { key: string; speciesId: number; form: number }[] = [];
+    for (const m of profile.team) {
+      if (!m.isAltShiny) continue;
+      const speciesId = typeof m.code === "string" ? parseInt(m.code, 10) : Number(m.code);
+      if (!Number.isFinite(speciesId) || speciesId <= 0) continue;
+      const form = typeof m.form === "string" ? parseInt(m.form, 10) : (m.form ?? 0);
+      const key = `${speciesId}_${form}`;
+      if (teamAltShinyRequestedRef.current.has(key)) continue;
+      toFetch.push({ key, speciesId, form });
+    }
+    if (toFetch.length === 0) return;
+    for (const { key } of toFetch) teamAltShinyRequestedRef.current.add(key);
+    let cancelled = false;
+    for (const { key, speciesId, form } of toFetch) {
+      invoke<string | null>("cmd_get_alt_shiny_sprite", { speciesId, form: form > 0 ? form : null })
+        .then((dataUrl) => {
+          if (cancelled) return;
+          setTeamAltShinySpriteCache((prev) => ({ ...prev, [key]: dataUrl ?? null }));
+        })
+        .catch(() => {
+          if (cancelled) return;
+          setTeamAltShinySpriteCache((prev) => ({ ...prev, [key]: null }));
+        });
+    }
+    return () => {
+      cancelled = true;
+      for (const { key } of toFetch) teamAltShinyRequestedRef.current.delete(key);
     };
   }, [profile?.team]);
 
@@ -1542,13 +1597,12 @@ export default function App() {
     return () => window.removeEventListener("online", onOnline);
   }, []);
 
-  /* Titre de fenêtre : base + version du launcher (alignée sur Cargo / tauri.conf). */
+  /* Version du launcher (alignée sur Cargo / tauri.conf). */
   useEffect(() => {
     void (async () => {
       try {
         const v = await getVersion();
         setLauncherVersion(v);
-        await getCurrentWindow().setTitle(`${LAUNCHER_WINDOW_TITLE_BASE} v${v}`);
       } catch {
         /* navigateur / dev sans shell Tauri */
       }
@@ -1624,6 +1678,7 @@ export default function App() {
   statusRef.current = status;
   checkRef.current = check;
   loadProfileRef.current = loadProfile;
+  selectedSaveIdxRef.current = selectedSaveIdx;
   probeEnglishTrackRef.current = probeEnglishTrack;
 
   const isInstalled = hasExe;
@@ -1713,7 +1768,8 @@ export default function App() {
   function renderView() {
     switch (activeView) {
       case "lore": return <LoreView siteUrl={siteUrl} />;
-      case "guide": return <GuideView siteUrl={siteUrl} onBack={() => setActiveView("launcher")} />;
+      case "guide": return <GuideView siteUrl={siteUrl} onBack={() => setActiveView("launcher")} onNavigateBoss={() => setActiveView("boss")} />;
+      case "boss": return <BossView siteUrl={siteUrl} onBack={() => setActiveView("launcher")} />;
       case "patchnotes": return <PatchNotesView siteUrl={siteUrl} />;
       case "pokedex": return <PokedexView siteUrl={siteUrl} profile={profile} />;
       case "items": return <ItemLocationView siteUrl={siteUrl} />;
@@ -1722,13 +1778,17 @@ export default function App() {
       case "nerfs": return <NerfsAndBuffsView siteUrl={siteUrl} onBack={() => setActiveView("launcher")} />;
       case "team": return <TeamView siteUrl={siteUrl} onBack={() => setActiveView("launcher")} />;
       case "contact": return <ContactView siteUrl={siteUrl} onBack={() => setActiveView("launcher")} />;
-      case "gts": return <GTSView siteUrl={siteUrl} onBack={() => setActiveView("launcher")} profile={profile} savePath={lastSavePath} onProfileReload={() => loadProfile(selectedSaveIdx)} onShareToChat={(data) => { setGtsSharePending(data); setChatOpen(true); }} pendingOnlineId={gtsPendingOnlineId} onPendingOnlineIdConsumed={() => setGtsPendingOnlineId(null)} />;
+      case "gts": return <GTSView siteUrl={siteUrl} onBack={() => setActiveView("launcher")} profile={profile} savePath={lastSavePath} onProfileReload={() => loadProfile(selectedSaveIdx)} onShareToChat={(data) => { setGtsSharePending(data); setChatOpen(true); }} pendingOnlineId={gtsPendingOnlineId} onPendingOnlineIdConsumed={() => setGtsPendingOnlineId(null)} chatProfile={chatProfile} onWishlistMatchCount={setGtsWishlistMatches} />;
       default: return null;
     }
   }
 
   return (
-    <div className="min-h-screen relative flex">
+    <div className="h-screen relative flex flex-col overflow-hidden">
+      {/* Custom Titlebar */}
+      <Titlebar version={launcherVersion} />
+
+      <div className="flex-1 relative flex overflow-hidden">
       {/* Fond dynamique */}
       <div
         className="fixed inset-0 pointer-events-none"
@@ -1810,7 +1870,7 @@ export default function App() {
             />
           </div>
           <div className="launcher-home-actions">
-            <LauncherMenu onOpenGts={() => setActiveView("gts")} uiLang={uiLang} />
+            <LauncherMenu onOpenGts={() => setActiveView("gts")} uiLang={uiLang} gtsWishlistMatches={gtsWishlistMatches} />
             <ThemeMenu defaultBgUrl={manifest?.launcherBackgroundUrl} uiLang={uiLang} />
             <IconButton
               tone="ghost"
@@ -2139,9 +2199,10 @@ export default function App() {
                       const speciesId = typeof m.code === "string" ? parseInt(String(m.code), 10) : (m.code ?? 0);
                       const formN = typeof m.form === "string" ? parseInt(String(m.form), 10) : (m.form ?? 0);
                       const shinyKey = `${speciesId}_${formN}`;
+                      const altShinyUrl = m.isAltShiny ? teamAltShinySpriteCache[shinyKey] : null;
                       const shinyUrl = m.isShiny ? teamShinySpriteCache[shinyKey] : null;
                       const normalUrl = teamNormalSpriteCache[shinyKey] ?? null;
-                      const spriteUrl = shinyUrl || normalUrl;
+                      const spriteUrl = altShinyUrl || shinyUrl || normalUrl;
                       const hasIvs = m.ivHp != null;
                       const ivRows = hasIvs ? [
                         { Icon: FaHeart, label: "PS", v: m.ivHp!, fill: "team-iv-fill--hp" },
@@ -2157,8 +2218,11 @@ export default function App() {
                           key={i}
                           className="team-mon-card group"
                         >
-                          {m.isShiny && (
-                            <FaStar className="team-mon-shiny-star" title="Chromatique" />
+                          {m.isAltShiny && (
+                            <FaStar className="team-mon-alt-shiny-star" title="Shiny Alt" />
+                          )}
+                          {m.isShiny && !m.isAltShiny && (
+                            <FaStar className="team-mon-shiny-star" title="Shiny" />
                           )}
                           <div className="team-mon-sprite-wrap">
                             {spriteUrl ? (
@@ -2203,7 +2267,8 @@ export default function App() {
                                 className="team-iv-sprite"
                                 alt=""
                               />
-                              {m.isShiny && <FaStar className="team-iv-shiny-star" />}
+                              {m.isAltShiny && <FaStar className="team-iv-alt-shiny-star" />}
+                              {m.isShiny && !m.isAltShiny && <FaStar className="team-iv-shiny-star" />}
                             </div>
                             {(() => {
                               const species = speciesNames && speciesId > 0 ? speciesNames[speciesId] ?? null : null;
@@ -2243,9 +2308,11 @@ export default function App() {
                                 <FaWandMagicSparkles className="team-ov-detail-ico team-ov-detail-ico--ability" aria-hidden />
                                 <span className="team-ov-detail-label">Talent</span>
                                 <span className="team-ov-detail-val">
-                                  {m.ability != null && m.ability > 0
-                                    ? (abilityNames && abilityNames[m.ability] ? abilityNames[m.ability] : `#${m.ability}`)
-                                    : "Aucun"}
+                                  {(() => {
+                                    const speciesId = typeof m.code === "string" ? parseInt(String(m.code), 10) : (m.code ?? 0);
+                                    const formN = typeof m.form === "string" ? parseInt(String(m.form), 10) : (m.form ?? 0);
+                                    return liveAbilityNames[`${speciesId}_${formN}`] || "—";
+                                  })()}
                                 </span>
                               </div>
                               <div className="team-ov-detail">
@@ -2695,12 +2762,11 @@ export default function App() {
         </button>
       )}
 
-      {/* Chat fullscreen page */}
-      {chatOpen && (
-        <div className="pnw-chat-fullscreen">
-          <ChatView siteUrl={siteUrl} onBack={() => setChatOpen(false)} onUnreadChange={setChatUnread} gtsSharePending={gtsSharePending} onGtsShareDone={() => setGtsSharePending(null)} onOpenGts={(onlineId) => { setChatOpen(false); setGtsPendingOnlineId(onlineId ?? null); setActiveView("gts"); }} gameProfile={profile} />
-        </div>
-      )}
+      {/* Chat fullscreen page — toujours monté pour garder les subscriptions Supabase actives */}
+      <div className="pnw-chat-fullscreen" style={chatOpen ? undefined : { display: "none" }}>
+        <ChatView siteUrl={siteUrl} onBack={() => setChatOpen(false)} onUnreadChange={setChatUnread} visible={chatOpen} gtsSharePending={gtsSharePending} onGtsShareDone={() => setGtsSharePending(null)} onOpenGts={(onlineId) => { setChatOpen(false); setGtsPendingOnlineId(onlineId ?? null); setActiveView("gts"); }} gameProfile={profile} installDir={installDir} lastSavePath={lastSavePath} onProfileReload={() => loadProfile(selectedSaveIdx)} />
+      </div>
+      </div>
     </div>
   );
 }

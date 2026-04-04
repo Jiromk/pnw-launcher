@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import {
   FaHouse, FaScroll, FaBook, FaBookOpen, FaFileLines,
   FaLocationDot, FaTable, FaScaleBalanced, FaUsers,
-  FaBars, FaXmark, FaGamepad, FaEnvelope,
+  FaBars, FaXmark, FaGamepad, FaEnvelope, FaCrown,
 } from "react-icons/fa6";
 
 const ICON_MAP: Record<string, React.ReactNode> = {
@@ -16,6 +16,7 @@ const ICON_MAP: Record<string, React.ReactNode> = {
   "fa-table": <FaTable />,
   "fa-scale-balanced": <FaScaleBalanced />,
   "fa-users": <FaUsers />,
+  "fa-crown": <FaCrown />,
 };
 
 const VIEW_MAP: Record<string, string> = {
@@ -23,6 +24,7 @@ const VIEW_MAP: Record<string, string> = {
   lore: "lore",
   pokedex: "pokedex",
   guide: "guide",
+  boss: "boss",
   patchnotes: "patchnotes",
   items: "items",
   evs: "evs",
