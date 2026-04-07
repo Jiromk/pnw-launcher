@@ -31,7 +31,7 @@ import {
   togglePinMessage, fetchPinnedMessages,
 } from "../chatAuth";
 import type { ChatChannel, ChatMessage, ChatProfile, ChatMute, ChatBan, ChatFriend, PlayerProfile, GameLiveState, GameLivePlayer, GameActivityShareData, TradeState, TradeSelection, TradeSelectionPreview, TradeMessageData, BattleRoomState } from "../types";
-import { generateRoomCode, writeBattleTrigger, writeStopTrigger, startRelay, cleanupBattleFiles, fullCleanup, isGameRunning, BATTLE_INVITE_TIMEOUT } from "../battleRelay";
+import { generateRoomCode, writeBattleTrigger, writeStopTrigger, startRelay, cleanupBattleFiles, fullCleanup, isGameRunning, BATTLE_INVITE_TIMEOUT, connectLobby, sendBattleInvite, sendBattleCancel } from "../battleRelay";
 import BattleArenaView from "./BattleArenaView";
 import { TRADE_PREFIX, generateTradeId, validateIncomingBytes, extractAndEncode, executeTradeLocally, buildTradeMessage, parseTradeMessage, TRADE_PENDING_TIMEOUT, TRADE_SELECTING_TIMEOUT, TRADE_CONFIRMING_TIMEOUT, TRADE_EXECUTING_TIMEOUT } from "../tradeP2P";
 import { loadSaveForEdit, extractPokemonFromBox, encodePokemonForGts } from "../saveWriter";
@@ -1582,7 +1582,7 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
     clearBattleTimeout();
     const st = battleState;
     if (st.phase !== "idle" && st.phase !== "complete" && st.phase !== "error") {
-      gameLiveRef2.current?.send({ type: "broadcast", event: "battle_room_cancel", payload: { roomCode: (st as any).roomCode, userId: session?.user?.id } });
+      sendBattleCancel((st as any).roomCode, (st as any).partnerId, session?.user?.id || "");
     }
     await fullCleanup(battleRelayCleanupRef);
     setBattleState(reason ? { phase: "error", roomCode: (st as any).roomCode ?? "", partnerId: (st as any).partnerId ?? "", partnerName: (st as any).partnerName ?? "", message: reason } : { phase: "idle" });
@@ -2541,93 +2541,6 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
           return { phase: "error", tradeId: p.tradeId, partnerId: (prev as any).partnerId ?? "", partnerName: (prev as any).partnerName ?? "", message: p.message || "Erreur lors de l'échange." };
         });
       })
-      // ─── P2P Battle Broadcast handlers (utilisent battleStateRef pour eviter les stale closures) ───
-      // Note: battle_room_invite est aussi recu via postgres_changes (table battle_invites).
-      // Le broadcast est plus rapide; la table est le filet de securite si le channel est CLOSED.
-      .on("broadcast", { event: "battle_room_invite" }, (msg: any) => {
-        const p = msg.payload;
-        console.log("[Battle] Received battle_room_invite (broadcast):", JSON.stringify(p), "myId:", session?.user?.id, "phase:", battleStateRef.current.phase);
-        if (p?.toId !== session?.user?.id) {
-          console.log("[Battle] Invite filtered: toId mismatch", p?.toId, "!==", session?.user?.id);
-          return;
-        }
-        if (battleStateRef.current.phase !== "idle") {
-          // Deja en train de traiter une invite (probablement via table) — ignorer le doublon
-          if ((battleStateRef.current as any).roomCode === p.roomCode) {
-            console.log("[Battle] Invite filtered: already handling this room via table");
-            return;
-          }
-          console.log("[Battle] Invite filtered: phase not idle:", battleStateRef.current.phase);
-          return;
-        }
-        console.log("[Battle] Invite ACCEPTED (broadcast), setting state to inviting");
-        setBattleState({
-          phase: "inviting",
-          roomCode: p.roomCode,
-          partnerId: p.fromId,
-          partnerName: p.fromName,
-          partnerAvatar: p.fromAvatar || null,
-          dmChannelId: p.dmChannelId || 0,
-        });
-        // Play notification sound
-        try {
-          const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-          const osc = ctx.createOscillator(); const gain = ctx.createGain();
-          osc.connect(gain); gain.connect(ctx.destination);
-          osc.frequency.value = 700; osc.type = "sine";
-          gain.gain.setValueAtTime(0.15, ctx.currentTime);
-          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
-          osc.start(ctx.currentTime); osc.stop(ctx.currentTime + 0.3);
-          setTimeout(() => { const o2 = ctx.createOscillator(); const g2 = ctx.createGain(); o2.connect(g2); g2.connect(ctx.destination); o2.frequency.value = 1000; o2.type = "sine"; g2.gain.setValueAtTime(0.15, ctx.currentTime); g2.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3); o2.start(ctx.currentTime); o2.stop(ctx.currentTime + 0.3); }, 150);
-        } catch {}
-      })
-      .on("broadcast", { event: "battle_room_accept" }, async (msg: any) => {
-        const p = msg.payload;
-        if (p.acceptedBy === session?.user?.id) return;
-        // Verifier que c'est bien notre room
-        const cur = battleStateRef.current;
-        if (cur.phase !== "inviting" || (cur as any).roomCode !== p.roomCode) return;
-        const code = p.roomCode;
-        const partnerName = p.partnerName || "Adversaire";
-        // Annuler le timeout d'invitation
-        if (battleTimeoutRef.current) { clearTimeout(battleTimeoutRef.current); battleTimeoutRef.current = null; }
-        setBattleState((prev) => ({ ...prev, phase: "waiting_game" } as any));
-        // Stopper tout ancien relay avant d'en demarrer un nouveau
-        if (battleRelayCleanupRef.current) { battleRelayCleanupRef.current(); battleRelayCleanupRef.current = null; }
-        await cleanupBattleFiles();
-        try {
-          await writeBattleTrigger(Number(code), partnerName, "host");
-        } catch (e) {
-          console.error("[Battle] writeBattleTrigger error:", e);
-        }
-        const cleanup = startRelay(
-          code, session?.user?.id || "",
-          () => setBattleState((prev) => (prev as any).roomCode === code ? { ...prev, phase: "relaying" } as any : prev),
-          () => {
-            setBattleState((prev) => (prev as any).roomCode === code ? { phase: "complete", roomCode: code, partnerId: (prev as any).partnerId || "", partnerName: (prev as any).partnerName || "" } : prev);
-            cleanupBattleFiles().catch(() => {});
-          },
-        );
-        battleRelayCleanupRef.current = cleanup;
-      })
-      .on("broadcast", { event: "battle_room_decline" }, (msg: any) => {
-        const p = msg.payload;
-        if ((battleStateRef.current as any).roomCode !== p.roomCode) return;
-        if (battleTimeoutRef.current) { clearTimeout(battleTimeoutRef.current); battleTimeoutRef.current = null; }
-        cleanupBattleFiles().catch(() => {});
-        setBattleState({ phase: "idle" });
-      })
-      .on("broadcast", { event: "battle_room_cancel" }, (msg: any) => {
-        const p = msg.payload;
-        if (p.userId === session?.user?.id) return;
-        if ((battleStateRef.current as any).roomCode !== p.roomCode) return;
-        if (battleRelayCleanupRef.current) { battleRelayCleanupRef.current(); battleRelayCleanupRef.current = null; }
-        if (battleTimeoutRef.current) { clearTimeout(battleTimeoutRef.current); battleTimeoutRef.current = null; }
-        writeStopTrigger().catch(() => {});
-        cleanupBattleFiles().catch(() => {});
-        setBattleState({ phase: "idle" });
-      })
-      // Note: vms_relay passe maintenant par un channel dedie (battle-room-{code}), plus par game-live
       .subscribe((status: string) => {
         console.log("[GameLive] Channel subscribe status:", status);
       });
@@ -2732,106 +2645,75 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
     };
   }, []);
 
-  /* ---------- Battle invites — persistent table listener ---------- */
+  /* ---------- Battle lobby — Socket.io invite system (Railway) ---------- */
 
   useEffect(() => {
     if (!session?.user?.id) return;
 
-    // Cleanup expired invites on mount
-    supabase.from("battle_invites").delete().lt("created_at", new Date(Date.now() - 2 * 60_000).toISOString()).eq("status", "pending").then();
+    const playInviteSound = () => {
+      try {
+        const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+        const osc = ctx.createOscillator(); const gain = ctx.createGain();
+        osc.connect(gain); gain.connect(ctx.destination);
+        osc.frequency.value = 700; osc.type = "sine";
+        gain.gain.setValueAtTime(0.15, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
+        osc.start(ctx.currentTime); osc.stop(ctx.currentTime + 0.3);
+        setTimeout(() => { const o2 = ctx.createOscillator(); const g2 = ctx.createGain(); o2.connect(g2); g2.connect(ctx.destination); o2.frequency.value = 1000; o2.type = "sine"; g2.gain.setValueAtTime(0.15, ctx.currentTime); g2.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3); o2.start(ctx.currentTime); o2.stop(ctx.currentTime + 0.3); }, 150);
+      } catch {}
+    };
 
-    // Check for pending invites already in table (in case broadcast was missed)
-    supabase.from("battle_invites").select("*").eq("to_id", session.user.id).eq("status", "pending").gte("created_at", new Date(Date.now() - BATTLE_INVITE_TIMEOUT).toISOString()).then(({ data }) => {
-      if (data && data.length > 0 && battleStateRef.current.phase === "idle") {
-        const inv = data[0];
-        console.log("[Battle] Found pending invite in table:", inv.room_code, "from", inv.from_name);
+    const cleanup = connectLobby(session.user.id, {
+      onInvite: (p) => {
+        if (battleStateRef.current.phase !== "idle") return;
+        console.log("[BattleLobby] Invite received from", p.fromName, "room", p.roomCode);
         setBattleState({
           phase: "inviting",
-          roomCode: inv.room_code,
-          partnerId: inv.from_id,
-          partnerName: inv.from_name,
-          partnerAvatar: inv.from_avatar || null,
-          dmChannelId: inv.dm_channel_id || 0,
+          roomCode: p.roomCode,
+          partnerId: p.fromId,
+          partnerName: p.fromName,
+          partnerAvatar: p.fromAvatar || null,
+          dmChannelId: p.dmChannelId || 0,
         });
-        // Play notification sound
-        try {
-          const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-          const osc = ctx.createOscillator(); const gain = ctx.createGain();
-          osc.connect(gain); gain.connect(ctx.destination);
-          osc.frequency.value = 700; osc.type = "sine";
-          gain.gain.setValueAtTime(0.15, ctx.currentTime);
-          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
-          osc.start(ctx.currentTime); osc.stop(ctx.currentTime + 0.3);
-          setTimeout(() => { const o2 = ctx.createOscillator(); const g2 = ctx.createGain(); o2.connect(g2); g2.connect(ctx.destination); o2.frequency.value = 1000; o2.type = "sine"; g2.gain.setValueAtTime(0.15, ctx.currentTime); g2.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3); o2.start(ctx.currentTime); o2.stop(ctx.currentTime + 0.3); }, 150);
-        } catch {}
-      }
+        playInviteSound();
+      },
+      onAccepted: async (p) => {
+        const cur = battleStateRef.current;
+        if (cur.phase !== "inviting" || (cur as any).roomCode !== p.roomCode) return;
+        const code = p.roomCode;
+        const partnerName = (cur as any).partnerName || p.partnerName || "Adversaire";
+        if (battleTimeoutRef.current) { clearTimeout(battleTimeoutRef.current); battleTimeoutRef.current = null; }
+        setBattleState((prev) => ({ ...prev, phase: "waiting_game" } as any));
+        if (battleRelayCleanupRef.current) { battleRelayCleanupRef.current(); battleRelayCleanupRef.current = null; }
+        await cleanupBattleFiles();
+        try { await writeBattleTrigger(Number(code), partnerName, "host"); } catch (e) { console.error("[Battle] writeBattleTrigger error:", e); }
+        const relayCleanup = startRelay(
+          code, session?.user?.id || "",
+          () => setBattleState((prev) => (prev as any).roomCode === code ? { ...prev, phase: "relaying" } as any : prev),
+          () => {
+            setBattleState((prev) => (prev as any).roomCode === code ? { phase: "complete", roomCode: code, partnerId: (prev as any).partnerId || "", partnerName: (prev as any).partnerName || "" } : prev);
+            cleanupBattleFiles().catch(() => {});
+          },
+        );
+        battleRelayCleanupRef.current = relayCleanup;
+      },
+      onDeclined: (p) => {
+        if ((battleStateRef.current as any).roomCode !== p.roomCode) return;
+        if (battleTimeoutRef.current) { clearTimeout(battleTimeoutRef.current); battleTimeoutRef.current = null; }
+        cleanupBattleFiles().catch(() => {});
+        setBattleState({ phase: "idle" });
+      },
+      onCancelled: (p) => {
+        if ((battleStateRef.current as any).roomCode !== p.roomCode) return;
+        if (battleRelayCleanupRef.current) { battleRelayCleanupRef.current(); battleRelayCleanupRef.current = null; }
+        if (battleTimeoutRef.current) { clearTimeout(battleTimeoutRef.current); battleTimeoutRef.current = null; }
+        writeStopTrigger().catch(() => {});
+        cleanupBattleFiles().catch(() => {});
+        setBattleState({ phase: "idle" });
+      },
     });
 
-    // Subscribe to realtime changes on battle_invites
-    const battleInvSub = supabase.channel(`battle-inv-${session.user.id}`)
-      // New invite targeting us (persistent delivery — works even if broadcast was missed)
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "battle_invites", filter: `to_id=eq.${session.user.id}` }, (payload) => {
-        const inv = payload.new as any;
-        if (inv.status !== "pending") return;
-        if (battleStateRef.current.phase !== "idle") return;
-        console.log("[Battle] Table INSERT invite received:", inv.room_code, "from", inv.from_name);
-        setBattleState({
-          phase: "inviting",
-          roomCode: inv.room_code,
-          partnerId: inv.from_id,
-          partnerName: inv.from_name,
-          partnerAvatar: inv.from_avatar || null,
-          dmChannelId: inv.dm_channel_id || 0,
-        });
-        // Play notification sound
-        try {
-          const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-          const osc = ctx.createOscillator(); const gain = ctx.createGain();
-          osc.connect(gain); gain.connect(ctx.destination);
-          osc.frequency.value = 700; osc.type = "sine";
-          gain.gain.setValueAtTime(0.15, ctx.currentTime);
-          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
-          osc.start(ctx.currentTime); osc.stop(ctx.currentTime + 0.3);
-          setTimeout(() => { const o2 = ctx.createOscillator(); const g2 = ctx.createGain(); o2.connect(g2); g2.connect(ctx.destination); o2.frequency.value = 1000; o2.type = "sine"; g2.gain.setValueAtTime(0.15, ctx.currentTime); g2.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3); o2.start(ctx.currentTime); o2.stop(ctx.currentTime + 0.3); }, 150);
-        } catch {}
-      })
-      // Invite we sent was accepted (via table UPDATE)
-      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "battle_invites", filter: `from_id=eq.${session.user.id}` }, async (payload) => {
-        const inv = payload.new as any;
-        const cur = battleStateRef.current;
-        if (cur.phase !== "inviting" || (cur as any).roomCode !== inv.room_code) return;
-
-        if (inv.status === "accepted") {
-          console.log("[Battle] Table UPDATE: invite accepted for room", inv.room_code);
-          const code = inv.room_code;
-          // Toujours utiliser le partnerName du battleState existant (defini correctement a l'envoi de l'invite)
-          const partnerName = (cur as any).partnerName || inv.from_name || "Adversaire";
-          if (battleTimeoutRef.current) { clearTimeout(battleTimeoutRef.current); battleTimeoutRef.current = null; }
-          setBattleState((prev) => ({ ...prev, phase: "waiting_game" } as any));
-          if (battleRelayCleanupRef.current) { battleRelayCleanupRef.current(); battleRelayCleanupRef.current = null; }
-          await cleanupBattleFiles();
-          try { await writeBattleTrigger(Number(code), partnerName, "host"); } catch (e) { console.error("[Battle] writeBattleTrigger error:", e); }
-          const cleanup = startRelay(
-            code, session?.user?.id || "",
-            () => setBattleState((prev) => (prev as any).roomCode === code ? { ...prev, phase: "relaying" } as any : prev),
-            () => {
-              setBattleState((prev) => (prev as any).roomCode === code ? { phase: "complete", roomCode: code, partnerId: (prev as any).partnerId || "", partnerName: (prev as any).partnerName || "" } : prev);
-              cleanupBattleFiles().catch(() => {});
-            },
-          );
-          battleRelayCleanupRef.current = cleanup;
-        } else if (inv.status === "declined" || inv.status === "cancelled" || inv.status === "expired") {
-          console.log("[Battle] Table UPDATE: invite", inv.status, "for room", inv.room_code);
-          if (battleTimeoutRef.current) { clearTimeout(battleTimeoutRef.current); battleTimeoutRef.current = null; }
-          cleanupBattleFiles().catch(() => {});
-          setBattleState({ phase: "idle" });
-        }
-      })
-      .subscribe((status) => {
-        console.log("[Battle] Invite table sub status:", status);
-      });
-
-    return () => { supabase.removeChannel(battleInvSub); };
+    return cleanup;
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.user?.id]);
 
@@ -3581,7 +3463,6 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
         channels={channels}
         battleState={battleState}
         setBattleState={setBattleState}
-        gameLiveChannel={gameLiveRef2}
         battleRelayCleanupRef={battleRelayCleanupRef}
         battleTimeoutRef={battleTimeoutRef}
         onBack={onBack}
@@ -5552,31 +5433,9 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
             if (!dmChannelId) return;
             const dmCh = channels.find((c) => c.id === dmChannelId) || { id: dmChannelId, name: null, type: "dm" as const, background_url: null, slowmode_seconds: 0, created_at: "" };
             setActiveChannel(dmCh);
-            // ─── Dual delivery: table persistante + broadcast ───
-            const invPayload = { roomCode, fromId: session.user.id, fromName: profile.display_name || profile.username, fromAvatar: profile.avatar_url, toId: targetId, dmChannelId };
-
-            // 1) INSERT dans battle_invites (persistant)
-            const { error: dbErr } = await supabase.from("battle_invites").insert({
-              room_code: roomCode,
-              from_id: session.user.id,
-              from_name: profile.display_name || profile.username,
-              from_avatar: profile.avatar_url,
-              to_id: targetId,
-              dm_channel_id: dmChannelId,
-              status: "pending",
-            });
-            if (dbErr) console.error("[Battle] DB invite insert error:", dbErr);
-
-            // 2) Broadcast (rapide)
-            const ch = gameLiveRef2.current;
-            if (ch) {
-              try {
-                const res = await ch.send({ type: "broadcast", event: "battle_room_invite", payload: invPayload });
-                if (res !== "ok") console.warn("[Battle] invite broadcast failed:", res, "— table insert should deliver it");
-              } catch (e) { console.warn("[Battle] invite broadcast error:", e, "— table insert should deliver it"); }
-            }
-
-            if (dbErr && !ch) return; // Both failed
+            // ─── Send invite via Railway Socket.io lobby ───
+            const sent = sendBattleInvite({ roomCode, fromId: session.user.id, fromName: profile.display_name || profile.username, fromAvatar: profile.avatar_url, toId: targetId, dmChannelId });
+            if (!sent) return;
 
             setBattleState({
               phase: "inviting",
@@ -5587,10 +5446,8 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
               dmChannelId,
               startedAt: Date.now(),
             });
-            // Timeout + cleanup table
-            battleTimeoutRef.current = setTimeout(async () => {
+            battleTimeoutRef.current = setTimeout(() => {
               setBattleState((prev) => prev.phase === "inviting" ? { phase: "idle" } : prev);
-              await supabase.from("battle_invites").update({ status: "expired" }).eq("room_code", roomCode).eq("from_id", session.user.id).eq("status", "pending");
             }, BATTLE_INVITE_TIMEOUT);
           }}
           onClose={() => setProfilePopup(null)}

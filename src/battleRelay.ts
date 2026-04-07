@@ -63,6 +63,99 @@ export async function fullCleanup(relayCleanupRef: React.MutableRefObject<(() =>
   await cleanupBattleFiles();
 }
 
+/* ==================== Lobby (invite system via Socket.io) ==================== */
+
+let lobbySocket: Socket | null = null;
+
+export interface LobbyCallbacks {
+  onInvite: (payload: {
+    roomCode: string; fromId: string; fromName: string; fromAvatar: string | null;
+    toId: string; dmChannelId: number;
+  }) => void;
+  onAccepted: (payload: { roomCode: string; acceptedBy: string; partnerName: string }) => void;
+  onDeclined: (payload: { roomCode: string; userId: string }) => void;
+  onCancelled: (payload: { roomCode: string; userId: string }) => void;
+}
+
+/**
+ * Connexion persistante au serveur Railway pour le systeme d'invitation.
+ * Retourne une cleanup function.
+ */
+export function connectLobby(userId: string, callbacks: LobbyCallbacks): () => void {
+  if (lobbySocket) { lobbySocket.disconnect(); lobbySocket = null; }
+
+  const socket = io(BATTLE_SERVER_URL, {
+    transports: ["websocket", "polling"],
+    reconnection: true,
+    reconnectionAttempts: Infinity,
+    reconnectionDelay: 2000,
+    reconnectionDelayMax: 10000,
+  });
+  lobbySocket = socket;
+
+  socket.on("connect", () => {
+    console.log("[BattleLobby] Connected:", socket.id);
+    socket.emit("register_user", { userId });
+  });
+
+  socket.on("connect_error", (err) => {
+    console.warn("[BattleLobby] Connection error:", err.message);
+  });
+
+  socket.on("battle_invite", (payload) => {
+    console.log("[BattleLobby] Invite received from", payload.fromName, "room", payload.roomCode);
+    callbacks.onInvite(payload);
+  });
+
+  socket.on("battle_accepted", (payload) => {
+    console.log("[BattleLobby] Invite accepted for room", payload.roomCode);
+    callbacks.onAccepted(payload);
+  });
+
+  socket.on("battle_declined", (payload) => {
+    console.log("[BattleLobby] Invite declined for room", payload.roomCode);
+    callbacks.onDeclined(payload);
+  });
+
+  socket.on("battle_cancelled", (payload) => {
+    console.log("[BattleLobby] Invite cancelled for room", payload.roomCode);
+    callbacks.onCancelled(payload);
+  });
+
+  return () => {
+    socket.disconnect();
+    if (lobbySocket === socket) lobbySocket = null;
+  };
+}
+
+export function disconnectLobby(): void {
+  if (lobbySocket) { lobbySocket.disconnect(); lobbySocket = null; }
+}
+
+export function sendBattleInvite(payload: {
+  roomCode: string; fromId: string; fromName: string; fromAvatar: string | null;
+  toId: string; dmChannelId: number;
+}): boolean {
+  if (!lobbySocket?.connected) { console.warn("[BattleLobby] Not connected, cannot send invite"); return false; }
+  lobbySocket.emit("battle_invite", payload);
+  return true;
+}
+
+export function sendBattleAccept(roomCode: string, fromId: string, acceptedBy: string, partnerName: string): void {
+  if (!lobbySocket?.connected) { console.warn("[BattleLobby] Not connected, cannot send accept"); return; }
+  lobbySocket.emit("battle_accept", { roomCode, fromId, acceptedBy, partnerName });
+}
+
+export function sendBattleDecline(roomCode: string, fromId: string, userId: string): void {
+  if (!lobbySocket?.connected) { console.warn("[BattleLobby] Not connected, cannot send decline"); return; }
+  lobbySocket.emit("battle_decline", { roomCode, fromId, userId });
+}
+
+export function sendBattleCancel(roomCode: string, toId: string, userId: string): void {
+  if (!lobbySocket?.connected) { console.warn("[BattleLobby] Not connected, cannot send cancel"); return; }
+  lobbySocket.emit("battle_cancel", { roomCode, toId, userId });
+}
+
 /* ==================== Socket.io Relay ==================== */
 
 let battleSocket: Socket | null = null;
@@ -234,15 +327,17 @@ export function startRelay(
               waitingForServer = true;
               lastSentHash = hash;
               pendingOutbox = null;
-            } else if (!initialDataSent && messageType === "connect") {
-              // Envoyer les donnees initiales UNE SEULE FOIS (premier "connect")
-              initialDataSent = true;
-              console.log("[BattleRelay] Sending initial player data to server");
-              socket.emit("player_data", {
-                roomCode,
-                userId: myUserId,
-                fullPlayerData: playerData,
-              });
+            } else if (!initialDataSent) {
+              // Envoyer les donnees initiales UNE SEULE FOIS (premier message avec party)
+              if (playerData.party && playerData.party.length > 0) {
+                initialDataSent = true;
+                console.log("[BattleRelay] Sending initial player data to server");
+                socket.emit("player_data", {
+                  roomCode,
+                  userId: myUserId,
+                  fullPlayerData: playerData,
+                });
+              }
               lastSentHash = hash;
               pendingOutbox = null;
             } else {

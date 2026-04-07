@@ -13,8 +13,9 @@ import {
   generateRoomCode, writeBattleTrigger, startRelay,
   cleanupBattleFiles, fullCleanup, isGameRunning,
   BATTLE_INVITE_TIMEOUT,
+  sendBattleInvite, sendBattleAccept, sendBattleDecline, sendBattleCancel,
 } from "../battleRelay";
-import { supabase } from "../supabaseClient";
+import { supabase } from "../supabaseClient"; // kept for DM channel lookup only
 
 /* ==================== History (localStorage) ==================== */
 
@@ -69,7 +70,6 @@ interface BattleArenaViewProps {
   channels: ChatChannel[];
   battleState: BattleRoomState;
   setBattleState: React.Dispatch<React.SetStateAction<BattleRoomState>>;
-  gameLiveChannel: React.MutableRefObject<any | null>;
   battleRelayCleanupRef: React.MutableRefObject<(() => void) | null>;
   battleTimeoutRef: React.MutableRefObject<ReturnType<typeof setTimeout> | null>;
   onBack: () => void;
@@ -80,7 +80,7 @@ interface BattleArenaViewProps {
 export default function BattleArenaView({
   session, profile, friendsList, onlineUserIds, gameLivePlayers,
   dmPartners, channels, battleState, setBattleState,
-  gameLiveChannel, battleRelayCleanupRef, battleTimeoutRef, onBack,
+  battleRelayCleanupRef, battleTimeoutRef, onBack,
 }: BattleArenaViewProps) {
   const [history, setHistory] = useState<BattleHistoryEntry[]>([]);
   const [errorPopup, setErrorPopup] = useState<string | null>(null);
@@ -106,8 +106,6 @@ export default function BattleArenaView({
   // --- Challenge ---
   const challengePlayer = useCallback(async (targetId: string, targetName: string, targetAvatar: string | null) => {
     if (battleState.phase !== "idle") return;
-    const ch = gameLiveChannel.current;
-    if (!ch) { setErrorPopup("Connexion au serveur non disponible. Reessayez dans quelques secondes."); return; }
     const running = await isGameRunning();
     if (!running) { setErrorPopup("Lancez le jeu avant de defier un joueur !"); return; }
     await fullCleanup(battleRelayCleanupRef);
@@ -119,33 +117,25 @@ export default function BattleArenaView({
       if (members?.some((m: any) => m.user_id === targetId)) { dmChannelId = c.id; break; }
     }
     if (!dmChannelId) { try { const { data } = await supabase.rpc("create_dm_channel", { target_user_id: targetId }); if (data) dmChannelId = data; } catch {} }
-    const invitePayload = { roomCode, fromId: session.user.id, fromName: profile.display_name || profile.username, fromAvatar: profile.avatar_url, toId: targetId, dmChannelId };
-    const { error: dbErr } = await supabase.from("battle_invites").insert({ room_code: roomCode, from_id: session.user.id, from_name: profile.display_name || profile.username, from_avatar: profile.avatar_url, to_id: targetId, dm_channel_id: dmChannelId, status: "pending" });
-    if (dbErr) console.error("[Battle] DB invite insert error:", dbErr);
-    try { const r = await ch.send({ type: "broadcast", event: "battle_room_invite", payload: invitePayload }); if (r !== "ok") console.warn("[Battle] Broadcast invite failed:", r); } catch (e) { console.warn("[Battle] Broadcast invite error:", e); }
-    if (dbErr) { setErrorPopup("Echec de l'envoi du defi. Verifiez votre connexion."); return; }
+    const sent = sendBattleInvite({ roomCode, fromId: session.user.id, fromName: profile.display_name || profile.username, fromAvatar: profile.avatar_url, toId: targetId, dmChannelId });
+    if (!sent) { setErrorPopup("Connexion au serveur de combat non disponible. Reessayez."); return; }
     setBattleState({ phase: "inviting", roomCode, partnerId: targetId, partnerName: targetName, partnerAvatar: targetAvatar, dmChannelId, startedAt: Date.now() });
-    battleTimeoutRef.current = setTimeout(async () => {
+    battleTimeoutRef.current = setTimeout(() => {
       setBattleState((prev) => { if (prev.phase !== "inviting") return prev; cleanupBattleFiles(); return { phase: "idle" }; });
-      await supabase.from("battle_invites").update({ status: "expired" }).eq("room_code", roomCode).eq("from_id", session.user.id).eq("status", "pending");
     }, BATTLE_INVITE_TIMEOUT);
-  }, [battleState.phase, channels, gameLiveChannel, session, profile, setBattleState, battleTimeoutRef]);
+  }, [battleState.phase, channels, session, profile, setBattleState, battleTimeoutRef]);
 
   // --- Accept ---
   const acceptBattle = useCallback(async () => {
     const st = battleState as any;
-    const ch = gameLiveChannel.current;
-    if (!ch) { setErrorPopup("Connexion au serveur non disponible."); setBattleState({ phase: "idle" }); return; }
     const running = await isGameRunning();
     if (!running) {
       setErrorPopup("Lancez le jeu avant d'accepter un combat !");
-      try { await ch.send({ type: "broadcast", event: "battle_room_decline", payload: { roomCode: st.roomCode, userId: session.user.id } }); } catch {}
-      await supabase.from("battle_invites").update({ status: "declined" }).eq("room_code", st.roomCode).eq("to_id", session.user.id).eq("status", "pending");
+      sendBattleDecline(st.roomCode, st.partnerId, session.user.id);
       setBattleState({ phase: "idle" }); return;
     }
     await fullCleanup(battleRelayCleanupRef);
-    await supabase.from("battle_invites").update({ status: "accepted" }).eq("room_code", st.roomCode).eq("to_id", session.user.id).eq("status", "pending");
-    try { const r = await ch.send({ type: "broadcast", event: "battle_room_accept", payload: { roomCode: st.roomCode, acceptedBy: session.user.id, partnerName: profile.display_name || profile.username } }); if (r !== "ok") console.warn("[Battle] Broadcast accept failed:", r); } catch (e) { console.warn("[Battle] Broadcast accept error:", e); }
+    sendBattleAccept(st.roomCode, st.partnerId, session.user.id, profile.display_name || profile.username);
     setBattleState({ ...st, phase: "waiting_game" });
     try { await writeBattleTrigger(Number(st.roomCode), st.partnerName, "client"); } catch {}
     const cleanup = startRelay(st.roomCode, session.user.id,
@@ -153,36 +143,32 @@ export default function BattleArenaView({
       () => { setBattleState({ phase: "complete", roomCode: st.roomCode, partnerId: st.partnerId, partnerName: st.partnerName }); cleanupBattleFiles(); },
     );
     battleRelayCleanupRef.current = cleanup;
-  }, [battleState, gameLiveChannel, session, profile, setBattleState, battleRelayCleanupRef]);
+  }, [battleState, session, profile, setBattleState, battleRelayCleanupRef]);
 
   // --- Cancel ---
   const cancelBattle = useCallback(async () => {
     const st = battleState as any;
     if (battleTimeoutRef.current) { clearTimeout(battleTimeoutRef.current); battleTimeoutRef.current = null; }
     if (st.phase !== "idle" && st.phase !== "complete" && st.phase !== "error") {
-      gameLiveChannel.current?.send({ type: "broadcast", event: "battle_room_cancel", payload: { roomCode: st.roomCode, userId: session.user.id } });
-      await supabase.from("battle_invites").update({ status: "cancelled" }).eq("room_code", st.roomCode).in("status", ["pending", "accepted"]);
+      sendBattleCancel(st.roomCode, st.partnerId || "", session.user.id);
     }
     await fullCleanup(battleRelayCleanupRef);
     setBattleState({ phase: "idle" });
-  }, [battleState, gameLiveChannel, session, setBattleState, battleRelayCleanupRef, battleTimeoutRef]);
+  }, [battleState, session, setBattleState, battleRelayCleanupRef, battleTimeoutRef]);
 
   // --- Close ---
   const closeBattle = useCallback(async () => {
     await cleanupBattleFiles();
-    const st = battleState as any;
-    if (st.roomCode) await supabase.from("battle_invites").delete().eq("room_code", st.roomCode);
     setBattleState({ phase: "idle" });
-  }, [setBattleState, battleState]);
+  }, [setBattleState]);
 
   // --- Decline ---
   const declineBattle = useCallback(async () => {
     const st = battleState as any;
-    gameLiveChannel.current?.send({ type: "broadcast", event: "battle_room_decline", payload: { roomCode: st.roomCode, userId: session.user.id } });
-    await supabase.from("battle_invites").update({ status: "declined" }).eq("room_code", st.roomCode).eq("to_id", session.user.id).eq("status", "pending");
+    sendBattleDecline(st.roomCode, st.partnerId, session.user.id);
     cleanupBattleFiles();
     setBattleState({ phase: "idle" });
-  }, [battleState, gameLiveChannel, session, setBattleState]);
+  }, [battleState, session, setBattleState]);
 
   // --- Friends list ---
   const friendProfiles = useMemo(() => {

@@ -16,6 +16,32 @@ const { Server } = require("socket.io");
 const PORT = process.env.PORT || 3001;
 const RNG_VALUES_PER_TURN = 200; // doit couvrir TOUS les rand() d'un tour (multi-hit, abilities, weather, etc.)
 
+// ==================== Lobby (user -> sockets) ====================
+
+/** @type {Map<string, Set<string>>} userId -> Set<socketId> */
+const userSockets = new Map();
+
+function registerUser(userId, socketId) {
+  let set = userSockets.get(userId);
+  if (!set) { set = new Set(); userSockets.set(userId, set); }
+  set.add(socketId);
+}
+
+function unregisterSocket(socketId) {
+  for (const [userId, set] of userSockets) {
+    set.delete(socketId);
+    if (set.size === 0) userSockets.delete(userId);
+  }
+}
+
+/** Emit to all sockets of a given userId */
+function emitToUser(userId, event, data, io) {
+  const set = userSockets.get(userId);
+  if (!set) return false;
+  for (const sid of set) io.to(sid).emit(event, data);
+  return true;
+}
+
 // ==================== Room management ====================
 
 /** @type {Map<string, BattleRoom>} */
@@ -97,6 +123,37 @@ const io = new Server(server, {
 
 io.on("connection", (socket) => {
   console.log(`[Connect] ${socket.id}`);
+
+  // ─── Lobby: register user for invite system ───
+  socket.on("register_user", ({ userId }) => {
+    registerUser(userId, socket.id);
+    socket.data.userId = userId;
+    console.log(`[Lobby] ${userId} registered (socket ${socket.id})`);
+  });
+
+  // ─── Battle invite (lobby) ───
+  socket.on("battle_invite", (payload) => {
+    const { toId } = payload;
+    const sent = emitToUser(toId, "battle_invite", payload, io);
+    console.log(`[Lobby] Invite from ${payload.fromId} to ${toId}: ${sent ? "delivered" : "user offline"}`);
+    // Acknowledge to sender
+    socket.emit("battle_invite_ack", { roomCode: payload.roomCode, delivered: sent });
+  });
+
+  socket.on("battle_accept", ({ roomCode, fromId, acceptedBy, partnerName }) => {
+    emitToUser(fromId, "battle_accepted", { roomCode, acceptedBy, partnerName }, io);
+    console.log(`[Lobby] ${acceptedBy} accepted invite for room ${roomCode}`);
+  });
+
+  socket.on("battle_decline", ({ roomCode, fromId, userId }) => {
+    emitToUser(fromId, "battle_declined", { roomCode, userId }, io);
+    console.log(`[Lobby] ${userId} declined invite for room ${roomCode}`);
+  });
+
+  socket.on("battle_cancel", ({ roomCode, toId, userId }) => {
+    emitToUser(toId, "battle_cancelled", { roomCode, userId }, io);
+    console.log(`[Lobby] ${userId} cancelled invite for room ${roomCode}`);
+  });
 
   // ─── Join room ───
   socket.on("join_room", ({ roomCode, userId }) => {
@@ -212,6 +269,7 @@ io.on("connection", (socket) => {
   // ─── Disconnect ───
   socket.on("disconnect", () => {
     console.log(`[Disconnect] ${socket.id}`);
+    unregisterSocket(socket.id);
     removePlayerFromAllRooms(socket.id, io);
   });
 });
