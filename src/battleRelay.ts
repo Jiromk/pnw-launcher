@@ -91,12 +91,13 @@ export function startRelay(
   let pendingOutbox: string | null = null;
   let lastSentHash = "";
   let waitingForServer = false;
+  let initialDataSent = false; // envoyer player_data UNE SEULE FOIS
 
   console.log("[BattleRelay] Starting relay for room", roomCode, "via", BATTLE_SERVER_URL);
 
   // ─── Connect to battle server ───
   const socket = io(BATTLE_SERVER_URL, {
-    transports: ["websocket"],
+    transports: ["websocket", "polling"],
     reconnection: true,
     reconnectionAttempts: 10,
     reconnectionDelay: 1000,
@@ -233,13 +234,19 @@ export function startRelay(
               waitingForServer = true;
               lastSentHash = hash;
               pendingOutbox = null;
-            } else {
-              // Regular update (initial data exchange, idle state, etc.)
+            } else if (!initialDataSent && messageType === "connect") {
+              // Envoyer les donnees initiales UNE SEULE FOIS (premier "connect")
+              initialDataSent = true;
+              console.log("[BattleRelay] Sending initial player data to server");
               socket.emit("player_data", {
                 roomCode,
                 userId: myUserId,
                 fullPlayerData: playerData,
               });
+              lastSentHash = hash;
+              pendingOutbox = null;
+            } else {
+              // Regular update — ne pas envoyer au serveur (juste consommer l'outbox)
               lastSentHash = hash;
               pendingOutbox = null;
             }

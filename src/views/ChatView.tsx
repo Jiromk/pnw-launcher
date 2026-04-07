@@ -1206,7 +1206,12 @@ function ProfileCard({
             </button>
           )}
           {canBattle && onProposeBattle && (
-            <button className="pnw-trade-profile-btn" style={{ background: "linear-gradient(135deg, rgba(220,50,50,.85), rgba(180,30,80,.85))" }} onClick={() => { onProposeBattle(); onClose(); }}>
+            <button className="pnw-trade-profile-btn" style={{ background: "linear-gradient(135deg, rgba(220,50,50,.85), rgba(180,30,80,.85))" }} onClick={() => {
+              if (sessionStorage.getItem("pnw_battle_unlocked") === "1") { onProposeBattle(); onClose(); return; }
+              const code = prompt("Code d'acces :");
+              if (code === "1964") { sessionStorage.setItem("pnw_battle_unlocked", "1"); onProposeBattle(); onClose(); }
+              else if (code !== null) alert("Code incorrect.");
+            }}>
               <FaGamepad /> Défier en combat
             </button>
           )}

@@ -10,19 +10,28 @@ import {
   FaSun,
   FaBars,
   FaArrowRightArrowLeft,
+  FaShieldHalved,
 } from "react-icons/fa6";
 import { getLauncherUi, type UiLang } from "./launcherUiLocale";
 
 /** Menu principal du launcher (accès GTS, etc.). */
 export function LauncherMenu({
   onOpenGts,
+  onOpenBattle,
   uiLang,
+  gtsWishlistMatches = 0,
 }: {
   onOpenGts: () => void;
+  onOpenBattle?: () => void;
   uiLang: UiLang;
+  gtsWishlistMatches?: number;
 }) {
   const t = getLauncherUi(uiLang).launcherMenu;
   const [openMenu, setOpenMenu] = useState(false);
+  const [showCodeModal, setShowCodeModal] = useState(false);
+  const [codeInput, setCodeInput] = useState("");
+  const [codeError, setCodeError] = useState(false);
+  const codeInputRef = useRef<HTMLInputElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -72,7 +81,114 @@ export function LauncherMenu({
           >
             <FaArrowRightArrowLeft className="text-[14px] opacity-90 shrink-0" aria-hidden />
             <span>{t.gts}</span>
+            {gtsWishlistMatches > 0 && (
+              <span style={{
+                marginLeft: "auto", minWidth: 18, height: 18,
+                display: "inline-flex", alignItems: "center", justifyContent: "center",
+                borderRadius: 9, fontSize: 10, fontWeight: 800,
+                color: "#fff", background: "linear-gradient(135deg, #f96854, #e0523e)",
+                boxShadow: "0 2px 8px rgba(249,104,84,.4)",
+                padding: "0 5px",
+              }}>{gtsWishlistMatches}</span>
+            )}
           </button>
+          {onOpenBattle && (
+            <button
+              type="button"
+              role="menuitem"
+              className="w-full text-left px-3 py-2.5 hover:bg-white/8 rounded-lg flex items-center gap-2.5 transition-colors duration-200"
+              onClick={() => {
+                if (sessionStorage.getItem("pnw_battle_unlocked") === "1") { onOpenBattle(); setOpenMenu(false); return; }
+                setOpenMenu(false);
+                setCodeInput("");
+                setCodeError(false);
+                setShowCodeModal(true);
+                setTimeout(() => codeInputRef.current?.focus(), 100);
+              }}
+            >
+              <FaShieldHalved className="text-[14px] opacity-90 shrink-0" style={{ color: "#e74c6f" }} aria-hidden />
+              <span>Tour de Combat</span>
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Modal code d'acces */}
+      {showCodeModal && (
+        <div style={{
+          position: "fixed", inset: 0, zIndex: 99999,
+          background: "rgba(0,0,0,.65)", backdropFilter: "blur(6px)",
+          display: "grid", placeItems: "center",
+        }} onClick={() => setShowCodeModal(false)}>
+          <div onClick={(e) => e.stopPropagation()} style={{
+            background: "linear-gradient(145deg, rgba(20,15,40,.97), rgba(12,8,25,.98))",
+            border: "1px solid rgba(220,50,80,.25)",
+            borderRadius: 18, padding: "2rem 2.25rem", width: 340,
+            boxShadow: "0 12px 48px rgba(0,0,0,.6), 0 0 40px rgba(220,50,80,.08)",
+            display: "flex", flexDirection: "column", alignItems: "center", gap: "1.1rem",
+          }}>
+            <div style={{
+              width: 52, height: 52, borderRadius: 14, display: "grid", placeItems: "center",
+              background: "linear-gradient(135deg, #e74c6f, #c0245e)",
+              boxShadow: "0 0 24px rgba(220,50,80,.35)",
+              fontSize: "1.4rem", color: "#fff",
+            }}>
+              <FaShieldHalved />
+            </div>
+            <div style={{ textAlign: "center" }}>
+              <div style={{ fontSize: "1.1rem", fontWeight: 700, color: "#fff", marginBottom: 4 }}>Tour de Combat</div>
+              <div style={{ fontSize: ".8rem", color: "rgba(255,255,255,.45)" }}>Entrez le code d'acces</div>
+            </div>
+            <div style={{ width: "100%", position: "relative" }}>
+              <input
+                ref={codeInputRef}
+                type="password"
+                maxLength={4}
+                value={codeInput}
+                onChange={(e) => { setCodeInput(e.target.value.replace(/\D/g, "")); setCodeError(false); }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    if (codeInput === "1964") { sessionStorage.setItem("pnw_battle_unlocked", "1"); setShowCodeModal(false); onOpenBattle?.(); }
+                    else { setCodeError(true); setCodeInput(""); }
+                  }
+                  if (e.key === "Escape") setShowCodeModal(false);
+                }}
+                placeholder="----"
+                style={{
+                  width: "100%", padding: ".7rem 1rem", fontSize: "1.5rem", fontWeight: 700,
+                  textAlign: "center", letterSpacing: ".6em",
+                  background: "rgba(255,255,255,.05)",
+                  border: codeError ? "2px solid #ef4444" : "2px solid rgba(255,255,255,.1)",
+                  borderRadius: 12, color: "#fff", outline: "none",
+                  transition: "border-color .2s",
+                }}
+                onFocus={(e) => { if (!codeError) e.target.style.borderColor = "rgba(220,50,80,.5)"; }}
+                onBlur={(e) => { if (!codeError) e.target.style.borderColor = "rgba(255,255,255,.1)"; }}
+              />
+              {codeError && (
+                <div style={{
+                  fontSize: ".75rem", color: "#ef4444", textAlign: "center",
+                  marginTop: 6, animation: "ba-slide-in .2s ease-out",
+                }}>Code incorrect</div>
+              )}
+            </div>
+            <div style={{ display: "flex", gap: ".6rem", width: "100%" }}>
+              <button onClick={() => setShowCodeModal(false)} style={{
+                flex: 1, padding: ".55rem", borderRadius: 10, fontSize: ".82rem", fontWeight: 600,
+                background: "rgba(255,255,255,.06)", border: "1px solid rgba(255,255,255,.1)",
+                color: "rgba(255,255,255,.6)", cursor: "pointer", transition: "all .15s",
+              }}>Annuler</button>
+              <button onClick={() => {
+                if (codeInput === "1964") { sessionStorage.setItem("pnw_battle_unlocked", "1"); setShowCodeModal(false); onOpenBattle?.(); }
+                else { setCodeError(true); setCodeInput(""); codeInputRef.current?.focus(); }
+              }} style={{
+                flex: 1, padding: ".55rem", borderRadius: 10, fontSize: ".82rem", fontWeight: 600,
+                background: "linear-gradient(135deg, #e74c6f, #c0245e)", border: "none",
+                color: "#fff", cursor: "pointer", transition: "all .15s",
+                boxShadow: "0 2px 10px rgba(220,50,80,.3)",
+              }}>Entrer</button>
+            </div>
+          </div>
         </div>
       )}
     </div>
