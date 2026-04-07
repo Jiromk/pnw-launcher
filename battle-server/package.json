@@ -1,0 +1,13 @@
+{
+  "name": "pnw-battle-server",
+  "version": "1.0.0",
+  "description": "Serveur PvP pour Pokemon New World — resolution de tours synchronisee",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "dependencies": {
+    "socket.io": "^4.7.0"
+  }
+}

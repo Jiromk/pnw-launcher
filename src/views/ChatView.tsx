@@ -1,4 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo } from "react";
+import { createPortal } from "react-dom";
+import { invoke } from "@tauri-apps/api/core";
+import { monIconCandidates, rootFromSavePath } from "../utils/monSprite";
 import {
   FaArrowLeft, FaPaperPlane, FaMessage, FaLock, FaCommentDots,
   FaRightFromBracket, FaSpinner, FaUserShield,
@@ -8,13 +11,18 @@ import {
   FaBolt, FaFireFlameCurved, FaVolumeXmark, FaBan, FaClock, FaGear, FaTrashCan,
   FaGaugeHigh, FaSlash, FaUsers, FaCircle, FaAt, FaQuoteLeft,
   FaUserPlus, FaUserCheck, FaUserXmark, FaUserGroup, FaBell, FaTrash,
-  FaLink, FaUpload, FaReply, FaScroll, FaArrowRightFromBracket, FaCode,
+  FaUpload, FaReply, FaScroll, FaArrowRightFromBracket, FaCode,
   FaArrowRightArrowLeft, FaShareNodes, FaTrophy, FaBookOpen, FaThumbtack,
+  FaGamepad, FaMapLocationDot, FaCoins, FaMedal,
+  FaChartLine, FaMars, FaVenus, FaVenusMars, FaLeaf, FaBagShopping,
+  FaLayerGroup, FaChartPie, FaDna, FaHandFist, FaShield, FaWandMagicSparkles,
 } from "react-icons/fa6";
 import { supabase } from "../supabaseClient";
+import { LoadingScreen } from "../ui";
+import { NATURE_FR } from "../gtsDepositedPokemon";
 import {
   signInWithDiscord, signOut, getSession, getChatProfile, onAuthStateChange,
-  updateChatProfile, uploadChatAsset,
+  updateChatProfile,
   muteUser, banUser, unmuteUser, getActiveMute, getActiveBan, deleteMessage, updateMessage, toggleSlowmode,
   getMutedUserIds, getBannedUserIds,
   sendFriendRequest, acceptFriendRequest, removeFriend, getFriends, getFriendship, leaveDmChannel,
@@ -22,10 +30,16 @@ import {
   uploadMessageImage, uploadDmBackground, updateChannelBackground,
   togglePinMessage, fetchPinnedMessages,
 } from "../chatAuth";
-import type { ChatChannel, ChatMessage, ChatProfile, ChatMute, ChatBan, ChatFriend, PlayerProfile } from "../types";
+import type { ChatChannel, ChatMessage, ChatProfile, ChatMute, ChatBan, ChatFriend, PlayerProfile, GameLiveState, GameLivePlayer, GameActivityShareData, TradeState, TradeSelection, TradeSelectionPreview, TradeMessageData, BattleRoomState } from "../types";
+import { generateRoomCode, writeBattleTrigger, writeStopTrigger, startRelay, cleanupBattleFiles, fullCleanup, isGameRunning, BATTLE_INVITE_TIMEOUT } from "../battleRelay";
+import BattleArenaView from "./BattleArenaView";
+import { TRADE_PREFIX, generateTradeId, validateIncomingBytes, extractAndEncode, executeTradeLocally, buildTradeMessage, parseTradeMessage, TRADE_PENDING_TIMEOUT, TRADE_SELECTING_TIMEOUT, TRADE_CONFIRMING_TIMEOUT, TRADE_EXECUTING_TIMEOUT } from "../tradeP2P";
+import { loadSaveForEdit, extractPokemonFromBox, encodePokemonForGts } from "../saveWriter";
 import { upsertLeaderboardScore, fetchLeaderboard, type LeaderboardEntry } from "../leaderboard";
 import type { Session } from "@supabase/supabase-js";
 import AdminPanel from "../components/AdminPanel";
+import PCBoxView from "./PCBoxView";
+import GtsSwapAnim from "../components/GtsSwapAnim";
 import { getTypeStyle, getTypeLabel } from "../utils/typeStyles";
 
 /* ==================== Role badges ==================== */
@@ -118,6 +132,8 @@ type LogEntry = {
 const LOG_PREFIX = "📋LOG:";
 const POKEMON_PREFIX = "🎴POKEMON🎴";
 const GTS_PREFIX = "🔄GTS🔄";
+const ACTIVITY_PREFIX = "🎮ACTIVITY🎮";
+const WISHLIST_PREFIX = "🔔WISHLIST🔔";
 
 interface PokeEntry {
   num?: string; number?: string; name: string;
@@ -277,6 +293,292 @@ function displayName(p: ChatProfile | null | undefined): string {
   return p.display_name?.trim() || p.username || "Joueur";
 }
 
+/* ==================== VdSprite — loads a VD sprite on demand ==================== */
+function VdSprite({ speciesId, form, shiny, altShiny, className }: { speciesId: number; form: number; shiny?: boolean; altShiny?: boolean; className?: string }) {
+  const [src, setSrc] = useState<string | null>(null);
+  useEffect(() => {
+    if (speciesId <= 0) return;
+    let active = true;
+    const formArg = form > 0 ? form : null;
+    (async () => {
+      // Try alt shiny first, then shiny, then normal
+      if (altShiny) {
+        try {
+          const r = await invoke<string | null>("cmd_get_alt_shiny_sprite", { speciesId, form: formArg });
+          if (active && r) { setSrc(r); return; }
+        } catch {}
+      }
+      if (shiny) {
+        try {
+          const r = await invoke<string | null>("cmd_get_shiny_sprite", { speciesId, form: formArg });
+          if (active && r) { setSrc(r); return; }
+        } catch {}
+      }
+      try {
+        const r = await invoke<string | null>("cmd_get_normal_sprite", { speciesId, form: formArg });
+        if (active && r) setSrc(r);
+      } catch {}
+    })();
+    return () => { active = false; };
+  }, [speciesId, form, shiny, altShiny]);
+  if (!src) return <div className={className} style={{ display: "grid", placeItems: "center", background: "rgba(255,255,255,.05)", borderRadius: 8 }}><span style={{ fontSize: 10, opacity: 0.2 }}>?</span></div>;
+  return <img src={src} alt="" className={className} style={{ objectFit: "contain", imageRendering: "pixelated" as any }} />;
+}
+
+/* ==================== SpriteImg — fallback-aware image ==================== */
+function SpriteImg({ srcs, alt, className }: { srcs: string[]; alt?: string; className?: string }) {
+  const [idx, setIdx] = useState(0);
+  const triedRef = useRef(0);
+  // Reset idx + triedRef when the first src changes (e.g. VD sprite loaded)
+  const firstSrcRef = useRef(srcs[0]);
+  if (firstSrcRef.current !== srcs[0]) {
+    firstSrcRef.current = srcs[0];
+    triedRef.current = 0;
+    if (idx !== 0) setIdx(0);
+  }
+
+  const onError = useCallback(() => {
+    triedRef.current += 1;
+    if (triedRef.current < srcs.length) {
+      setIdx(triedRef.current);
+    }
+  }, [srcs.length]);
+
+  if (!srcs.length) return null;
+  return <img src={srcs[idx]} onError={onError} alt={alt || ""} className={className} />;
+}
+
+/* ==================== TradePokeDetails — chips summary (for inline/embed) ==================== */
+function TradePokeDetails({ pk, psdkNames }: { pk: import("../types").TradeSelectionPreview; psdkNames: { species: string[] | null; skills: string[] | null; abilities: string[] | null; items: string[] | null } }) {
+  const ni = Array.isArray(pk.nature) ? pk.nature[0] : pk.nature;
+  const nat = ni != null ? NATURE_FR[ni] : null;
+  const itm = pk.itemName || (pk.itemHolding != null && pk.itemHolding > 0 ? (psdkNames.items?.[pk.itemHolding] ?? null) : null);
+  const ivT = pk.ivHp != null ? ((pk.ivHp ?? 0) + (pk.ivAtk ?? 0) + (pk.ivDfe ?? 0) + (pk.ivSpd ?? 0) + (pk.ivAts ?? 0) + (pk.ivDfs ?? 0)) : null;
+  return (
+    <>
+      <div className="pnw-trade-embed-details" style={{ marginTop: 6 }}>
+        {nat && <span className="pnw-trade-embed-chip"><FaLeaf style={{ fontSize: 7 }} /> {nat}</span>}
+        {itm && <span className="pnw-trade-embed-chip"><FaBagShopping style={{ fontSize: 7 }} /> {itm}</span>}
+        {ivT != null && <span className="pnw-trade-embed-chip"><FaDna style={{ fontSize: 7 }} /> IV {ivT}/186</span>}
+      </div>
+      {pk.moves && pk.moves.length > 0 && (
+        <div className="pnw-trade-embed-moves" style={{ marginTop: 4 }}>
+          {pk.moves.map((mid, mi) => <span key={mi} className="pnw-trade-embed-move">{psdkNames.skills?.[mid] ?? `#${mid}`}</span>)}
+        </div>
+      )}
+    </>
+  );
+}
+
+/* ==================== TradePokeOverlay — full IV overlay (like profile hover) for trade modal ==================== */
+function TradePokeOverlay({ pk, psdkNames }: { pk: import("../types").TradeSelectionPreview; psdkNames: { species: string[] | null; skills: string[] | null; abilities: string[] | null; items: string[] | null } }) {
+  const ni = Array.isArray(pk.nature) ? pk.nature[0] : pk.nature;
+  const nat = ni != null ? NATURE_FR[ni] : null;
+  const itm = pk.itemName || (pk.itemHolding != null && pk.itemHolding > 0 ? (psdkNames.items?.[pk.itemHolding] ?? null) : null);
+  const hasIvs = pk.ivHp != null;
+  const ivRows = hasIvs ? [
+    { Icon: FaHeart, label: "PS", v: pk.ivHp!, fill: "team-iv-fill--hp" },
+    { Icon: FaHandFist, label: "Atk", v: pk.ivAtk!, fill: "team-iv-fill--atk" },
+    { Icon: FaShield, label: "Déf", v: pk.ivDfe!, fill: "team-iv-fill--def" },
+    { Icon: FaBolt, label: "Vit", v: pk.ivSpd!, fill: "team-iv-fill--spe" },
+    { Icon: FaWandMagicSparkles, label: "Sp.A", v: pk.ivAts!, fill: "team-iv-fill--spa" },
+    { Icon: FaShieldHalved, label: "Sp.D", v: pk.ivDfs!, fill: "team-iv-fill--spd" },
+  ] : null;
+  const ivTotal = ivRows ? ivRows.reduce((s, r) => s + r.v, 0) : 0;
+  return (
+    <div className="pnw-trade-overlay-details">
+      <div className="team-ov-chips">
+        <div className="team-ov-chip team-ov-chip--level">
+          <FaChartLine className="team-ov-chip-ico team-ov-chip-ico--level" aria-hidden />
+          <span className="team-ov-chip-val">{pk.level}</span>
+        </div>
+        {pk.gender != null && (
+          <div className={`team-ov-chip team-ov-chip--gender${pk.gender}`}>
+            {pk.gender === 0 ? <FaMars className="team-ov-chip-ico team-ov-chip-ico--male" /> : pk.gender === 1 ? <FaVenus className="team-ov-chip-ico team-ov-chip-ico--female" /> : null}
+            <span className="team-ov-chip-val">{pk.gender === 0 ? "♂" : pk.gender === 1 ? "♀" : "—"}</span>
+          </div>
+        )}
+        {nat && (
+          <div className="team-ov-chip team-ov-chip--nature">
+            <FaLeaf className="team-ov-chip-ico team-ov-chip-ico--nature" aria-hidden />
+            <span className="team-ov-chip-val">{nat}</span>
+          </div>
+        )}
+      </div>
+      <div className="team-ov-details">
+        {itm && (
+          <div className="team-ov-detail">
+            <FaBagShopping className="team-ov-detail-ico team-ov-detail-ico--item" aria-hidden />
+            <span className="team-ov-detail-label">Objet</span>
+            <span className="team-ov-detail-val">{itm}</span>
+          </div>
+        )}
+      </div>
+      {pk.moves && pk.moves.length > 0 && (
+        <div className="team-ov-moves">
+          <div className="team-ov-moves-head"><FaLayerGroup className="team-ov-moves-ico" aria-hidden /><span>Attaques</span></div>
+          <div className="team-ov-moves-list">
+            {pk.moves.map((id, mi) => <span key={mi} className="team-ov-move-chip">{pk.moveNames?.[mi] || (psdkNames.skills?.[id] ?? `#${id}`)}</span>)}
+          </div>
+        </div>
+      )}
+      {ivRows && (
+        <>
+          <div className="team-iv-head">
+            <FaChartPie className="team-iv-head-ico" aria-hidden />
+            <span className="team-iv-head-title">IV</span>
+            <span className="team-iv-total"><FaDna className="team-iv-total-ico" aria-hidden /> Σ {ivTotal}<span className="team-iv-total-max">/186</span></span>
+          </div>
+          <div className="team-iv-rows">
+            {ivRows.map(({ Icon, label: l, v, fill }) => (
+              <div key={l} className="team-iv-row">
+                <div className="team-iv-meta"><Icon className="team-iv-stat-ico" aria-hidden /><span className="team-iv-lab">{l}</span></div>
+                <div className="team-iv-bar-track" aria-hidden><div className={`team-iv-bar-fill ${fill}`} style={{ width: `${Math.min(100, (v / 31) * 100)}%` }} /></div>
+                <span className="team-iv-val">{v}</span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/* ==================== ActivityEmbedParty — party grid with hover overlay in chat embeds ==================== */
+function ActivityEmbedParty({ party, psdkNames }: { party: import("../types").GameActivitySharePartyMember[]; psdkNames: { species: string[] | null; skills: string[] | null; abilities: string[] | null; items: string[] | null } }) {
+  const [hovered, setHovered] = useState<number | null>(null);
+  const [rect, setRect] = useState<DOMRect | null>(null);
+  const pk = hovered != null ? party[hovered] : null;
+  const hasIvs = pk?.ivHp != null;
+  const ivRows = hasIvs ? [
+    { Icon: FaHeart, label: "PS", v: pk!.ivHp!, fill: "team-iv-fill--hp" },
+    { Icon: FaHandFist, label: "Atk", v: pk!.ivAtk!, fill: "team-iv-fill--atk" },
+    { Icon: FaShield, label: "Déf", v: pk!.ivDfe!, fill: "team-iv-fill--def" },
+    { Icon: FaBolt, label: "Vit", v: pk!.ivSpd!, fill: "team-iv-fill--spe" },
+    { Icon: FaWandMagicSparkles, label: "Sp.A", v: pk!.ivAts!, fill: "team-iv-fill--spa" },
+    { Icon: FaShieldHalved, label: "Sp.D", v: pk!.ivDfs!, fill: "team-iv-fill--spd" },
+  ] : null;
+  const ivTotal = ivRows ? ivRows.reduce((s, r) => s + r.v, 0) : 0;
+  return (
+    <>
+      <div className="pnw-chat-activity-embed-party">
+        {party.map((p, i) => {
+          const speciesLabel = psdkNames.species && p.speciesId > 0 ? psdkNames.species[p.speciesId] ?? p.species : p.species;
+          return (
+            <div
+              key={i}
+              className={`pnw-chat-activity-embed-poke${hovered === i ? " pnw-chat-activity-embed-poke--active" : ""}`}
+              onMouseEnter={(e) => { setHovered(i); setRect(e.currentTarget.getBoundingClientRect()); }}
+              onMouseLeave={() => setHovered((prev) => prev === i ? null : prev)}
+            >
+              {p.altShiny && <FaStar className="pnw-chat-activity-embed-poke-alt-shiny" />}
+              {p.shiny && !p.altShiny && <FaStar className="pnw-chat-activity-embed-poke-shiny" />}
+              <div className="pnw-chat-activity-embed-poke-sprite">
+                <VdSprite speciesId={p.speciesId} form={p.form ?? 0} shiny={p.shiny} altShiny={p.altShiny} className="pnw-chat-activity-embed-poke-img" />
+              </div>
+              <span className="pnw-chat-activity-embed-poke-name">{speciesLabel}</span>
+              <span className="pnw-chat-activity-embed-poke-lvl">Nv.{p.level}</span>
+            </div>
+          );
+        })}
+      </div>
+      {pk && rect && createPortal((() => {
+        const speciesLabel = psdkNames.species && pk.speciesId > 0 ? psdkNames.species[pk.speciesId] ?? pk.species : pk.species;
+        const nickname = pk.nickname;
+        const label = nickname ? (speciesLabel ? `${nickname} (${speciesLabel})` : nickname) : speciesLabel;
+        const ow = 180;
+        let left = rect.left + rect.width / 2 - ow / 2;
+        left = Math.max(8, Math.min(left, window.innerWidth - ow - 8));
+        const top = rect.top - 8;
+        return (
+          <div className="team-mon-iv-overlay team-mon-iv-overlay--portal" style={{ left, bottom: window.innerHeight - top }}>
+            <div className="team-iv-sprite-wrap" style={{ margin: "0 auto 0.3rem" }}>
+              <VdSprite speciesId={pk.speciesId} form={pk.form ?? 0} shiny={pk.shiny} altShiny={pk.altShiny} className="team-iv-sprite" />
+              {pk.altShiny && <FaStar className="team-iv-alt-shiny-star" />}
+              {pk.shiny && !pk.altShiny && <FaStar className="team-iv-shiny-star" />}
+            </div>
+            {label && <div className="team-iv-nickname">{label}</div>}
+            <div className="team-ov-chips">
+              <div className="team-ov-chip team-ov-chip--level">
+                <FaChartLine className="team-ov-chip-ico team-ov-chip-ico--level" aria-hidden />
+                <span className="team-ov-chip-val">{pk.level}</span>
+              </div>
+              {pk.gender != null && (
+                <div className={`team-ov-chip team-ov-chip--gender${pk.gender}`}>
+                  {pk.gender === 0 ? <FaMars className="team-ov-chip-ico team-ov-chip-ico--male" /> :
+                   pk.gender === 1 ? <FaVenus className="team-ov-chip-ico team-ov-chip-ico--female" /> :
+                   <FaVenusMars className="team-ov-chip-ico team-ov-chip-ico--neutral" />}
+                  <span className="team-ov-chip-val">{pk.gender === 0 ? "♂" : pk.gender === 1 ? "♀" : "—"}</span>
+                </div>
+              )}
+              {pk.nature != null && (() => {
+                const nIdx = Array.isArray(pk.nature) ? pk.nature[0] : pk.nature;
+                return nIdx != null ? (
+                  <div className="team-ov-chip team-ov-chip--nature">
+                    <FaLeaf className="team-ov-chip-ico team-ov-chip-ico--nature" aria-hidden />
+                    <span className="team-ov-chip-val">{NATURE_FR[nIdx] ?? `#${nIdx}`}</span>
+                  </div>
+                ) : null;
+              })()}
+            </div>
+            <div className="team-ov-details">
+              <div className="team-ov-detail">
+                <FaWandMagicSparkles className="team-ov-detail-ico team-ov-detail-ico--ability" aria-hidden />
+                <span className="team-ov-detail-label">Talent</span>
+                <span className="team-ov-detail-val">{pk.ability != null && pk.ability > 0 ? (psdkNames.abilities?.[pk.ability] ?? `#${pk.ability}`) : "Aucun"}</span>
+              </div>
+              <div className="team-ov-detail">
+                <FaBagShopping className="team-ov-detail-ico team-ov-detail-ico--item" aria-hidden />
+                <span className="team-ov-detail-label">Objet</span>
+                <span className="team-ov-detail-val">{pk.itemHolding != null && pk.itemHolding > 0 ? (psdkNames.items?.[pk.itemHolding] ?? `#${pk.itemHolding}`) : "Aucun"}</span>
+              </div>
+              {pk.exp != null && pk.exp > 0 && (
+                <div className="team-ov-detail">
+                  <FaChartLine className="team-ov-detail-ico team-ov-detail-ico--exp" aria-hidden />
+                  <span className="team-ov-detail-label">EXP</span>
+                  <span className="team-ov-detail-val">{pk.exp.toLocaleString("fr-FR")}</span>
+                </div>
+              )}
+            </div>
+            {pk.moves && pk.moves.length > 0 && (
+              <div className="team-ov-moves">
+                <div className="team-ov-moves-head">
+                  <FaLayerGroup className="team-ov-moves-ico" aria-hidden />
+                  <span>Attaques</span>
+                </div>
+                <div className="team-ov-moves-list">
+                  {pk.moves.map((id, mi) => (
+                    <span key={`${id}-${mi}`} className="team-ov-move-chip">{psdkNames.skills?.[id] ?? `#${id}`}</span>
+                  ))}
+                </div>
+              </div>
+            )}
+            {ivRows && (<>
+              <div className="team-iv-head">
+                <FaChartPie className="team-iv-head-ico" aria-hidden />
+                <span className="team-iv-head-title">IV</span>
+                <span className="team-iv-total">
+                  <FaDna className="team-iv-total-ico" aria-hidden />
+                  Σ {ivTotal}<span className="team-iv-total-max">/186</span>
+                </span>
+              </div>
+              <div className="team-iv-rows">
+                {ivRows.map(({ Icon, label: l, v, fill }) => (
+                  <div key={l} className="team-iv-row">
+                    <div className="team-iv-meta"><Icon className="team-iv-stat-ico" aria-hidden /><span className="team-iv-lab">{l}</span></div>
+                    <div className="team-iv-bar-track" aria-hidden><div className={`team-iv-bar-fill ${fill}`} style={{ width: `${Math.min(100, (v / 31) * 100)}%` }} /></div>
+                    <span className="team-iv-val">{v}</span>
+                  </div>
+                ))}
+              </div>
+            </>)}
+          </div>
+        );
+      })(), document.body)}
+    </>
+  );
+}
+
 /* ==================== ProfileCard popup ==================== */
 
 function ProfileCard({
@@ -287,6 +589,19 @@ function ProfileCard({
   targetMute,
   friendship,
   isBlocked,
+  gameState,
+  liveStatus,
+  dexEntries,
+  siteUrl,
+  psdkNames,
+  installDir,
+  lastSavePath,
+  gameProfile,
+  onShareActivity,
+  onProposeTrade,
+  canTrade,
+  onProposeBattle,
+  canBattle,
   onClose,
   onEdit,
   onSendDm,
@@ -306,6 +621,19 @@ function ProfileCard({
   targetMute?: ChatMute | null;
   friendship?: ChatFriend | null;
   isBlocked: boolean;
+  gameState?: GameLiveState | null;
+  liveStatus?: GameLivePlayer["liveStatus"];
+  dexEntries: PokeEntry[];
+  siteUrl: string;
+  psdkNames: { species: string[] | null; skills: string[] | null; abilities: string[] | null; items: string[] | null };
+  installDir: string;
+  lastSavePath?: string | null;
+  gameProfile?: PlayerProfile | null;
+  onShareActivity: (data: GameActivityShareData) => void;
+  onProposeTrade?: () => void;
+  canTrade?: boolean;
+  onProposeBattle?: () => void;
+  canBattle?: boolean;
   onClose: () => void;
   onEdit: () => void;
   onSendDm: () => void;
@@ -322,6 +650,153 @@ function ProfileCard({
   const joinDate = new Date(target.created_at).toLocaleDateString("fr-FR", {
     day: "numeric", month: "long", year: "numeric",
   });
+
+  // Resolve speciesId from name via psdkNames array
+  const resolveSpeciesId = (speciesName: string, speciesId?: number): number => {
+    if (speciesId && speciesId > 0) return speciesId;
+    if (!psdkNames.species || !speciesName) return 0;
+    const norm = normForLiveMatch(speciesName);
+    const idx = psdkNames.species.findIndex((n) => n && normForLiveMatch(n) === norm);
+    return idx > 0 ? idx : 0;
+  };
+
+  const [hoveredPoke, setHoveredPoke] = useState<number | null>(null);
+  const [hoveredRect, setHoveredRect] = useState<DOMRect | null>(null);
+
+  // Load VD sprites for game state party + battle pokemon
+  // Always resolve from gameState.party (real-time), use gameProfile.team only for form lookup
+  const [vdSprites, setVdSprites] = useState<Record<string, string>>({});
+  const vdRequestedRef = useRef<Set<string>>(new Set());
+
+  // Detect when party composition changes (new Pokémon, different order, etc.)
+  const partyKey = useMemo(() => {
+    if (!gameState?.party) return "";
+    return gameState.party.map((pk) => `${pk.species}_${pk.level}_${pk.shiny}`).join("|");
+  }, [gameState?.party]);
+  // Reset VD sprite cache when party composition changes
+  const prevPartyKeyRef = useRef(partyKey);
+  if (prevPartyKeyRef.current !== partyKey) {
+    prevPartyKeyRef.current = partyKey;
+    vdRequestedRef.current.clear();
+  }
+  useEffect(() => {
+    if (!gameState) return;
+    let active = true;
+    const toLoad: { sid: number; form: number; shiny: boolean; altShiny?: boolean }[] = [];
+
+    // Build a lookup from speciesId → form using gameProfile.team (for accurate forms)
+    const formLookup = new Map<number, number>();
+    if (isOwn && gameProfile?.team) {
+      for (const m of gameProfile.team) {
+        const sid = typeof m.code === "string" ? parseInt(m.code, 10) : Number(m.code);
+        const form = typeof m.form === "string" ? parseInt(m.form, 10) : (m.form ?? 0);
+        if (Number.isFinite(sid) && sid > 0) formLookup.set(sid, form);
+      }
+    }
+
+    const addPoke = (speciesName: string, speciesId?: number, form?: number, shiny?: boolean, altShiny?: boolean) => {
+      const sid = resolveSpeciesId(speciesName, speciesId);
+      if (sid <= 0) return;
+      const resolvedForm = formLookup.get(sid) ?? (typeof form === "number" && form > 0 ? form : 0);
+      toLoad.push({ sid, form: resolvedForm, shiny: !!shiny, altShiny: !!altShiny });
+    };
+
+    // Utilise directement les données du jeu (game_state.json) — alt_shiny est maintenant inclus par le bridge
+    gameState.party?.forEach((pk) => addPoke(pk.species, pk.species_id, pk.form, pk.shiny, pk.alt_shiny));
+    if (gameState.battle_ally) addPoke(gameState.battle_ally.species, gameState.battle_ally.species_id, undefined, gameState.battle_ally.shiny, gameState.battle_ally.alt_shiny);
+    gameState.battle_foes?.forEach((f) => addPoke(f.species, f.species_id, f.form, f.shiny, f.alt_shiny));
+
+    // Filter out already-requested sprites to prevent infinite loop
+    const newToLoad = toLoad.filter(({ sid, form, shiny, altShiny }) => {
+      const keys = [`${sid}_${form}_n`];
+      if (shiny) keys.push(`${sid}_${form}_s`);
+      if (altShiny) keys.push(`${sid}_${form}_a`);
+      const allRequested = keys.every((k) => vdRequestedRef.current.has(k));
+      if (allRequested) return false;
+      keys.forEach((k) => vdRequestedRef.current.add(k));
+      return true;
+    });
+    if (newToLoad.length === 0) return;
+
+    (async () => {
+      const result: Record<string, string> = {};
+      for (const { sid, form, shiny, altShiny } of newToLoad) {
+        const formArg = form > 0 ? form : null;
+        if (altShiny) {
+          const aKey = `${sid}_${form}_a`;
+          try {
+            const r = await invoke<string | null>("cmd_get_alt_shiny_sprite", { speciesId: sid, form: formArg });
+            if (r) result[aKey] = r;
+          } catch {}
+        }
+        if (shiny) {
+          const sKey = `${sid}_${form}_s`;
+          try {
+            const r = await invoke<string | null>("cmd_get_shiny_sprite", { speciesId: sid, form: formArg });
+            if (r) result[sKey] = r;
+          } catch {}
+        }
+        const nKey = `${sid}_${form}_n`;
+        try {
+          const r = await invoke<string | null>("cmd_get_normal_sprite", { speciesId: sid, form: formArg });
+          if (r) result[nKey] = r;
+        } catch {}
+      }
+      if (active && Object.keys(result).length) setVdSprites((prev) => ({ ...prev, ...result }));
+    })();
+    return () => { active = false; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [partyKey, psdkNames.species, isOwn]);
+
+  // Build a lookup from speciesId to form using gameProfile.team (site data)
+  const profileFormMap = useMemo(() => {
+    const map = new Map<number, number>();
+    if (isOwn && gameProfile?.team) {
+      for (const m of gameProfile.team) {
+        const sid = typeof m.code === "string" ? parseInt(m.code, 10) : Number(m.code);
+        const form = typeof m.form === "string" ? parseInt(m.form, 10) : (m.form ?? 0);
+        if (Number.isFinite(sid) && sid > 0) map.set(sid, form);
+      }
+    }
+    return map;
+  }, [isOwn, gameProfile?.team]);
+
+  const getSprite = (speciesName: string, speciesId?: number, form?: number, shiny?: boolean, altShiny?: boolean): string[] => {
+    const urls: string[] = [];
+    const sid = resolveSpeciesId(speciesName, speciesId);
+    if (sid > 0) {
+      const f = profileFormMap.get(sid) ?? (typeof form === "number" && form > 0 ? form : 0);
+      if (altShiny) {
+        const aUrl = vdSprites[`${sid}_${f}_a`];
+        if (aUrl) urls.push(aUrl);
+      }
+      if (shiny) {
+        const sUrl = vdSprites[`${sid}_${f}_s`];
+        if (sUrl) urls.push(sUrl);
+      }
+      const nUrl = vdSprites[`${sid}_${f}_n`];
+      if (nUrl) urls.push(nUrl);
+    }
+    // Fallback: local game files (same as home page)
+    const root = lastSavePath ? rootFromSavePath(lastSavePath, installDir) : installDir;
+    if (root) {
+      const m = { code: speciesId ?? sid, form: form ?? 0, speciesName };
+      const { list } = monIconCandidates(root, m);
+      urls.push(...list);
+    }
+    return urls;
+  };
+
+  const hpPct = (hp: number, max: number) => max > 0 ? Math.round((hp / max) * 100) : 0;
+  const hpColor = (pct: number) => pct > 50 ? "#4ade80" : pct > 20 ? "#facc15" : "#ef4444";
+
+  const formatPlayTime = (frames?: number) => {
+    if (!frames) return "0h";
+    const s = Math.floor(frames / 60);
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    return h > 0 ? `${h}h ${m.toString().padStart(2, "0")}m` : `${m}m`;
+  };
 
   return (
     <div className="pnw-chat-profile-overlay" onClick={onClose}>
@@ -408,6 +883,283 @@ function ProfileCard({
             </div>
           </div>
 
+          {/* Game state — shown when player is in-game */}
+          {/* Lightweight status for other players (no full gameState) */}
+          {!gameState && liveStatus?.gameActive && (
+            <div className="pnw-profile-game">
+              <div className="pnw-profile-game-header">
+                <span className="pnw-profile-game-live-dot" />
+                <span>En jeu</span>
+                {liveStatus.mapName && <span className="pnw-profile-game-location"><FaMapLocationDot /> {liveStatus.mapName}</span>}
+              </div>
+              {liveStatus.inBattle && (
+                <div className="pnw-profile-game-battle">
+                  <div className="pnw-profile-game-battle-label"><FaBolt /> <span>En combat...</span></div>
+                </div>
+              )}
+            </div>
+          )}
+          {gameState && (() => {
+            return (
+            <div className="pnw-profile-game">
+              <div className="pnw-profile-game-header">
+                <span className="pnw-profile-game-live-dot" />
+                <span>En jeu</span>
+                {gameState.map_name && <span className="pnw-profile-game-location"><FaMapLocationDot /> {gameState.map_name}</span>}
+                <button
+                  className="pnw-profile-game-share-btn"
+                  title="Partager l'activité"
+                  onClick={() => {
+                    const party = gameState.party?.map((pk, idx) => {
+                      const tm = isOwn && gameProfile?.team?.[idx] ? gameProfile.team[idx] : null;
+                      const sid = pk.species_id ?? resolveSpeciesId(pk.species, pk.species_id);
+                      const tmSid = tm ? (typeof tm.code === "string" ? parseInt(tm.code, 10) : Number(tm.code)) : 0;
+                      const form = tm ? (typeof tm.form === "string" ? parseInt(tm.form, 10) : (tm.form ?? 0)) : (pk.form ?? 0);
+                      return {
+                        species: pk.species,
+                        speciesId: tmSid || sid,
+                        level: pk.level,
+                        form,
+                        shiny: pk.shiny,
+                        altShiny: pk.alt_shiny || tm?.isAltShiny || false,
+                        nickname: tm?.nickname || (pk.name !== pk.species ? pk.name : null),
+                        gender: tm?.gender ?? pk.gender,
+                        nature: tm?.nature ?? pk.nature,
+                        ability: pk.ability ?? tm?.ability,
+                        itemHolding: tm?.itemHolding ?? pk.item,
+                        exp: tm?.exp ?? pk.exp,
+                        moves: tm?.moves ?? pk.moves,
+                        ivHp: tm?.ivHp ?? pk.iv_hp,
+                        ivAtk: tm?.ivAtk ?? pk.iv_atk,
+                        ivDfe: tm?.ivDfe ?? pk.iv_dfe,
+                        ivSpd: tm?.ivSpd ?? pk.iv_spd,
+                        ivAts: tm?.ivAts ?? pk.iv_ats,
+                        ivDfs: tm?.ivDfs ?? pk.iv_dfs,
+                      };
+                    }) || [];
+                    onShareActivity({
+                      targetUserId: target.id,
+                      targetName: displayName(target),
+                      targetAvatar: target.avatar_url,
+                      mapName: gameState.map_name || "",
+                      inBattle: !!gameState.in_battle,
+                      party,
+                      battleAlly: gameState.battle_ally ? (() => {
+                        const ally = gameState.battle_ally!;
+                        const allyPk = gameState.party?.find((p) => p.species === ally.species);
+                        return { species: ally.species, speciesId: resolveSpeciesId(ally.species, ally.species_id), level: ally.level, shiny: !!ally.shiny, altShiny: !!ally.alt_shiny, hp: ally.hp ?? allyPk?.hp, max_hp: ally.max_hp ?? allyPk?.max_hp };
+                      })() : null,
+                      battleFoes: gameState.battle_foes?.map((f) => ({ species: f.species, speciesId: resolveSpeciesId(f.species, f.species_id), level: f.level, shiny: !!f.shiny, altShiny: !!f.alt_shiny, hp: f.hp, max_hp: f.max_hp })) || [],
+                      timestamp: Date.now(),
+                    });
+                  }}
+                >
+                  <FaShareNodes />
+                </button>
+              </div>
+              <div className="pnw-profile-game-stats">
+                <div className="pnw-profile-game-stat"><FaMedal /> <span>{gameState.badge_count || 0} boss</span></div>
+                <div className="pnw-profile-game-stat"><FaCoins /> <span>{(gameState.money || 0).toLocaleString("fr-FR")} ¥</span></div>
+                <div className="pnw-profile-game-stat"><FaClock /> <span>{formatPlayTime(gameState.play_time)}</span></div>
+              </div>
+              {gameState.party && gameState.party.length > 0 && (
+                <div className="pnw-profile-game-party">
+                  {gameState.party.map((pk, i) => {
+                    // Priorité : données du jeu en cours (game_state.json), fallback save parsée
+                    const isAltShiny = !!pk.alt_shiny;
+                    const sprites = getSprite(pk.species, pk.species_id, pk.form, pk.shiny, isAltShiny);
+                    const pct = hpPct(pk.hp, pk.max_hp);
+                    const sid = resolveSpeciesId(pk.species, pk.species_id);
+                    const speciesName = psdkNames.species && sid > 0 ? psdkNames.species[sid] ?? pk.species : pk.species;
+                    return (
+                      <div
+                        key={i}
+                        className={`team-mon-card group${pk.hp === 0 ? " pnw-profile-game-poke--ko" : ""}${hoveredPoke === i ? " team-mon-card--active" : ""}`}
+                        onMouseEnter={(e) => { setHoveredPoke(i); setHoveredRect(e.currentTarget.getBoundingClientRect()); }}
+                        onMouseLeave={() => setHoveredPoke((prev) => prev === i ? null : prev)}
+                      >
+                        {isAltShiny && <FaStar className="team-mon-alt-shiny-star" title="Shiny Alt" />}
+                        {pk.shiny && !isAltShiny && <FaStar className="team-mon-shiny-star" title="Shiny" />}
+                        <div className="team-mon-sprite-wrap">
+                          {sprites.length > 0 ? <SpriteImg srcs={sprites} alt={pk.species} className="team-mon-sprite" /> : <span>{pk.species?.[0] || "?"}</span>}
+                        </div>
+                        <div className="team-mon-name" title={speciesName}>{speciesName}</div>
+                        <div className="team-mon-level">Nv. {pk.level}</div>
+                        <div className="pnw-profile-game-poke-hpbar" style={{ marginTop: 2 }}>
+                          <div className="pnw-profile-game-poke-hpbar-fill" style={{ width: `${pct}%`, background: hpColor(pct) }} />
+                        </div>
+                        <span className="pnw-profile-game-poke-hptxt">{pk.hp}/{pk.max_hp}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              {/* Portal overlay for hovered Pokémon — renders above everything */}
+              {hoveredPoke != null && hoveredRect && gameState?.party?.[hoveredPoke] && createPortal((() => {
+                const pk = gameState.party[hoveredPoke];
+                const hovAltShiny = !!pk.alt_shiny;
+                const sprites = getSprite(pk.species, pk.species_id, pk.form, pk.shiny, hovAltShiny);
+                const sid = resolveSpeciesId(pk.species, pk.species_id);
+                const speciesName = psdkNames.species && sid > 0 ? psdkNames.species[sid] ?? pk.species : pk.species;
+                const nickname = pk.name !== pk.species ? pk.name : null;
+                const label = nickname ? (speciesName ? `${nickname} (${speciesName})` : nickname) : speciesName;
+                const gender = pk.gender;
+                const rawNature = pk.nature;
+                const nature = Array.isArray(rawNature) ? rawNature[0] : rawNature;
+                const ability = pk.ability;
+                const abilityName = (pk as any).ability_name || (ability != null && ability > 0 ? psdkNames.abilities?.[ability] : null) || null;
+                const itemHolding = pk.item;
+                const exp = pk.exp;
+                const moves = pk.moves;
+                const ivHp = pk.iv_hp;
+                const ivAtk = pk.iv_atk;
+                const ivDfe = pk.iv_dfe;
+                const ivSpd = pk.iv_spd;
+                const ivAts = pk.iv_ats;
+                const ivDfs = pk.iv_dfs;
+                const hasIvs = ivHp != null;
+                const ivRows = hasIvs ? [
+                  { Icon: FaHeart, label: "PS", v: ivHp!, fill: "team-iv-fill--hp" },
+                  { Icon: FaHandFist, label: "Atk", v: ivAtk!, fill: "team-iv-fill--atk" },
+                  { Icon: FaShield, label: "Déf", v: ivDfe!, fill: "team-iv-fill--def" },
+                  { Icon: FaBolt, label: "Vit", v: ivSpd!, fill: "team-iv-fill--spe" },
+                  { Icon: FaWandMagicSparkles, label: "Sp.A", v: ivAts!, fill: "team-iv-fill--spa" },
+                  { Icon: FaShieldHalved, label: "Sp.D", v: ivDfs!, fill: "team-iv-fill--spd" },
+                ] : null;
+                const ivTotal = ivRows ? ivRows.reduce((s, r) => s + r.v, 0) : 0;
+                // Position above the hovered card, clamped to viewport
+                const ow = 180;
+                let left = hoveredRect.left + hoveredRect.width / 2 - ow / 2;
+                left = Math.max(8, Math.min(left, window.innerWidth - ow - 8));
+                let top = hoveredRect.top - 8;
+                return (
+                  <div className="team-mon-iv-overlay team-mon-iv-overlay--portal" style={{ left, bottom: window.innerHeight - top }}>
+                    <div className="team-iv-sprite-wrap" style={{ margin: "0 auto 0.3rem" }}>
+                      {sprites.length > 0 && <SpriteImg srcs={sprites} className="team-iv-sprite" />}
+                      {hovAltShiny ? <FaStar className="team-iv-alt-shiny-star" /> : pk.shiny ? <FaStar className="team-iv-shiny-star" /> : null}
+                    </div>
+                    {label && <div className="team-iv-nickname">{label}</div>}
+                    <div className="team-ov-chips">
+                      <div className="team-ov-chip team-ov-chip--level">
+                        <FaChartLine className="team-ov-chip-ico team-ov-chip-ico--level" aria-hidden />
+                        <span className="team-ov-chip-val">{pk.level}</span>
+                      </div>
+                      {gender != null && (
+                        <div className={`team-ov-chip team-ov-chip--gender${gender}`}>
+                          {gender === 0 ? <FaMars className="team-ov-chip-ico team-ov-chip-ico--male" /> :
+                           gender === 1 ? <FaVenus className="team-ov-chip-ico team-ov-chip-ico--female" /> :
+                           <FaVenusMars className="team-ov-chip-ico team-ov-chip-ico--neutral" />}
+                          <span className="team-ov-chip-val">{gender === 0 ? "♂" : gender === 1 ? "♀" : "—"}</span>
+                        </div>
+                      )}
+                      {nature != null && (
+                        <div className="team-ov-chip team-ov-chip--nature">
+                          <FaLeaf className="team-ov-chip-ico team-ov-chip-ico--nature" aria-hidden />
+                          <span className="team-ov-chip-val">{NATURE_FR[nature] ?? `#${nature}`}</span>
+                        </div>
+                      )}
+                    </div>
+                    <div className="team-ov-details">
+                      <div className="team-ov-detail">
+                        <FaWandMagicSparkles className="team-ov-detail-ico team-ov-detail-ico--ability" aria-hidden />
+                        <span className="team-ov-detail-label">Talent</span>
+                        <span className="team-ov-detail-val">{abilityName || "Aucun"}</span>
+                      </div>
+                      <div className="team-ov-detail">
+                        <FaBagShopping className="team-ov-detail-ico team-ov-detail-ico--item" aria-hidden />
+                        <span className="team-ov-detail-label">Objet</span>
+                        <span className="team-ov-detail-val">{itemHolding != null && itemHolding > 0 ? (psdkNames.items?.[itemHolding] ?? `#${itemHolding}`) : "Aucun"}</span>
+                      </div>
+                      {exp != null && exp > 0 && (
+                        <div className="team-ov-detail">
+                          <FaChartLine className="team-ov-detail-ico team-ov-detail-ico--exp" aria-hidden />
+                          <span className="team-ov-detail-label">EXP</span>
+                          <span className="team-ov-detail-val">{exp.toLocaleString("fr-FR")}</span>
+                        </div>
+                      )}
+                    </div>
+                    {moves && moves.length > 0 && (
+                      <div className="team-ov-moves">
+                        <div className="team-ov-moves-head">
+                          <FaLayerGroup className="team-ov-moves-ico" aria-hidden />
+                          <span>Attaques</span>
+                        </div>
+                        <div className="team-ov-moves-list">
+                          {moves.map((id, mi) => (
+                            <span key={`${id}-${mi}`} className="team-ov-move-chip">{psdkNames.skills?.[id] ?? `#${id}`}</span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {ivRows && (<>
+                      <div className="team-iv-head">
+                        <FaChartPie className="team-iv-head-ico" aria-hidden />
+                        <span className="team-iv-head-title">IV</span>
+                        <span className="team-iv-total">
+                          <FaDna className="team-iv-total-ico" aria-hidden />
+                          Σ {ivTotal}<span className="team-iv-total-max">/186</span>
+                        </span>
+                      </div>
+                      <div className="team-iv-rows">
+                        {ivRows.map(({ Icon, label: l, v, fill }) => (
+                          <div key={l} className="team-iv-row">
+                            <div className="team-iv-meta"><Icon className="team-iv-stat-ico" aria-hidden /><span className="team-iv-lab">{l}</span></div>
+                            <div className="team-iv-bar-track" aria-hidden><div className={`team-iv-bar-fill ${fill}`} style={{ width: `${Math.min(100, (v / 31) * 100)}%` }} /></div>
+                            <span className="team-iv-val">{v}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </>)}
+                  </div>
+                );
+              })(), document.body)}
+              {gameState.in_battle && gameState.battle_ally && gameState.battle_foes?.length ? (
+                <div className="pnw-profile-game-battle">
+                  <div className="pnw-profile-game-battle-label">
+                    <FaBolt />
+                    <span>{gameState.is_trainer_battle && gameState.trainer_battle_names?.length ? `vs ${gameState.trainer_battle_names.join(" & ")}` : "Combat sauvage"}</span>
+                    {gameState.battle_turn ? <span className="pnw-profile-game-battle-turn">Tour {gameState.battle_turn}</span> : null}
+                  </div>
+                  <div className="pnw-profile-game-battle-arena">
+                    {(() => {
+                      const ally = gameState.battle_ally;
+                      const ss = getSprite(ally.species, ally.species_id, undefined, ally.shiny, ally.alt_shiny);
+                      // Fallback: get ally HP from party if not in battle_ally data
+                      const partyMatch = (ally.hp == null && gameState.party) ? gameState.party.find((p) => p.species === ally.species) : null;
+                      const allyHp = ally.hp ?? partyMatch?.hp;
+                      const allyMaxHp = ally.max_hp ?? partyMatch?.max_hp;
+                      const allyPct = allyHp != null && allyMaxHp ? hpPct(allyHp, allyMaxHp) : null;
+                      return (
+                        <div className="pnw-profile-game-battle-side pnw-profile-game-battle-side--ally">
+                          {ss.length > 0 ? <SpriteImg srcs={ss} className="pnw-profile-game-battle-sprite" /> : <div className="pnw-profile-game-battle-sprite-ph">{ally.species?.[0]}</div>}
+                          <span className="pnw-profile-game-battle-name">{ally.species}{ally.alt_shiny && <FaStar style={{ fontSize: 7, color: "#c084fc", marginLeft: 2 }} />}{ally.shiny && !ally.alt_shiny && <FaStar style={{ fontSize: 7, color: "#f1c40f", marginLeft: 2 }} />}</span>
+                          <span className="pnw-profile-game-battle-lvl">Nv.{ally.level}</span>
+                          {allyPct != null && (<><div className="pnw-profile-game-poke-hpbar"><div className="pnw-profile-game-poke-hpbar-fill" style={{ width: `${allyPct}%`, background: hpColor(allyPct) }} /></div><span className="pnw-profile-game-poke-hptxt">{allyHp}/{allyMaxHp}</span></>)}
+                        </div>
+                      );
+                    })()}
+                    <div className="pnw-profile-game-battle-vs">VS</div>
+                    {gameState.battle_foes.map((f, fi) => {
+                      const foePct = hpPct(f.hp, f.max_hp);
+                      return (
+                        <div key={fi} className="pnw-profile-game-battle-side pnw-profile-game-battle-side--foe">
+                          {(() => { const ss = getSprite(f.species, f.species_id, f.form, f.shiny, f.alt_shiny); return ss.length > 0 ? <SpriteImg srcs={ss} className="pnw-profile-game-battle-sprite" /> : <div className="pnw-profile-game-battle-sprite-ph">{f.species?.[0]}</div>; })()}
+                          <span className="pnw-profile-game-battle-name">{f.species}{f.alt_shiny && <FaStar style={{ fontSize: 7, color: "#c084fc", marginLeft: 2 }} />}{f.shiny && !f.alt_shiny && <FaStar style={{ fontSize: 7, color: "#f1c40f", marginLeft: 2 }} />}</span>
+                          <span className="pnw-profile-game-battle-lvl">Nv.{f.level}</span>
+                          <div className="pnw-profile-game-poke-hpbar"><div className="pnw-profile-game-poke-hpbar-fill" style={{ width: `${foePct}%`, background: hpColor(foePct) }} /></div>
+                          <span className="pnw-profile-game-poke-hptxt">{f.hp}/{f.max_hp}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : gameState.in_battle ? (
+                <div className="pnw-profile-game-battle"><div className="pnw-profile-game-battle-label"><FaBolt /> <span>En combat...</span></div></div>
+              ) : null}
+            </div>
+            );
+          })()}
+
           {/* Mute status (visible to mods) */}
           {isMod && targetMute && (
             <div className="pnw-chat-profile-mute-info">
@@ -448,8 +1200,19 @@ function ProfileCard({
               </>
             )}
           </div>
+          {canTrade && onProposeTrade && (
+            <button className="pnw-trade-profile-btn" onClick={() => { onProposeTrade(); onClose(); }}>
+              <FaArrowRightArrowLeft /> Proposer un échange
+            </button>
+          )}
+          {canBattle && onProposeBattle && (
+            <button className="pnw-trade-profile-btn" style={{ background: "linear-gradient(135deg, rgba(220,50,50,.85), rgba(180,30,80,.85))" }} onClick={() => { onProposeBattle(); onClose(); }}>
+              <FaGamepad /> Défier en combat
+            </button>
+          )}
         </div>
       </div>
+
     </div>
   );
 }
@@ -469,38 +1232,9 @@ function EditProfile({
   const [bio, setBio] = useState(profile.bio || "");
   const [avatarPreview, setAvatarPreview] = useState(profile.avatar_url);
   const [bannerPreview, setBannerPreview] = useState(profile.banner_url);
-  const [avatarFile, setAvatarFile] = useState<File | null>(null);
-  const [bannerFile, setBannerFile] = useState<File | null>(null);
-  const [avatarMode, setAvatarMode] = useState<"upload" | "url">("upload");
-  const [bannerMode, setBannerMode] = useState<"upload" | "url">("upload");
   const [avatarUrl, setAvatarUrl] = useState("");
   const [bannerUrl, setBannerUrl] = useState("");
   const [saving, setSaving] = useState(false);
-  const [bannerDragOver, setBannerDragOver] = useState(false);
-  const [avatarDragOver, setAvatarDragOver] = useState(false);
-  const avatarInputRef = useRef<HTMLInputElement>(null);
-  const bannerInputRef = useRef<HTMLInputElement>(null);
-
-  function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>, type: "avatar" | "banner") {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (file.size > 2 * 1024 * 1024) { alert("Fichier trop lourd (max 2 Mo)"); return; }
-    const url = URL.createObjectURL(file);
-    if (type === "avatar") { setAvatarFile(file); setAvatarPreview(url); }
-    else { setBannerFile(file); setBannerPreview(url); }
-  }
-
-  function handleDrop(e: React.DragEvent, type: "avatar" | "banner") {
-    e.preventDefault();
-    setBannerDragOver(false);
-    setAvatarDragOver(false);
-    const file = e.dataTransfer.files[0];
-    if (!file || !file.type.startsWith("image/")) return;
-    if (file.size > 2 * 1024 * 1024) { alert("Fichier trop lourd (max 2 Mo)"); return; }
-    const url = URL.createObjectURL(file);
-    if (type === "avatar") { setAvatarFile(file); setAvatarPreview(url); }
-    else { setBannerFile(file); setBannerPreview(url); }
-  }
 
   async function handleSave() {
     setSaving(true);
@@ -513,19 +1247,12 @@ function EditProfile({
       fields.bio = bio;
     }
 
-    // Avatar: upload or URL
-    if (avatarMode === "url" && avatarUrl.trim()) {
+    // Avatar & Banner: URL only
+    if (avatarUrl.trim()) {
       fields.avatar_url = avatarUrl.trim();
-    } else if (avatarFile) {
-      const url = await uploadChatAsset(profile.id, avatarFile, "avatar");
-      if (url) fields.avatar_url = url;
     }
-    // Banner: upload or URL
-    if (bannerMode === "url" && bannerUrl.trim()) {
+    if (bannerUrl.trim()) {
       fields.banner_url = bannerUrl.trim();
-    } else if (bannerFile) {
-      const url = await uploadChatAsset(profile.id, bannerFile, "banner");
-      if (url) fields.banner_url = url;
     }
 
     if (Object.keys(fields).length > 0) {
@@ -540,30 +1267,14 @@ function EditProfile({
   return (
     <div className="pnw-chat-profile-overlay" onClick={onClose}>
       <div className="pnw-chat-profile-card pnw-chat-profile-card--edit" onClick={(e) => e.stopPropagation()}>
-        {/* Banner editable */}
+        {/* Banner preview */}
         <div
-          className={`pnw-chat-profile-banner pnw-chat-profile-banner--edit${bannerPreview ? " pnw-chat-profile-banner--has-img" : ""}${bannerDragOver ? " pnw-chat-profile-banner--dragover" : ""}`}
+          className={`pnw-chat-profile-banner pnw-chat-profile-banner--edit${bannerPreview ? " pnw-chat-profile-banner--has-img" : ""}`}
           style={bannerPreview ? { backgroundImage: `url(${bannerPreview})` } : undefined}
-          onClick={() => bannerInputRef.current?.click()}
-          onDragOver={(e) => { e.preventDefault(); setBannerDragOver(true); }}
-          onDragLeave={() => setBannerDragOver(false)}
-          onDrop={(e) => handleDrop(e, "banner")}
-        >
-          <div className="pnw-chat-profile-banner-overlay">
-            <FaImage /> <span>{bannerDragOver ? "Déposer ici" : "Changer la bannière"}</span>
-          </div>
-          <input ref={bannerInputRef} type="file" accept="image/*" hidden onChange={(e) => handleFileSelect(e, "banner")} />
-        </div>
+        />
 
-        {/* Avatar editable */}
-        <div
-          className={`pnw-chat-profile-avatar-wrap${avatarDragOver ? " pnw-chat-profile-avatar-wrap--dragover" : ""}`}
-          onClick={() => avatarInputRef.current?.click()}
-          onDragOver={(e) => { e.preventDefault(); setAvatarDragOver(true); }}
-          onDragLeave={() => setAvatarDragOver(false)}
-          onDrop={(e) => handleDrop(e, "avatar")}
-          style={{ cursor: "pointer" }}
-        >
+        {/* Avatar preview */}
+        <div className="pnw-chat-profile-avatar-wrap">
           {avatarPreview ? (
             <img src={avatarPreview} alt="" className="pnw-chat-profile-avatar" />
           ) : (
@@ -571,8 +1282,6 @@ function EditProfile({
               {name[0]?.toUpperCase() || "?"}
             </div>
           )}
-          <div className="pnw-chat-profile-avatar-edit"><FaCamera /></div>
-          <input ref={avatarInputRef} type="file" accept="image/*" hidden onChange={(e) => handleFileSelect(e, "avatar")} />
         </div>
 
         <button className="pnw-chat-profile-close" onClick={onClose}><FaXmark /></button>
@@ -603,47 +1312,27 @@ function EditProfile({
             <span className={`pnw-chat-edit-count${bio.length >= 180 ? " pnw-chat-edit-count--danger" : bio.length >= 150 ? " pnw-chat-edit-count--warn" : ""}`}>{bio.length}/200</span>
           </label>
 
-          {/* Avatar mode toggle */}
-          <div className="pnw-chat-edit-label">
+          {/* Avatar URL */}
+          <label className="pnw-chat-edit-label">
             <span className="pnw-chat-edit-label-text"><FaCamera /> Avatar</span>
-            <div className="pnw-chat-edit-mode-toggle">
-              <button className={`pnw-chat-edit-mode-btn ${avatarMode === "upload" ? "pnw-chat-edit-mode-btn--active" : ""}`} onClick={() => setAvatarMode("upload")}>
-                <FaUpload /> Upload
-              </button>
-              <button className={`pnw-chat-edit-mode-btn ${avatarMode === "url" ? "pnw-chat-edit-mode-btn--active" : ""}`} onClick={() => setAvatarMode("url")}>
-                <FaLink /> Lien
-              </button>
-            </div>
-            {avatarMode === "url" && (
-              <input
-                className="pnw-chat-edit-input"
-                value={avatarUrl}
-                onChange={(e) => { setAvatarUrl(e.target.value); if (e.target.value.trim()) setAvatarPreview(e.target.value.trim()); }}
-                placeholder="https://exemple.com/avatar.png"
-              />
-            )}
-          </div>
+            <input
+              className="pnw-chat-edit-input"
+              value={avatarUrl}
+              onChange={(e) => { setAvatarUrl(e.target.value); if (e.target.value.trim()) setAvatarPreview(e.target.value.trim()); }}
+              placeholder="https://exemple.com/avatar.png"
+            />
+          </label>
 
-          {/* Banner mode toggle */}
-          <div className="pnw-chat-edit-label">
+          {/* Banner URL */}
+          <label className="pnw-chat-edit-label">
             <span className="pnw-chat-edit-label-text"><FaImage /> Bannière</span>
-            <div className="pnw-chat-edit-mode-toggle">
-              <button className={`pnw-chat-edit-mode-btn ${bannerMode === "upload" ? "pnw-chat-edit-mode-btn--active" : ""}`} onClick={() => setBannerMode("upload")}>
-                <FaUpload /> Upload
-              </button>
-              <button className={`pnw-chat-edit-mode-btn ${bannerMode === "url" ? "pnw-chat-edit-mode-btn--active" : ""}`} onClick={() => setBannerMode("url")}>
-                <FaLink /> Lien
-              </button>
-            </div>
-            {bannerMode === "url" && (
-              <input
-                className="pnw-chat-edit-input"
-                value={bannerUrl}
-                onChange={(e) => { setBannerUrl(e.target.value); if (e.target.value.trim()) setBannerPreview(e.target.value.trim()); }}
-                placeholder="https://exemple.com/banniere.png"
-              />
-            )}
-          </div>
+            <input
+              className="pnw-chat-edit-input"
+              value={bannerUrl}
+              onChange={(e) => { setBannerUrl(e.target.value); if (e.target.value.trim()) setBannerPreview(e.target.value.trim()); }}
+              placeholder="https://exemple.com/banniere.png"
+            />
+          </label>
 
           <div className="pnw-chat-profile-actions">
             <button className="pnw-chat-profile-btn pnw-chat-profile-btn--cancel" onClick={onClose}>
@@ -777,21 +1466,34 @@ function MentionPicker({
   );
 }
 
+/* ==================== Helpers for game-live sprite resolution ==================== */
+
+const normForLiveMatch = (s: string) =>
+  s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[-\s]+/g, " ").trim();
+
+
 /* ==================== Props ==================== */
 
 interface ChatViewProps {
   siteUrl: string;
   onBack: () => void;
   onUnreadChange?: (count: number) => void;
+  /** true quand le panel chat est visible (ouvert). */
+  visible?: boolean;
   gtsSharePending?: import("../types").GtsShareData | null;
   onGtsShareDone?: () => void;
   onOpenGts?: (onlineId?: string | number) => void;
   gameProfile?: PlayerProfile | null;
+  installDir: string;
+  lastSavePath?: string | null;
+  onProfileReload?: () => void;
+  /** Quand true, affiche la vue Tour de Combat au lieu du chat. */
+  battleMode?: boolean;
 }
 
 /* ==================== Main Component ==================== */
 
-export default function ChatView({ siteUrl, onBack, onUnreadChange, gtsSharePending, onGtsShareDone, onOpenGts, gameProfile }: ChatViewProps) {
+export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = true, battleMode = false, gtsSharePending, onGtsShareDone, onOpenGts, gameProfile, installDir, lastSavePath, onProfileReload }: ChatViewProps) {
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<ChatProfile | null>(null);
   const [loading, setLoading] = useState(true);
@@ -831,10 +1533,166 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, gtsSharePend
   const [showFriendsPanel, setShowFriendsPanel] = useState(false);
   const [profileFriendship, setProfileFriendship] = useState<ChatFriend | null | undefined>(undefined);
 
+  // ─── P2P Trade state ───
+  const [tradeState, setTradeState] = useState<TradeState>({ phase: "idle" });
+  const tradeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const gameLiveRef2 = useRef<any>(null); // ref to game-live channel for trade broadcasts
+
+  // ─���─ P2P Battle state ───
+  const [battleState, setBattleState] = useState<BattleRoomState>({ phase: "idle" });
+  const battleStateRef = useRef<BattleRoomState>({ phase: "idle" });
+  const battleTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const battleRelayCleanupRef = useRef<(() => void) | null>(null);
+  const [showTradeBoxes, setShowTradeBoxes] = useState(false);
+  const [showTradeSwapAnim, setShowTradeSwapAnim] = useState(false);
+  const [tradeSwapInfo, setTradeSwapInfo] = useState<{ mySpriteUrl: string | null; myName: string; myShiny: boolean; myAltShiny: boolean; theirSpriteUrl: string | null; theirName: string; theirShiny: boolean; theirAltShiny: boolean; boxName: string | null } | null>(null);
+  const theirPokemonB64Ref = useRef<string | null>(null);
+  const [tradeBytesReady, setTradeBytesReady] = useState(0); // incremented when both bytes available — triggers execution useEffect
+  const tradeCompleteRef = useRef<{ myDone: boolean; theirDone: boolean; boxName: string | null }>({ myDone: false, theirDone: false, boxName: null });
+
+  const clearTradeTimeout = useCallback(() => {
+    if (tradeTimeoutRef.current) { clearTimeout(tradeTimeoutRef.current); tradeTimeoutRef.current = null; }
+  }, []);
+
+  const cancelTrade = useCallback((reason?: string) => {
+    clearTradeTimeout();
+    const st = tradeState;
+    if (st.phase !== "idle" && st.phase !== "complete" && st.phase !== "error") {
+      gameLiveRef2.current?.send({ type: "broadcast", event: "trade_cancel", payload: { tradeId: st.tradeId, userId: session?.user?.id } });
+    }
+    setTradeState(reason ? { phase: "error", tradeId: (st as any).tradeId ?? "", partnerId: (st as any).partnerId ?? "", partnerName: (st as any).partnerName ?? "", message: reason } : { phase: "idle" });
+    setShowTradeBoxes(false);
+    theirPokemonB64Ref.current = null;
+  }, [tradeState, session?.user?.id, clearTradeTimeout]);
+
+  // Keep battleStateRef in sync (pour que les listeners broadcast aient toujours la valeur courante)
+  useEffect(() => { battleStateRef.current = battleState; }, [battleState]);
+
+  // ─── P2P Battle helpers ───
+  const clearBattleTimeout = useCallback(() => {
+    if (battleTimeoutRef.current) { clearTimeout(battleTimeoutRef.current); battleTimeoutRef.current = null; }
+  }, []);
+
+  const cancelBattle = useCallback(async (reason?: string) => {
+    clearBattleTimeout();
+    const st = battleState;
+    if (st.phase !== "idle" && st.phase !== "complete" && st.phase !== "error") {
+      gameLiveRef2.current?.send({ type: "broadcast", event: "battle_room_cancel", payload: { roomCode: (st as any).roomCode, userId: session?.user?.id } });
+    }
+    await fullCleanup(battleRelayCleanupRef);
+    setBattleState(reason ? { phase: "error", roomCode: (st as any).roomCode ?? "", partnerId: (st as any).partnerId ?? "", partnerName: (st as any).partnerName ?? "", message: reason } : { phase: "idle" });
+  }, [battleState, session?.user?.id, clearBattleTimeout]);
+
+  // Execute trade when both bytes are available — write save, then wait for partner
+  useEffect(() => {
+    if (tradeState.phase !== "executing") return;
+    const theirB64 = theirPokemonB64Ref.current;
+    if (import.meta.env.DEV) console.debug("[Trade Execute]", { phase: tradeState.phase, role: tradeState.role, hasTheirB64: !!theirB64, theirB64Len: theirB64?.length, lastSavePath, myDone: tradeCompleteRef.current.myDone });
+    if (!theirB64 || !lastSavePath) return;
+    if (!validateIncomingBytes(theirB64)) {
+      cancelTrade("Données du Pokémon reçu invalides.");
+      return;
+    }
+    const mySelection = tradeState.mySelection;
+    if (!mySelection) return;
+    // Prevent double execution
+    if (tradeCompleteRef.current.myDone) return;
+    tradeCompleteRef.current.myDone = true;
+
+    (async () => {
+      try {
+        const theirPreview = tradeState.theirPreview;
+        const { boxName, evolvedTo, evolvedForm } = await executeTradeLocally(lastSavePath, mySelection.boxIdx, mySelection.slotIdx, theirB64, theirPreview.speciesId, theirPreview.form, theirPreview.itemHolding, mySelection.speciesId);
+        tradeCompleteRef.current.boxName = boxName;
+        gameLiveRef2.current?.send({ type: "broadcast", event: "trade_complete", payload: { tradeId: tradeState.tradeId, userId: session?.user?.id } });
+        // Insert trade completion message in DM (initiator only)
+        const dmChId = (tradeState as any).dmChannelId;
+        if (dmChId && session?.user?.id && tradeState.role === "initiator") {
+          const msgData: TradeMessageData = {
+            tradeId: tradeState.tradeId,
+            playerA: { userId: session.user.id, name: profile?.display_name || profile?.username || "?", pokemon: { speciesId: mySelection.speciesId, name: mySelection.name, nickname: mySelection.nickname, level: mySelection.level, shiny: mySelection.shiny, altShiny: mySelection.altShiny, gender: mySelection.gender, nature: mySelection.nature, form: mySelection.form, ability: mySelection.ability, itemHolding: mySelection.itemHolding, moves: mySelection.moves, ivHp: mySelection.ivHp, ivAtk: mySelection.ivAtk, ivDfe: mySelection.ivDfe, ivSpd: mySelection.ivSpd, ivAts: mySelection.ivAts, ivDfs: mySelection.ivDfs } },
+            playerB: { userId: tradeState.partnerId, name: tradeState.partnerName, pokemon: tradeState.theirPreview },
+            timestamp: Date.now(),
+          };
+          await supabase.from("messages").insert({ channel_id: dmChId, user_id: session.user.id, content: buildTradeMessage(msgData) });
+        }
+        // Preload sprites while waiting for partner
+        const loadSprite = async (speciesId: number, form: number, shiny: boolean, altShiny: boolean): Promise<string | null> => {
+          const formArg = form > 0 ? form : null;
+          if (altShiny) { try { const r = await invoke<string | null>("cmd_get_alt_shiny_sprite", { speciesId, form: formArg }); if (r) return r; } catch {} }
+          if (shiny) { try { const r = await invoke<string | null>("cmd_get_shiny_sprite", { speciesId, form: formArg }); if (r) return r; } catch {} }
+          try { const r = await invoke<string | null>("cmd_get_normal_sprite", { speciesId, form: formArg }); if (r) return r; } catch {}
+          return null;
+        };
+        // Si le Pokémon reçu a évolué, charger le sprite de l'évolution
+        const receivedSpeciesId = evolvedTo ?? tradeState.theirPreview.speciesId;
+        const receivedName = evolvedTo && psdkNames.species && evolvedTo > 0
+          ? (psdkNames.species[evolvedTo] ?? tradeState.theirPreview.name)
+          : tradeState.theirPreview.name;
+        const receivedForm = evolvedTo ? (evolvedForm ?? 0) : tradeState.theirPreview.form;
+        const [mySpr, theirSpr] = await Promise.all([
+          loadSprite(mySelection.speciesId, mySelection.form, mySelection.shiny, mySelection.altShiny),
+          loadSprite(receivedSpeciesId, receivedForm, tradeState.theirPreview.shiny, tradeState.theirPreview.altShiny),
+        ]);
+        setTradeSwapInfo({
+          mySpriteUrl: mySpr, myName: mySelection.name, myShiny: mySelection.shiny, myAltShiny: mySelection.altShiny,
+          theirSpriteUrl: theirSpr, theirName: evolvedTo ? `${receivedName} ✨` : tradeState.theirPreview.name, theirShiny: tradeState.theirPreview.shiny, theirAltShiny: tradeState.theirPreview.altShiny,
+          boxName,
+        });
+        // Check if partner also done — if yes, show animation now
+        if (tradeCompleteRef.current.theirDone) {
+          setShowTradeSwapAnim(true);
+          clearTradeTimeout();
+          setTradeState({ phase: "complete", tradeId: tradeState.tradeId, partnerId: tradeState.partnerId, partnerName: tradeState.partnerName });
+          theirPokemonB64Ref.current = null;
+          tradeCompleteRef.current = { myDone: false, theirDone: false, boxName: null };
+          setTimeout(() => onProfileReload?.(), 500);
+        }
+        // Otherwise animation will be triggered by trade_complete handler
+      } catch (err: any) {
+        gameLiveRef2.current?.send({ type: "broadcast", event: "trade_error", payload: { tradeId: tradeState.tradeId, userId: session?.user?.id, message: err?.message || "Erreur" } });
+        tradeCompleteRef.current = { myDone: false, theirDone: false, boxName: null };
+        cancelTrade(err?.message || "Erreur lors de l'échange.");
+      }
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tradeState.phase, lastSavePath, tradeBytesReady]);
+
+  // Auto-start execution when both confirmed
+  useEffect(() => {
+    if (tradeState.phase !== "confirming") return;
+    if (!tradeState.myConfirmed || !tradeState.theirConfirmed) return;
+    // Both confirmed — initiator sends execute with bytes first
+    if (tradeState.role === "initiator") {
+      gameLiveRef2.current?.send({ type: "broadcast", event: "trade_execute", payload: { tradeId: tradeState.tradeId, userId: session?.user?.id, pokemonB64: tradeState.mySelection.pokemonB64 } });
+      setTradeState((prev) => prev.phase === "confirming" ? { phase: "executing", role: prev.role, tradeId: prev.tradeId, partnerId: prev.partnerId, partnerName: prev.partnerName, partnerAvatar: prev.partnerAvatar, dmChannelId: prev.dmChannelId, mySelection: prev.mySelection, theirPreview: prev.theirPreview } : prev);
+    }
+    // Responder waits for trade_execute from initiator (handled in broadcast handler)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tradeState]);
+
+  // Trade timeouts
+  useEffect(() => {
+    clearTradeTimeout();
+    if (tradeState.phase === "pending") {
+      tradeTimeoutRef.current = setTimeout(() => cancelTrade("Délai d'attente dépassé."), TRADE_PENDING_TIMEOUT);
+    } else if (tradeState.phase === "selecting") {
+      tradeTimeoutRef.current = setTimeout(() => cancelTrade("Délai de sélection dépassé."), TRADE_SELECTING_TIMEOUT);
+    } else if (tradeState.phase === "confirming") {
+      tradeTimeoutRef.current = setTimeout(() => cancelTrade("Délai de confirmation dépassé."), TRADE_CONFIRMING_TIMEOUT);
+    } else if (tradeState.phase === "executing") {
+      tradeTimeoutRef.current = setTimeout(() => cancelTrade("Délai d'exécution dépassé."), TRADE_EXECUTING_TIMEOUT);
+    }
+    return clearTradeTimeout;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tradeState.phase]);
+
   // Unread counts & mention/reply badge counts
   const [unreadCounts, setUnreadCounts] = useState<Record<number, number>>({});
   const [mentionCounts, setMentionCounts] = useState<Record<number, number>>({});
   const activeChannelRef = useRef<ChatChannel | null>(null);
+  const visibleRef = useRef(visible);
+  visibleRef.current = visible;
   const channelsRef = useRef<ChatChannel[]>([]);
   const profileRef = useRef<ChatProfile | null>(null);
 
@@ -866,6 +1724,17 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, gtsSharePend
   const [onlineUserIds, setOnlineUserIds] = useState<Set<string>>(new Set());
   const [showMembers, setShowMembers] = useState(true);
 
+  // Detect partner disconnect during trade (must be after onlineUserIds declaration)
+  useEffect(() => {
+    if (tradeState.phase === "idle" || tradeState.phase === "complete" || tradeState.phase === "error") return;
+    const partnerId = (tradeState as any).partnerId;
+    if (!partnerId) return;
+    if (!onlineUserIds.has(partnerId)) {
+      cancelTrade(`${(tradeState as any).partnerName} s'est déconnecté.`);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onlineUserIds, tradeState.phase]);
+
   // Leaderboard
   const [showLeaderboard, setShowLeaderboard] = useState(false);
   const [leaderboardData, setLeaderboardData] = useState<LeaderboardEntry[]>([]);
@@ -885,6 +1754,13 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, gtsSharePend
   const [blockedUserIds, setBlockedUserIds] = useState<Set<string>>(new Set());
   const [blockedUsersMap, setBlockedUsersMap] = useState<Map<string, number>>(new Map()); // blocked_id → block.id
   const [revealedBlockedMsgs, setRevealedBlockedMsgs] = useState<Set<number>>(new Set());
+
+  // Game Live Dashboard
+  const [gameLivePlayers, setGameLivePlayers] = useState<Map<string, GameLivePlayer>>(new Map());
+  const gameLiveRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+  const lastTrackedState = useRef<string>("");
+  const [glReconnect, setGlReconnect] = useState(0); // increment to force channel recreation
+  const spriteCache = useRef<Map<string, string>>(new Map());
 
   const isMod = profile?.roles?.includes("admin") ?? false;
 
@@ -921,6 +1797,7 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, gtsSharePend
 
   // GTS share modal
   const [showGtsShareModal, setShowGtsShareModal] = useState(false);
+  const [activityShareData, setActivityShareData] = useState<GameActivityShareData | null>(null);
 
   // Pokémon picker
   const [showPokemonPicker, setShowPokemonPicker] = useState(false);
@@ -929,6 +1806,17 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, gtsSharePend
   const [bstEntries, setBstEntries] = useState<any[]>([]);
   const [pokemonSearch, setPokemonSearch] = useState("");
   const [pokemonTab, setPokemonTab] = useState<"pokedex" | "extradex" | "bst">("pokedex");
+
+  // PSDK name arrays for Pokemon detail overlays
+  const [psdkNames, setPsdkNames] = useState<{ species: string[] | null; skills: string[] | null; abilities: string[] | null; items: string[] | null }>({ species: null, skills: null, abilities: null, items: null });
+  useEffect(() => {
+    Promise.all([
+      invoke<string>("cmd_psdk_french_species_names").then((r) => JSON.parse(r) as string[]).catch(() => null),
+      invoke<string>("cmd_psdk_french_skill_names").then((r) => JSON.parse(r) as string[]).catch(() => null),
+      invoke<string>("cmd_psdk_french_ability_names").then((r) => JSON.parse(r) as string[]).catch(() => null),
+      invoke<string>("cmd_psdk_french_item_names").then((r) => JSON.parse(r) as string[]).catch(() => null),
+    ]).then(([species, skills, abilities, items]) => setPsdkNames({ species, skills, abilities, items }));
+  }, []);
 
   // Notify parent of total unread count
   useEffect(() => {
@@ -994,6 +1882,7 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, gtsSharePend
     }
     loadChannels();
   }, [session?.user?.id]);
+
 
   /* ---------- GTS share from external ---------- */
 
@@ -1418,6 +2307,529 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, gtsSharePend
     };
   }, [session?.user?.id, profile?.display_name]);
 
+  /* ---------- Game Live Dashboard — presence channel ---------- */
+
+  useEffect(() => {
+    if (!session?.user?.id || !profile) return;
+    // Si le channel existe deja et est vivant, ne pas le recreer
+    if (gameLiveRef.current) {
+      const existingState = (gameLiveRef.current as any).state;
+      if (existingState === "joined" || existingState === "SUBSCRIBED") return;
+      // Channel mort — le supprimer proprement avant de recreer
+      console.log("[GameLive] Removing dead channel (state=" + existingState + ") for recreation");
+      supabase.removeChannel(gameLiveRef.current);
+      gameLiveRef.current = null;
+      gameLiveRef2.current = null;
+    }
+
+    const channel = supabase.channel("game-live", {
+      config: { presence: { key: session.user.id }, broadcast: { ack: true } },
+    });
+
+    const syncGameLive = () => {
+      const state = channel.presenceState();
+      const map = new Map<string, GameLivePlayer>();
+      for (const [uid, presences] of Object.entries(state)) {
+        const p = (presences as any[])?.[0];
+        if (!p) continue;
+        // Support both old full-gameState format and new lightweight format
+        if (p.gameActive || p.gameState) {
+          map.set(uid, {
+            userId: uid,
+            displayName: p.displayName || "",
+            avatarUrl: p.avatarUrl || null,
+            roles: p.roles || [],
+            gameState: p.gameState ? (p.gameState as GameLiveState) : null,
+            liveStatus: p.gameActive ? {
+              gameActive: true,
+              mapName: p.mapName || "",
+              inBattle: !!p.inBattle,
+              partySize: p.partySize || 0,
+              timestamp: p.timestamp || 0,
+            } : null,
+          });
+        }
+      }
+      // For our own user, ALWAYS keep local data (polling reads game_state.json directly — freshest source)
+      setGameLivePlayers((prev) => {
+        const myId = session?.user?.id;
+        if (myId) {
+          const localEntry = prev.get(myId);
+          if (localEntry) {
+            map.set(myId, localEntry);
+          }
+        }
+        return map;
+      });
+    };
+
+    channel
+      .on("presence", { event: "sync" }, syncGameLive)
+      .on("presence", { event: "join" }, syncGameLive)
+      .on("presence", { event: "leave" }, syncGameLive)
+      // On-demand gameState broadcast: respond to requests from other players
+      .on("broadcast", { event: "game_state_request" }, async (payload: any) => {
+        const { requesterId, targetId } = payload.payload || {};
+        if (targetId !== session?.user?.id || !requesterId) return;
+        // Read our fresh local game state and send it back
+        try {
+          const state = await invoke<GameLiveState | null>("cmd_read_game_state");
+          if (state) {
+            channel.send({
+              type: "broadcast",
+              event: "game_state_response",
+              payload: { targetId: session.user.id, requesterId, gameState: state },
+            });
+          }
+        } catch {}
+      })
+      // Receive gameState responses for profiles we opened
+      .on("broadcast", { event: "game_state_response" }, (payload: any) => {
+        const { targetId, requesterId, gameState } = payload.payload || {};
+        if (requesterId !== session?.user?.id || !targetId || !gameState) return;
+        // Update the target player's full gameState
+        setGameLivePlayers((prev) => {
+          const entry = prev.get(targetId);
+          if (!entry) return prev;
+          const next = new Map(prev);
+          next.set(targetId, { ...entry, gameState: gameState as GameLiveState });
+          return next;
+        });
+      })
+      // ─── P2P Trade Broadcast handlers ───
+      .on("broadcast", { event: "trade_request" }, (msg: any) => {
+        const p = msg.payload;
+        if (p?.toId !== session?.user?.id) return;
+        // Block if same save (same rawTrainerId)
+        const mySaveId = gameProfile?.rawTrainerId ?? 0;
+        if (mySaveId > 0 && p.saveId > 0 && mySaveId === p.saveId) {
+          channel.send({ type: "broadcast", event: "trade_decline", payload: { tradeId: p.tradeId, fromId: p.toId, toId: p.fromId, reason: "same_save" } });
+          return;
+        }
+        // Ignore if already in a trade
+        setTradeState((prev) => {
+          if (prev.phase !== "idle") {
+            channel.send({ type: "broadcast", event: "trade_decline", payload: { tradeId: p.tradeId, fromId: p.toId, toId: p.fromId } });
+            return prev;
+          }
+          return { phase: "pending", role: "responder", tradeId: p.tradeId, partnerId: p.fromId, partnerName: p.fromName, partnerAvatar: p.fromAvatar, dmChannelId: p.dmChannelId, startedAt: Date.now() };
+        });
+      })
+      .on("broadcast", { event: "trade_accept" }, (msg: any) => {
+        const p = msg.payload;
+        setTradeState((prev) => {
+          if (prev.phase !== "pending" || prev.tradeId !== p.tradeId) return prev;
+          return { phase: "selecting", role: prev.role, tradeId: prev.tradeId, partnerId: prev.partnerId, partnerName: prev.partnerName, partnerAvatar: prev.partnerAvatar, dmChannelId: prev.dmChannelId, mySelection: null, theirPreview: null };
+        });
+      })
+      .on("broadcast", { event: "trade_decline" }, (msg: any) => {
+        const p = msg.payload;
+        setTradeState((prev) => {
+          if (prev.phase !== "pending" || prev.tradeId !== p.tradeId) return prev;
+          const reason = p.reason === "same_save"
+            ? "Impossible d'échanger : vous utilisez la même sauvegarde."
+            : p.reason === "game_running"
+            ? `${prev.partnerName} doit fermer le jeu avant d'échanger.`
+            : `${prev.partnerName} a refusé l'échange.`;
+          return { phase: "error", tradeId: prev.tradeId, partnerId: prev.partnerId, partnerName: prev.partnerName, message: reason };
+        });
+      })
+      .on("broadcast", { event: "trade_cancel" }, (msg: any) => {
+        const p = msg.payload;
+        setTradeState((prev) => {
+          if ((prev as any).tradeId !== p.tradeId || p.userId === session?.user?.id) return prev;
+          return { phase: "error", tradeId: p.tradeId, partnerId: (prev as any).partnerId ?? "", partnerName: (prev as any).partnerName ?? "", message: "L'échange a été annulé." };
+        });
+      })
+      .on("broadcast", { event: "trade_select" }, (msg: any) => {
+        const p = msg.payload;
+        if (p.userId === session?.user?.id) return;
+        setTradeState((prev) => {
+          if (prev.phase !== "selecting" || prev.tradeId !== p.tradeId) return prev;
+          return { ...prev, theirPreview: p.preview };
+        });
+      })
+      .on("broadcast", { event: "trade_unselect" }, (msg: any) => {
+        const p = msg.payload;
+        if (p.userId === session?.user?.id) return;
+        setTradeState((prev) => {
+          if (prev.phase !== "selecting" || prev.tradeId !== p.tradeId) return prev;
+          return { ...prev, theirPreview: null };
+        });
+      })
+      .on("broadcast", { event: "trade_confirm" }, (msg: any) => {
+        const p = msg.payload;
+        if (p.userId === session?.user?.id) return;
+        setTradeState((prev) => {
+          if ((prev as any).tradeId !== p.tradeId) return prev;
+          // If we're still selecting, transition to confirming with their confirm already true
+          if (prev.phase === "selecting" && (prev as any).mySelection && (prev as any).theirPreview) {
+            return { phase: "confirming", role: prev.role, tradeId: (prev as any).tradeId, partnerId: (prev as any).partnerId, partnerName: (prev as any).partnerName, partnerAvatar: (prev as any).partnerAvatar, dmChannelId: (prev as any).dmChannelId, mySelection: (prev as any).mySelection, theirPreview: (prev as any).theirPreview, myConfirmed: false, theirConfirmed: true };
+          }
+          if (prev.phase === "confirming") {
+            return { ...prev, theirConfirmed: true };
+          }
+          return prev;
+        });
+      })
+      .on("broadcast", { event: "trade_confirm_cancel" }, (msg: any) => {
+        const p = msg.payload;
+        if (p.userId === session?.user?.id) return;
+        setTradeState((prev) => {
+          if (prev.phase !== "confirming" || prev.tradeId !== p.tradeId) return prev;
+          // Back to selecting
+          return { phase: "selecting", role: prev.role, tradeId: prev.tradeId, partnerId: prev.partnerId, partnerName: prev.partnerName, partnerAvatar: prev.partnerAvatar, dmChannelId: prev.dmChannelId, mySelection: prev.mySelection, theirPreview: prev.theirPreview };
+        });
+      })
+      .on("broadcast", { event: "trade_execute" }, (msg: any) => {
+        const p = msg.payload;
+        if (p.userId === session?.user?.id) return;
+        // Store their bytes immediately and trigger execution
+        theirPokemonB64Ref.current = p.pokemonB64;
+        setTradeBytesReady((n) => n + 1);
+        setTradeState((prev) => {
+          if ((prev as any).tradeId !== p.tradeId) return prev;
+          if (prev.phase !== "confirming" && prev.phase !== "executing") return prev;
+          // Responder: send ack with our bytes
+          const myB64 = (prev as any).mySelection?.pokemonB64;
+          if (myB64 && prev.role === "responder") {
+            channel.send({ type: "broadcast", event: "trade_execute_ack", payload: { tradeId: (prev as any).tradeId, userId: session?.user?.id, pokemonB64: myB64 } });
+          }
+          return { phase: "executing", role: prev.role, tradeId: (prev as any).tradeId, partnerId: (prev as any).partnerId, partnerName: (prev as any).partnerName, partnerAvatar: (prev as any).partnerAvatar, dmChannelId: (prev as any).dmChannelId, mySelection: (prev as any).mySelection, theirPreview: (prev as any).theirPreview };
+        });
+      })
+      .on("broadcast", { event: "trade_execute_ack" }, (msg: any) => {
+        const p = msg.payload;
+        if (p.userId === session?.user?.id) return;
+        // Initiator receives ack — store their bytes and trigger execution
+        theirPokemonB64Ref.current = p.pokemonB64;
+        setTradeBytesReady((n) => n + 1);
+        setTradeState((prev) => {
+          if ((prev as any).tradeId !== p.tradeId) return prev;
+          if (prev.phase === "executing") return prev; // already executing, don't recreate
+          return { phase: "executing", role: (prev as any).role, tradeId: (prev as any).tradeId, partnerId: (prev as any).partnerId, partnerName: (prev as any).partnerName, partnerAvatar: (prev as any).partnerAvatar, dmChannelId: (prev as any).dmChannelId, mySelection: (prev as any).mySelection, theirPreview: (prev as any).theirPreview };
+        });
+      })
+      .on("broadcast", { event: "trade_complete" }, (msg: any) => {
+        const p = msg.payload;
+        if (p.userId === session?.user?.id) return;
+        // Partner finished writing their save — if we're also done, show animation
+        tradeCompleteRef.current.theirDone = true;
+        if (tradeCompleteRef.current.myDone) {
+          // Both done — trigger animation
+          setShowTradeSwapAnim(true);
+          clearTradeTimeout();
+          setTradeState((prev) => {
+            if ((prev as any).tradeId !== p.tradeId) return prev;
+            return { phase: "complete", tradeId: (prev as any).tradeId, partnerId: (prev as any).partnerId ?? "", partnerName: (prev as any).partnerName ?? "" };
+          });
+          theirPokemonB64Ref.current = null;
+          tradeCompleteRef.current = { myDone: false, theirDone: false, boxName: null };
+          setTimeout(() => onProfileReload?.(), 500);
+        }
+      })
+      .on("broadcast", { event: "trade_error" }, (msg: any) => {
+        const p = msg.payload;
+        if (p.userId === session?.user?.id) return;
+        setTradeState((prev) => {
+          if ((prev as any).tradeId !== p.tradeId) return prev;
+          return { phase: "error", tradeId: p.tradeId, partnerId: (prev as any).partnerId ?? "", partnerName: (prev as any).partnerName ?? "", message: p.message || "Erreur lors de l'échange." };
+        });
+      })
+      // ─── P2P Battle Broadcast handlers (utilisent battleStateRef pour eviter les stale closures) ───
+      // Note: battle_room_invite est aussi recu via postgres_changes (table battle_invites).
+      // Le broadcast est plus rapide; la table est le filet de securite si le channel est CLOSED.
+      .on("broadcast", { event: "battle_room_invite" }, (msg: any) => {
+        const p = msg.payload;
+        console.log("[Battle] Received battle_room_invite (broadcast):", JSON.stringify(p), "myId:", session?.user?.id, "phase:", battleStateRef.current.phase);
+        if (p?.toId !== session?.user?.id) {
+          console.log("[Battle] Invite filtered: toId mismatch", p?.toId, "!==", session?.user?.id);
+          return;
+        }
+        if (battleStateRef.current.phase !== "idle") {
+          // Deja en train de traiter une invite (probablement via table) — ignorer le doublon
+          if ((battleStateRef.current as any).roomCode === p.roomCode) {
+            console.log("[Battle] Invite filtered: already handling this room via table");
+            return;
+          }
+          console.log("[Battle] Invite filtered: phase not idle:", battleStateRef.current.phase);
+          return;
+        }
+        console.log("[Battle] Invite ACCEPTED (broadcast), setting state to inviting");
+        setBattleState({
+          phase: "inviting",
+          roomCode: p.roomCode,
+          partnerId: p.fromId,
+          partnerName: p.fromName,
+          partnerAvatar: p.fromAvatar || null,
+          dmChannelId: p.dmChannelId || 0,
+        });
+        // Play notification sound
+        try {
+          const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+          const osc = ctx.createOscillator(); const gain = ctx.createGain();
+          osc.connect(gain); gain.connect(ctx.destination);
+          osc.frequency.value = 700; osc.type = "sine";
+          gain.gain.setValueAtTime(0.15, ctx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
+          osc.start(ctx.currentTime); osc.stop(ctx.currentTime + 0.3);
+          setTimeout(() => { const o2 = ctx.createOscillator(); const g2 = ctx.createGain(); o2.connect(g2); g2.connect(ctx.destination); o2.frequency.value = 1000; o2.type = "sine"; g2.gain.setValueAtTime(0.15, ctx.currentTime); g2.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3); o2.start(ctx.currentTime); o2.stop(ctx.currentTime + 0.3); }, 150);
+        } catch {}
+      })
+      .on("broadcast", { event: "battle_room_accept" }, async (msg: any) => {
+        const p = msg.payload;
+        if (p.acceptedBy === session?.user?.id) return;
+        // Verifier que c'est bien notre room
+        const cur = battleStateRef.current;
+        if (cur.phase !== "inviting" || (cur as any).roomCode !== p.roomCode) return;
+        const code = p.roomCode;
+        const partnerName = p.partnerName || "Adversaire";
+        // Annuler le timeout d'invitation
+        if (battleTimeoutRef.current) { clearTimeout(battleTimeoutRef.current); battleTimeoutRef.current = null; }
+        setBattleState((prev) => ({ ...prev, phase: "waiting_game" } as any));
+        // Stopper tout ancien relay avant d'en demarrer un nouveau
+        if (battleRelayCleanupRef.current) { battleRelayCleanupRef.current(); battleRelayCleanupRef.current = null; }
+        await cleanupBattleFiles();
+        try {
+          await writeBattleTrigger(Number(code), partnerName, "host");
+        } catch (e) {
+          console.error("[Battle] writeBattleTrigger error:", e);
+        }
+        const cleanup = startRelay(
+          code, session?.user?.id || "",
+          () => setBattleState((prev) => (prev as any).roomCode === code ? { ...prev, phase: "relaying" } as any : prev),
+          () => {
+            setBattleState((prev) => (prev as any).roomCode === code ? { phase: "complete", roomCode: code, partnerId: (prev as any).partnerId || "", partnerName: (prev as any).partnerName || "" } : prev);
+            cleanupBattleFiles().catch(() => {});
+          },
+        );
+        battleRelayCleanupRef.current = cleanup;
+      })
+      .on("broadcast", { event: "battle_room_decline" }, (msg: any) => {
+        const p = msg.payload;
+        if ((battleStateRef.current as any).roomCode !== p.roomCode) return;
+        if (battleTimeoutRef.current) { clearTimeout(battleTimeoutRef.current); battleTimeoutRef.current = null; }
+        cleanupBattleFiles().catch(() => {});
+        setBattleState({ phase: "idle" });
+      })
+      .on("broadcast", { event: "battle_room_cancel" }, (msg: any) => {
+        const p = msg.payload;
+        if (p.userId === session?.user?.id) return;
+        if ((battleStateRef.current as any).roomCode !== p.roomCode) return;
+        if (battleRelayCleanupRef.current) { battleRelayCleanupRef.current(); battleRelayCleanupRef.current = null; }
+        if (battleTimeoutRef.current) { clearTimeout(battleTimeoutRef.current); battleTimeoutRef.current = null; }
+        writeStopTrigger().catch(() => {});
+        cleanupBattleFiles().catch(() => {});
+        setBattleState({ phase: "idle" });
+      })
+      // Note: vms_relay passe maintenant par un channel dedie (battle-room-{code}), plus par game-live
+      .subscribe((status: string) => {
+        console.log("[GameLive] Channel subscribe status:", status);
+      });
+
+    gameLiveRef.current = channel;
+    gameLiveRef2.current = channel;
+
+    // Health check: if channel drops to CLOSED, remove it and trigger recreation with exponential backoff
+    let reconnectScheduled = false;
+    let reconnectDelay = 5000; // start at 5s, double each time, cap at 60s
+    const MAX_RECONNECT_DELAY = 60000;
+    const healthCheck = setInterval(() => {
+      const ch = gameLiveRef.current;
+      if (!ch || reconnectScheduled) return;
+      const st = (ch as any).state;
+      if (st === "closed" || st === "errored" || st === "CLOSED" || st === "CHANNEL_ERROR" || st === "TIMED_OUT") {
+        reconnectScheduled = true;
+        console.warn("[GameLive] Channel dead (state=" + st + "), will recreate in " + (reconnectDelay / 1000) + "s...");
+        setTimeout(() => {
+          reconnectScheduled = false;
+          const ch2 = gameLiveRef.current;
+          if (!ch2) return;
+          const st2 = (ch2 as any).state;
+          if (st2 === "joined" || st2 === "SUBSCRIBED") {
+            reconnectDelay = 5000; // reset backoff on success
+            return;
+          }
+          console.log("[GameLive] Removing dead channel for recreation...");
+          supabase.removeChannel(ch2);
+          gameLiveRef.current = null;
+          gameLiveRef2.current = null;
+          reconnectDelay = Math.min(reconnectDelay * 2, MAX_RECONNECT_DELAY);
+          setGlReconnect((n) => n + 1);
+        }, reconnectDelay);
+      }
+    }, 8000);
+
+    // Poll game state every 3 seconds
+    const poll = setInterval(async () => {
+      // Ne pas tracker si le channel n'est pas connecte
+      const chState = (channel as any).state;
+      if (chState !== "joined" && chState !== "SUBSCRIBED") return;
+      try {
+        const state = await invoke<GameLiveState | null>("cmd_read_game_state");
+        const json = state ? JSON.stringify(state) : "";
+        if (json === lastTrackedState.current) return;
+        lastTrackedState.current = json;
+        if (state?.active) {
+          const prof = profileRef.current;
+          setGameLivePlayers((prev) => {
+            const next = new Map(prev);
+            next.set(session.user.id, {
+              userId: session.user.id,
+              displayName: prof?.display_name || prof?.username || "",
+              avatarUrl: prof?.avatar_url ?? null,
+              roles: prof?.roles || [],
+              gameState: state,
+            });
+            return next;
+          });
+          channel.track({
+            displayName: prof?.display_name || prof?.username || "",
+            avatarUrl: prof?.avatar_url ?? null,
+            roles: prof?.roles || [],
+            gameActive: true,
+            mapName: state.map_name || "",
+            inBattle: !!state.in_battle,
+            partySize: state.party?.length || 0,
+            timestamp: state.timestamp,
+          });
+        } else {
+          setGameLivePlayers((prev) => {
+            if (!prev.has(session.user.id)) return prev;
+            const next = new Map(prev);
+            next.delete(session.user.id);
+            return next;
+          });
+          channel.untrack();
+        }
+      } catch {
+        // Tauri command not available or game not running
+      }
+    }, 3000);
+
+    return () => {
+      clearInterval(poll);
+      clearInterval(healthCheck);
+      // NE PAS appeler removeChannel ici — le channel doit rester vivant
+      // Il sera nettoye uniquement au logout (session change) OU par le health check
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- glReconnect forces recreation when channel dies; profileRef is read inside the poll
+  }, [session?.user?.id, !!profile, glReconnect]);
+
+  // Cleanup du channel game-live au unmount reel uniquement
+  useEffect(() => {
+    return () => {
+      if (gameLiveRef.current) {
+        supabase.removeChannel(gameLiveRef.current);
+        gameLiveRef.current = null;
+        gameLiveRef2.current = null;
+      }
+    };
+  }, []);
+
+  /* ---------- Battle invites — persistent table listener ---------- */
+
+  useEffect(() => {
+    if (!session?.user?.id) return;
+
+    // Cleanup expired invites on mount
+    supabase.from("battle_invites").delete().lt("created_at", new Date(Date.now() - 2 * 60_000).toISOString()).eq("status", "pending").then();
+
+    // Check for pending invites already in table (in case broadcast was missed)
+    supabase.from("battle_invites").select("*").eq("to_id", session.user.id).eq("status", "pending").gte("created_at", new Date(Date.now() - BATTLE_INVITE_TIMEOUT).toISOString()).then(({ data }) => {
+      if (data && data.length > 0 && battleStateRef.current.phase === "idle") {
+        const inv = data[0];
+        console.log("[Battle] Found pending invite in table:", inv.room_code, "from", inv.from_name);
+        setBattleState({
+          phase: "inviting",
+          roomCode: inv.room_code,
+          partnerId: inv.from_id,
+          partnerName: inv.from_name,
+          partnerAvatar: inv.from_avatar || null,
+          dmChannelId: inv.dm_channel_id || 0,
+        });
+        // Play notification sound
+        try {
+          const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+          const osc = ctx.createOscillator(); const gain = ctx.createGain();
+          osc.connect(gain); gain.connect(ctx.destination);
+          osc.frequency.value = 700; osc.type = "sine";
+          gain.gain.setValueAtTime(0.15, ctx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
+          osc.start(ctx.currentTime); osc.stop(ctx.currentTime + 0.3);
+          setTimeout(() => { const o2 = ctx.createOscillator(); const g2 = ctx.createGain(); o2.connect(g2); g2.connect(ctx.destination); o2.frequency.value = 1000; o2.type = "sine"; g2.gain.setValueAtTime(0.15, ctx.currentTime); g2.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3); o2.start(ctx.currentTime); o2.stop(ctx.currentTime + 0.3); }, 150);
+        } catch {}
+      }
+    });
+
+    // Subscribe to realtime changes on battle_invites
+    const battleInvSub = supabase.channel(`battle-inv-${session.user.id}`)
+      // New invite targeting us (persistent delivery — works even if broadcast was missed)
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "battle_invites", filter: `to_id=eq.${session.user.id}` }, (payload) => {
+        const inv = payload.new as any;
+        if (inv.status !== "pending") return;
+        if (battleStateRef.current.phase !== "idle") return;
+        console.log("[Battle] Table INSERT invite received:", inv.room_code, "from", inv.from_name);
+        setBattleState({
+          phase: "inviting",
+          roomCode: inv.room_code,
+          partnerId: inv.from_id,
+          partnerName: inv.from_name,
+          partnerAvatar: inv.from_avatar || null,
+          dmChannelId: inv.dm_channel_id || 0,
+        });
+        // Play notification sound
+        try {
+          const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+          const osc = ctx.createOscillator(); const gain = ctx.createGain();
+          osc.connect(gain); gain.connect(ctx.destination);
+          osc.frequency.value = 700; osc.type = "sine";
+          gain.gain.setValueAtTime(0.15, ctx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
+          osc.start(ctx.currentTime); osc.stop(ctx.currentTime + 0.3);
+          setTimeout(() => { const o2 = ctx.createOscillator(); const g2 = ctx.createGain(); o2.connect(g2); g2.connect(ctx.destination); o2.frequency.value = 1000; o2.type = "sine"; g2.gain.setValueAtTime(0.15, ctx.currentTime); g2.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3); o2.start(ctx.currentTime); o2.stop(ctx.currentTime + 0.3); }, 150);
+        } catch {}
+      })
+      // Invite we sent was accepted (via table UPDATE)
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "battle_invites", filter: `from_id=eq.${session.user.id}` }, async (payload) => {
+        const inv = payload.new as any;
+        const cur = battleStateRef.current;
+        if (cur.phase !== "inviting" || (cur as any).roomCode !== inv.room_code) return;
+
+        if (inv.status === "accepted") {
+          console.log("[Battle] Table UPDATE: invite accepted for room", inv.room_code);
+          const code = inv.room_code;
+          // Toujours utiliser le partnerName du battleState existant (defini correctement a l'envoi de l'invite)
+          const partnerName = (cur as any).partnerName || inv.from_name || "Adversaire";
+          if (battleTimeoutRef.current) { clearTimeout(battleTimeoutRef.current); battleTimeoutRef.current = null; }
+          setBattleState((prev) => ({ ...prev, phase: "waiting_game" } as any));
+          if (battleRelayCleanupRef.current) { battleRelayCleanupRef.current(); battleRelayCleanupRef.current = null; }
+          await cleanupBattleFiles();
+          try { await writeBattleTrigger(Number(code), partnerName, "host"); } catch (e) { console.error("[Battle] writeBattleTrigger error:", e); }
+          const cleanup = startRelay(
+            code, session?.user?.id || "",
+            () => setBattleState((prev) => (prev as any).roomCode === code ? { ...prev, phase: "relaying" } as any : prev),
+            () => {
+              setBattleState((prev) => (prev as any).roomCode === code ? { phase: "complete", roomCode: code, partnerId: (prev as any).partnerId || "", partnerName: (prev as any).partnerName || "" } : prev);
+              cleanupBattleFiles().catch(() => {});
+            },
+          );
+          battleRelayCleanupRef.current = cleanup;
+        } else if (inv.status === "declined" || inv.status === "cancelled" || inv.status === "expired") {
+          console.log("[Battle] Table UPDATE: invite", inv.status, "for room", inv.room_code);
+          if (battleTimeoutRef.current) { clearTimeout(battleTimeoutRef.current); battleTimeoutRef.current = null; }
+          cleanupBattleFiles().catch(() => {});
+          setBattleState({ phase: "idle" });
+        }
+      })
+      .subscribe((status) => {
+        console.log("[Battle] Invite table sub status:", status);
+      });
+
+    return () => { supabase.removeChannel(battleInvSub); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session?.user?.id]);
+
   /* ---------- Per-channel notification subscriptions ---------- */
 
   useEffect(() => {
@@ -1427,7 +2839,7 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, gtsSharePend
       const msg = payload.new as any;
       if (msg.user_id === session.user.id) return;
 
-      const isViewingChannel = activeChannelRef.current?.id === msg.channel_id;
+      const isViewingChannel = visibleRef.current && activeChannelRef.current?.id === msg.channel_id;
       const isDm = channelsRef.current.some((c) => c.id === msg.channel_id && c.type === "dm");
 
       // Check if user is mentioned
@@ -1950,6 +3362,14 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, gtsSharePend
     if (p.id !== session.user.id) {
       setProfileFriendship(undefined); // loading
       getFriendship(session.user.id, p.id).then((f) => setProfileFriendship(f));
+      // Request full gameState from the other player if they're online
+      if (gameLivePlayers.has(p.id) && gameLiveRef.current) {
+        gameLiveRef.current.send({
+          type: "broadcast",
+          event: "game_state_request",
+          payload: { requesterId: session.user.id, targetId: p.id },
+        });
+      }
     }
   }
 
@@ -1971,6 +3391,23 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, gtsSharePend
       prev.map((m) => (m.id === updated.id ? { ...m, ...updated } : m))
     );
   }
+
+  // Poll other player's gameState while their profile is open
+  useEffect(() => {
+    if (!profilePopup || !session?.user?.id || profilePopup.id === session.user.id) return;
+    if (!gameLivePlayers.has(profilePopup.id) || !gameLiveRef.current) return;
+    const ch = gameLiveRef.current;
+    const targetId = profilePopup.id;
+    const myId = session.user.id;
+    const interval = setInterval(() => {
+      ch.send({
+        type: "broadcast",
+        event: "game_state_request",
+        payload: { requesterId: myId, targetId },
+      });
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [profilePopup?.id, session?.user?.id]);
 
   async function handleDmFromProfile(targetProfile: ChatProfile) {
     setProfilePopup(null);
@@ -2018,12 +3455,7 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, gtsSharePend
   /* ---------- Render ---------- */
 
   if (loading) {
-    return (
-      <div className="pnw-chat-loading">
-        <FaSpinner className="pnw-chat-spinner" />
-        <span>Chargement…</span>
-      </div>
-    );
+    return <LoadingScreen label="Chargement" />;
   }
 
   // Not logged in
@@ -2128,6 +3560,27 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, gtsSharePend
           </button>
         </div>
       </div>
+    );
+  }
+
+  // ──�� Battle Mode: render BattleArenaView instead of chat ───
+  if (battleMode && session && profile) {
+    return (
+      <BattleArenaView
+        session={session}
+        profile={profile}
+        friendsList={friendsList}
+        onlineUserIds={onlineUserIds}
+        gameLivePlayers={gameLivePlayers}
+        dmPartners={dmPartners}
+        channels={channels}
+        battleState={battleState}
+        setBattleState={setBattleState}
+        gameLiveChannel={gameLiveRef2}
+        battleRelayCleanupRef={battleRelayCleanupRef}
+        battleTimeoutRef={battleTimeoutRef}
+        onBack={onBack}
+      />
     );
   }
 
@@ -2551,8 +4004,8 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, gtsSharePend
                     // Compute action bar early so GTS/Pokémon cards can use it
                     const isOwn = msg.user_id === session?.user?.id;
                     const canDelete = isMod || isOwn;
-                    const isGtsOrPoke = msg.content.startsWith(GTS_PREFIX) || msg.content.startsWith(POKEMON_PREFIX);
-                    const canEdit = isOwn && !isGtsOrPoke;
+                    const isSpecialEmbed = msg.content.startsWith(GTS_PREFIX) || msg.content.startsWith(POKEMON_PREFIX) || msg.content.startsWith(ACTIVITY_PREFIX) || msg.content.startsWith(TRADE_PREFIX) || msg.content.startsWith(WISHLIST_PREFIX);
+                    const canEdit = isOwn && !isSpecialEmbed;
                     const canPin = isMod || profile?.roles?.includes("devteam");
                     const actionBar = (
                       <div className="pnw-chat-msg-actions">
@@ -2670,7 +4123,7 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, gtsSharePend
                             </button>
                             <div className="pnw-chat-msg-body">
                               <div className="pnw-chat-msg-meta">
-                                <button className="pnw-chat-msg-author pnw-chat-clickable" style={roleColor(author?.roles || []) ? { color: roleColor(author?.roles || []) } : undefined} onClick={() => openProfile(author)}>
+                                <button className="pnw-chat-msg-author pnw-chat-clickable" style={roleColor(author?.roles || []) ? { color: roleColor(author?.roles || []) } : undefined} onClick={() => openProfile(author)} onContextMenu={(e) => { e.preventDefault(); const name = displayName(author); setDraft((d) => d ? `${d} @${name} ` : `@${name} `); }}>
                                   {displayName(author)}
                                 </button>
                                 <RoleBadgesCompact roles={author?.roles || []} />
@@ -2687,7 +4140,8 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, gtsSharePend
                                     {gts.deposited?.sprite && <img src={gts.deposited.sprite} alt="" className="pnw-chat-gts-sprite" />}
                                     <span className="pnw-chat-gts-name">
                                       {gts.deposited?.name}
-                                      {gts.deposited?.shiny && <FaStar className="pnw-chat-gts-shiny" />}
+                                      {gts.deposited?.altShiny && <FaStar className="pnw-chat-gts-alt-shiny" />}
+                                      {gts.deposited?.shiny && !gts.deposited?.altShiny && <FaStar className="pnw-chat-gts-shiny" />}
                                     </span>
                                     <div className="pnw-chat-gts-chips">
                                       <span className="pnw-chat-gts-chip">Nv.{gts.deposited?.level}</span>
@@ -2723,6 +4177,75 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, gtsSharePend
                       }
                     }
 
+                    /* Wishlist notification card (bot DM) */
+                    if (msg.content.startsWith(WISHLIST_PREFIX)) {
+                      let wish: any = null;
+                      try { wish = JSON.parse(msg.content.slice(WISHLIST_PREFIX.length)); } catch { /* ignore */ }
+                      if (wish) {
+                        const genderIcon = wish.gender === 1 ? "♂" : wish.gender === 2 ? "♀" : null;
+                        const genderColor = wish.gender === 1 ? "#60a5fa" : wish.gender === 2 ? "#f472b6" : undefined;
+                        return (
+                          <div key={msg.id} className="pnw-chat-msg pnw-chat-msg--bot-wish">
+                            <button className="pnw-chat-avatar-wrap pnw-chat-avatar-wrap--msg pnw-chat-clickable" onClick={() => openProfile(author)}>
+                              {author?.avatar_url ? (
+                                <img src={author.avatar_url} alt="" className="pnw-chat-msg-avatar" style={roleGlow(author?.roles || [])} />
+                              ) : (
+                                <div className="pnw-chat-msg-avatar pnw-chat-avatar--placeholder" style={roleGlow(author?.roles || [])}>
+                                  {displayName(author)?.[0]?.toUpperCase() || "G"}
+                                </div>
+                              )}
+                            </button>
+                            <div className="pnw-chat-msg-body">
+                              <div className="pnw-chat-msg-meta">
+                                <button className="pnw-chat-msg-author pnw-chat-clickable" style={{ color: "#f96854" }} onClick={() => openProfile(author)}>
+                                  {displayName(author)}
+                                </button>
+                                <span className="pnw-chat-msg-time" title={formatFullTimestamp(msg.created_at)}>{formatTime(msg.created_at)}</span>
+                              </div>
+                              <div
+                                className={`pnw-chat-wish-card${onOpenGts ? " pnw-chat-wish-card--clickable" : ""}`}
+                                onClick={() => onOpenGts?.(wish.onlineId)}
+                              >
+                                <div className="pnw-chat-wish-card-header">
+                                  <div className="pnw-chat-wish-card-bell"><FaBell /></div>
+                                  <div className="pnw-chat-wish-card-header-text">
+                                    <span className="pnw-chat-wish-card-title">GTS Wishlist</span>
+                                    <span className="pnw-chat-wish-card-subtitle">Un Pokémon correspondant a été déposé !</span>
+                                  </div>
+                                </div>
+                                <div className="pnw-chat-wish-card-body">
+                                  {wish.sprite && <img src={wish.sprite} alt="" className="pnw-chat-wish-sprite" />}
+                                  <div className="pnw-chat-wish-info">
+                                    <span className="pnw-chat-wish-name">
+                                      {wish.name}
+                                      {wish.altShiny && <FaStar className="pnw-chat-wish-star pnw-chat-wish-star--alt" />}
+                                      {wish.shiny && !wish.altShiny && <FaStar className="pnw-chat-wish-star" />}
+                                    </span>
+                                    <div className="pnw-chat-wish-chips">
+                                      <span className="pnw-chat-wish-chip"><FaBolt className="pnw-chat-wish-chip-icon" style={{ color: "#fbbf24" }} /> Nv. {wish.level}</span>
+                                      {wish.nature && <span className="pnw-chat-wish-chip"><FaLeaf className="pnw-chat-wish-chip-icon" style={{ color: "#4ade80" }} /> {wish.nature}</span>}
+                                      {genderIcon && <span className="pnw-chat-wish-chip" style={{ color: genderColor }}>{genderIcon}</span>}
+                                    </div>
+                                    <div className="pnw-chat-wish-ivs">
+                                      <FaDna className="pnw-chat-wish-chip-icon" style={{ color: "#a78bfa" }} /> IV total : <strong>{wish.ivTotal}</strong>/186
+                                    </div>
+                                  </div>
+                                </div>
+                                <div className="pnw-chat-wish-card-wanted">
+                                  <FaArrowRightArrowLeft className="pnw-chat-wish-wanted-icon" />
+                                  <span>Demandé : <strong>{wish.wantedName}</strong>{wish.wantedLevelRange ? ` Nv. ${wish.wantedLevelRange}` : ""}</span>
+                                </div>
+                                <div className="pnw-chat-wish-card-cta">
+                                  <FaMagnifyingGlass /> Voir l'échange #{wish.onlineId}
+                                </div>
+                              </div>
+                            </div>
+                            {actionBar}
+                          </div>
+                        );
+                      }
+                    }
+
                     /* Pokémon card */
                     if (msg.content.startsWith(POKEMON_PREFIX)) {
                       let poke: PokeEntry | null = null;
@@ -2745,7 +4268,7 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, gtsSharePend
                             </button>
                             <div className="pnw-chat-msg-body">
                               <div className="pnw-chat-msg-meta">
-                                <button className="pnw-chat-msg-author pnw-chat-clickable" style={roleColor(author?.roles || []) ? { color: roleColor(author?.roles || []) } : undefined} onClick={() => openProfile(author)}>
+                                <button className="pnw-chat-msg-author pnw-chat-clickable" style={roleColor(author?.roles || []) ? { color: roleColor(author?.roles || []) } : undefined} onClick={() => openProfile(author)} onContextMenu={(e) => { e.preventDefault(); const name = displayName(author); setDraft((d) => d ? `${d} @${name} ` : `@${name} `); }}>
                                   {displayName(author)}
                                 </button>
                                 <RoleBadgesCompact roles={author?.roles || []} />
@@ -2842,6 +4365,212 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, gtsSharePend
                       }
                     }
 
+                    /* P2P Trade completion embed */
+                    if (msg.content.startsWith(TRADE_PREFIX)) {
+                      const tradeData = parseTradeMessage(msg.content);
+                      if (tradeData) {
+                        return (
+                          <div key={msg.id} className="pnw-chat-msg" id={`msg-${msg.id}`}>
+                            <button className="pnw-chat-avatar-wrap pnw-chat-avatar-wrap--msg pnw-chat-clickable" onClick={() => openProfile(author)}>
+                              {author?.avatar_url ? (
+                                <img src={author.avatar_url} alt="" className="pnw-chat-msg-avatar" style={roleGlow(author?.roles || [])} />
+                              ) : (
+                                <div className="pnw-chat-msg-avatar pnw-chat-avatar--placeholder" style={roleGlow(author?.roles || [])}>
+                                  {displayName(author)?.[0]?.toUpperCase() || "?"}
+                                </div>
+                              )}
+                            </button>
+                            <div className="pnw-chat-msg-body">
+                              <div className="pnw-chat-msg-meta">
+                                <button className="pnw-chat-msg-author pnw-chat-clickable" style={roleColor(author?.roles || []) ? { color: roleColor(author?.roles || []) } : undefined} onClick={() => openProfile(author)} onContextMenu={(e) => { e.preventDefault(); const name = displayName(author); setDraft((d) => d ? `${d} @${name} ` : `@${name} `); }}>
+                                  {displayName(author)}
+                                </button>
+                                <RoleBadgesCompact roles={author?.roles || []} />
+                                <span className="pnw-chat-msg-time" title={formatFullTimestamp(msg.created_at)}>{formatTime(msg.created_at)}</span>
+                              </div>
+                              <div className="pnw-trade-embed">
+                                <div className="pnw-trade-embed-tag"><FaArrowRightArrowLeft /> Échange P2P</div>
+                                <div className="pnw-trade-embed-body">
+                                  {[tradeData.playerA, tradeData.playerB].map((player, pi) => {
+                                    const pk = player.pokemon;
+                                    const rawNat = pk.nature;
+                                    const natIdx = Array.isArray(rawNat) ? rawNat[0] : rawNat;
+                                    const natName = natIdx != null ? NATURE_FR[natIdx] : null;
+                                    const itemName = pk.itemHolding != null && pk.itemHolding > 0 ? (psdkNames.items?.[pk.itemHolding] ?? `#${pk.itemHolding}`) : null;
+                                    const hasIvs = pk.ivHp != null;
+                                    const ivTotal = hasIvs ? (pk.ivHp! + (pk.ivAtk ?? 0) + (pk.ivDfe ?? 0) + (pk.ivSpd ?? 0) + (pk.ivAts ?? 0) + (pk.ivDfs ?? 0)) : null;
+                                    return (
+                                      <React.Fragment key={pi}>
+                                        {pi > 0 && <div className="pnw-trade-embed-arrow"><FaArrowRightArrowLeft /></div>}
+                                        <div className="pnw-trade-embed-side">
+                                          <VdSprite speciesId={pk.speciesId} form={pk.form} shiny={pk.shiny} altShiny={pk.altShiny} className="pnw-trade-embed-sprite" />
+                                          <span className="pnw-trade-embed-name">
+                                            {pk.name}
+                                            {pk.altShiny && <FaStar style={{ color: "#c084fc", fontSize: 8, marginLeft: 3 }} />}
+                                            {pk.shiny && !pk.altShiny && <FaStar style={{ color: "#facc15", fontSize: 8, marginLeft: 3 }} />}
+                                          </span>
+                                          <span className="pnw-trade-embed-level">Nv.{pk.level}</span>
+                                          <div className="pnw-trade-embed-details">
+                                            {natName && <span className="pnw-trade-embed-chip"><FaLeaf style={{ fontSize: 7 }} /> {natName}</span>}
+                                            {itemName && <span className="pnw-trade-embed-chip"><FaBagShopping style={{ fontSize: 7 }} /> {itemName}</span>}
+                                            {ivTotal != null && <span className="pnw-trade-embed-chip"><FaDna style={{ fontSize: 7 }} /> IV {ivTotal}/186</span>}
+                                          </div>
+                                          {pk.moves && pk.moves.length > 0 && (
+                                            <div className="pnw-trade-embed-moves">
+                                              {pk.moves.map((mid, mi) => <span key={mi} className="pnw-trade-embed-move">{psdkNames.skills?.[mid] ?? `#${mid}`}</span>)}
+                                            </div>
+                                          )}
+                                          <span className="pnw-trade-embed-trainer">{player.name}</span>
+                                        </div>
+                                      </React.Fragment>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      }
+                    }
+
+                    /* Activity share embed */
+                    if (msg.content.startsWith(ACTIVITY_PREFIX)) {
+                      let actStored: GameActivityShareData | null = null;
+                      try { actStored = JSON.parse(msg.content.slice(ACTIVITY_PREFIX.length)); } catch {}
+                      if (actStored) {
+                        // Live data: use gameLivePlayers if target is currently in-game
+                        const livePlayer = gameLivePlayers.get(actStored.targetUserId);
+                        const liveGs = livePlayer?.gameState;
+                        const isLive = !!(liveGs?.active);
+                        // Build live act data, fallback to stored snapshot
+                        // Resolve speciesId from name via psdkNames
+                        const resolveId = (name: string, sid?: number) => {
+                          if (sid && sid > 0) return sid;
+                          if (!psdkNames.species || !name) return 0;
+                          const n = name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+                          const idx = psdkNames.species.findIndex((s) => s && s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim() === n);
+                          return idx > 0 ? idx : 0;
+                        };
+                        const act: GameActivityShareData = isLive ? {
+                          ...actStored,
+                          mapName: liveGs!.map_name || actStored.mapName,
+                          inBattle: !!liveGs!.in_battle,
+                          party: liveGs!.party?.map((pk) => ({
+                            species: pk.species,
+                            speciesId: resolveId(pk.species, pk.species_id),
+                            level: pk.level,
+                            form: pk.form ?? 0,
+                            shiny: pk.shiny,
+                            altShiny: pk.alt_shiny ?? false,
+                            nickname: pk.name !== pk.species ? pk.name : null,
+                            gender: pk.gender,
+                            nature: pk.nature,
+                            ability: pk.ability,
+                            itemHolding: pk.item,
+                            exp: pk.exp,
+                            moves: pk.moves,
+                            ivHp: pk.iv_hp,
+                            ivAtk: pk.iv_atk,
+                            ivDfe: pk.iv_dfe,
+                            ivSpd: pk.iv_spd,
+                            ivAts: pk.iv_ats,
+                            ivDfs: pk.iv_dfs,
+                          })) || actStored.party,
+                          battleAlly: liveGs!.battle_ally ? (() => {
+                            const a = liveGs!.battle_ally!;
+                            const allyPk = liveGs!.party?.find((p) => p.species === a.species);
+                            return { species: a.species, speciesId: resolveId(a.species, a.species_id), level: a.level, shiny: !!a.shiny, altShiny: !!a.alt_shiny, hp: a.hp ?? allyPk?.hp, max_hp: a.max_hp ?? allyPk?.max_hp };
+                          })() : actStored.battleAlly,
+                          battleFoes: liveGs!.battle_foes?.map((f) => ({ species: f.species, speciesId: resolveId(f.species, f.species_id), level: f.level, shiny: !!f.shiny, altShiny: !!f.alt_shiny, hp: f.hp, max_hp: f.max_hp })) || actStored.battleFoes,
+                        } : actStored;
+                        // Croiser altShiny avec gameProfile.team si c'est notre propre profil
+                        if (session?.user?.id && actStored.targetUserId === session.user.id && gameProfile?.team) {
+                          for (let pi = 0; pi < act.party.length && pi < gameProfile.team.length; pi++) {
+                            if (gameProfile.team[pi]?.isAltShiny && !act.party[pi].altShiny) {
+                              act.party[pi] = { ...act.party[pi], altShiny: true };
+                            }
+                          }
+                        }
+                        // Request full gameState if player is online but we only have liveStatus
+                        if (livePlayer && !liveGs && livePlayer.liveStatus?.gameActive && gameLiveRef.current && session?.user?.id && actStored.targetUserId !== session.user.id) {
+                          gameLiveRef.current.send({
+                            type: "broadcast",
+                            event: "game_state_request",
+                            payload: { requesterId: session.user.id, targetId: actStored.targetUserId },
+                          });
+                        }
+                        return (
+                          <div key={msg.id} className="pnw-chat-msg" id={`msg-${msg.id}`}>
+                            <button className="pnw-chat-avatar-wrap pnw-chat-avatar-wrap--msg pnw-chat-clickable" onClick={() => openProfile(author)}>
+                              {author?.avatar_url ? (
+                                <img src={author.avatar_url} alt="" className="pnw-chat-msg-avatar" style={roleGlow(author?.roles || [])} />
+                              ) : (
+                                <div className="pnw-chat-msg-avatar pnw-chat-avatar--placeholder" style={roleGlow(author?.roles || [])}>
+                                  {displayName(author)?.[0]?.toUpperCase() || "?"}
+                                </div>
+                              )}
+                            </button>
+                            <div className="pnw-chat-msg-body">
+                              <div className="pnw-chat-msg-meta">
+                                <button className="pnw-chat-msg-author pnw-chat-clickable" style={roleColor(author?.roles || []) ? { color: roleColor(author?.roles || []) } : undefined} onClick={() => openProfile(author)} onContextMenu={(e) => { e.preventDefault(); const name = displayName(author); setDraft((d) => d ? `${d} @${name} ` : `@${name} `); }}>
+                                  {displayName(author)}
+                                </button>
+                                <RoleBadgesCompact roles={author?.roles || []} />
+                                <span className="pnw-chat-msg-time" title={formatFullTimestamp(msg.created_at)}>{formatTime(msg.created_at)}</span>
+                              </div>
+                            <div className="pnw-chat-activity-embed">
+                              <div className="pnw-chat-activity-embed-header">
+                                {act.targetAvatar && <img src={act.targetAvatar} alt="" className="pnw-chat-activity-embed-avatar" />}
+                                <div className="pnw-chat-activity-embed-player">
+                                  <span className="pnw-chat-activity-embed-name">{act.targetName}</span>
+                                  <span className={`pnw-chat-activity-embed-status${act.inBattle ? " pnw-chat-activity-embed-status--battle" : ""}`}>
+                                    <FaGamepad /> {act.inBattle ? "En combat" : act.mapName || "En jeu"}
+                                    {isLive && <span className="pnw-chat-activity-embed-live">LIVE</span>}
+                                  </span>
+                                </div>
+                              </div>
+                              {act.party.length > 0 && (
+                                <ActivityEmbedParty party={act.party} psdkNames={psdkNames} />
+                              )}
+                              {act.inBattle && act.battleAlly && act.battleFoes && act.battleFoes.length > 0 && (
+                                <div className="pnw-chat-activity-embed-battle">
+                                  <div className="pnw-chat-activity-embed-battle-label"><FaBolt /> <span>Combat sauvage</span></div>
+                                  <div className="pnw-chat-activity-embed-battle-arena">
+                                    <div className="pnw-chat-activity-embed-battle-side">
+                                      <VdSprite speciesId={act.battleAlly.speciesId || 0} form={0} shiny={act.battleAlly.shiny} altShiny={act.battleAlly.altShiny} className="pnw-chat-activity-embed-battle-sprite pnw-chat-activity-embed-battle-sprite--ally" />
+                                      <span className="pnw-chat-activity-embed-battle-name" style={{ color: "rgba(74,222,128,.75)" }}>{act.battleAlly.species}</span>
+                                      <span className="pnw-chat-activity-embed-battle-lvl">Nv.{act.battleAlly.level}</span>
+                                      {act.battleAlly.hp != null && act.battleAlly.max_hp ? (
+                                        <div className="pnw-chat-activity-embed-battle-hp">
+                                          <div className="pnw-chat-activity-embed-battle-hpbar"><div className="pnw-chat-activity-embed-battle-hpfill" style={{ width: `${Math.round((act.battleAlly.hp / act.battleAlly.max_hp) * 100)}%`, background: act.battleAlly.hp / act.battleAlly.max_hp > 0.5 ? "#4ade80" : act.battleAlly.hp / act.battleAlly.max_hp > 0.2 ? "#facc15" : "#ef4444" }} /></div>
+                                          <span className="pnw-chat-activity-embed-battle-hptxt">{act.battleAlly.hp}/{act.battleAlly.max_hp}</span>
+                                        </div>
+                                      ) : null}
+                                    </div>
+                                    <div className="pnw-chat-activity-embed-battle-vsicon">VS</div>
+                                    {act.battleFoes.map((f, fi) => (
+                                      <div key={fi} className="pnw-chat-activity-embed-battle-side">
+                                        <VdSprite speciesId={f.speciesId || 0} form={0} shiny={f.shiny} altShiny={f.altShiny} className="pnw-chat-activity-embed-battle-sprite pnw-chat-activity-embed-battle-sprite--foe" />
+                                        <span className="pnw-chat-activity-embed-battle-name" style={{ color: "rgba(239,68,68,.75)" }}>{f.species}</span>
+                                        <span className="pnw-chat-activity-embed-battle-lvl">Nv.{f.level}</span>
+                                        <div className="pnw-chat-activity-embed-battle-hp">
+                                          <div className="pnw-chat-activity-embed-battle-hpbar"><div className="pnw-chat-activity-embed-battle-hpfill" style={{ width: `${Math.round((f.hp / f.max_hp) * 100)}%`, background: f.hp / f.max_hp > 0.5 ? "#4ade80" : f.hp / f.max_hp > 0.2 ? "#facc15" : "#ef4444" }} /></div>
+                                          <span className="pnw-chat-activity-embed-battle-hptxt">{f.hp}/{f.max_hp}</span>
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                              <span className="pnw-chat-activity-embed-time">{new Date(act.timestamp).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}</span>
+                            </div>
+                            </div>
+                            {actionBar}
+                          </div>
+                        );
+                      }
+                    }
+
                     /* Log message (moderation channel) */
                     if (msg.content.startsWith(LOG_PREFIX)) {
                       let log: LogEntry | null = null;
@@ -2926,7 +4655,9 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, gtsSharePend
                             ? (() => { try { const g = JSON.parse(replyRef.content.slice(GTS_PREFIX.length)); return `🔄 Échange GTS #${g.onlineId ?? ""} — ${g.deposited?.name ?? "?"}`; } catch { return "🔄 Échange GTS"; } })()
                             : replyRef.content.startsWith(POKEMON_PREFIX)
                               ? (() => { try { const p = JSON.parse(replyRef.content.slice(POKEMON_PREFIX.length)); return `🎴 ${p.speciesName ?? p.nickname ?? "Pokémon"} Nv.${p.level ?? "?"}`; } catch { return "🎴 Carte Pokémon"; } })()
-                              : replyRef.content.length > 80 ? replyRef.content.slice(0, 80) + "…" : replyRef.content
+                              : replyRef.content.startsWith(ACTIVITY_PREFIX)
+                                ? (() => { try { const a = JSON.parse(replyRef.content.slice(ACTIVITY_PREFIX.length)); return `🎮 ${a.targetName} — ${a.inBattle ? "En combat" : a.mapName || "En jeu"}`; } catch { return "🎮 Activité"; } })()
+                                : replyRef.content.length > 80 ? replyRef.content.slice(0, 80) + "…" : replyRef.content
                         }</span>
                       </div>
                     ) : null;
@@ -2959,7 +4690,7 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, gtsSharePend
                         <div className="pnw-chat-msg-body">
                           {replyBlock}
                           <div className="pnw-chat-msg-meta">
-                            <button className={`pnw-chat-msg-author pnw-chat-clickable${mutedUsersMap.has(msg.user_id) ? " pnw-chat-member-name--muted" : ""}`} style={nameColor ? { color: nameColor } : undefined} onClick={() => openProfile(author)}>
+                            <button className={`pnw-chat-msg-author pnw-chat-clickable${mutedUsersMap.has(msg.user_id) ? " pnw-chat-member-name--muted" : ""}`} style={nameColor ? { color: nameColor } : undefined} onClick={() => openProfile(author)} onContextMenu={(e) => { e.preventDefault(); const name = displayName(author); setDraft((d) => d ? `${d} @${name} ` : `@${name} `); }}>
                               {displayName(author)}
                             </button>
                             <RoleBadgesCompact roles={author?.roles || []} />
@@ -3221,6 +4952,11 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, gtsSharePend
                 const glow = roleGlow(m.roles);
                 const bio = (m as any).bio || "";
                 const statusText = bio.length > 28 ? bio.slice(0, 28) + "…" : bio;
+                const live = gameLivePlayers.get(m.id);
+                const ls = live?.liveStatus;
+                const isPlaying = !!(ls?.gameActive || live?.gameState?.active);
+                const inBattle = !!(ls?.inBattle || live?.gameState?.in_battle);
+                const mapName = ls?.mapName || live?.gameState?.map_name || "";
                 return (
                   <button
                     key={m.id}
@@ -3242,8 +4978,16 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, gtsSharePend
                         {displayName(m)}
                         {isMuted && isMod && <FaVolumeXmark style={{ fontSize: 9, opacity: 0.4, marginLeft: 4 }} />}
                       </span>
-                      {statusText && (
+                      {statusText && !isPlaying && (
                         <span className="pnw-chat-member-status-text">{statusText}</span>
+                      )}
+                      {isPlaying && (
+                        <div className={`pnw-chat-member-activity${inBattle ? " pnw-chat-member-activity--battle" : ""}`}>
+                          <FaGamepad className="pnw-chat-member-activity-ico" />
+                          <span className="pnw-chat-member-activity-txt">
+                            {inBattle ? "En combat" : mapName || "En jeu"}
+                          </span>
+                        </div>
                       )}
                     </div>
                   </button>
@@ -3324,15 +5068,21 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, gtsSharePend
                   // Detect special content types
                   const isGts = msg.content.startsWith(GTS_PREFIX);
                   const isPoke = msg.content.startsWith(POKEMON_PREFIX);
+                  const isActivity = msg.content.startsWith(ACTIVITY_PREFIX);
+                  const isTrade = msg.content.startsWith(TRADE_PREFIX);
                   // Extract image URLs from content
                   const imageRe = /https?:\/\/\S+\.(?:png|jpg|jpeg|gif|webp)(?:\?\S*)?/gi;
-                  const images = (!isGts && !isPoke) ? (msg.content.match(imageRe) || []) : [];
+                  const images = (!isGts && !isPoke && !isActivity && !isTrade) ? (msg.content.match(imageRe) || []) : [];
                   // Build display text
                   let displayText = msg.content;
                   if (isGts) {
                     try { const g = JSON.parse(msg.content.slice(GTS_PREFIX.length)); displayText = `🔄 Échange GTS #${g.onlineId ?? ""} — ${g.deposited?.name ?? "?"} ↔ ${g.wanted?.name ?? "?"}`; } catch { displayText = "🔄 Échange GTS"; }
                   } else if (isPoke) {
                     try { const p = JSON.parse(msg.content.slice(POKEMON_PREFIX.length)); displayText = `🎴 ${p.speciesName ?? p.nickname ?? "Pokémon"} Nv.${p.level ?? "?"}${p.isShiny ? " ✨" : ""}`; } catch { displayText = "🎴 Carte Pokémon"; }
+                  } else if (isActivity) {
+                    try { const a = JSON.parse(msg.content.slice(ACTIVITY_PREFIX.length)); displayText = `🎮 ${a.targetName} — ${a.inBattle ? "En combat" : a.mapName || "En jeu"}`; } catch { displayText = "🎮 Activité"; }
+                  } else if (isTrade) {
+                    try { const t = JSON.parse(msg.content.slice(TRADE_PREFIX.length)); displayText = `🔁 Échange — ${t.playerA?.pokemon?.name ?? "?"} ↔ ${t.playerB?.pokemon?.name ?? "?"}`; } catch { displayText = "🔁 Échange P2P"; }
                   } else {
                     // Strip image URLs from text display (they show as thumbnails)
                     displayText = images.reduce((t, url) => t.replace(url, "").trim(), displayText).trim();
@@ -3688,6 +5438,156 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, gtsSharePend
           targetMute={mutedUsersMap.get(profilePopup.id) || null}
           friendship={profileFriendship}
           isBlocked={blockedUserIds.has(profilePopup.id)}
+          gameState={gameLivePlayers.get(profilePopup.id)?.gameState || null}
+          liveStatus={gameLivePlayers.get(profilePopup.id)?.liveStatus || null}
+          dexEntries={[...pokedexEntries, ...extradexEntries]}
+          siteUrl={siteUrl}
+          psdkNames={psdkNames}
+          installDir={installDir}
+          lastSavePath={lastSavePath}
+          gameProfile={gameProfile}
+          onShareActivity={(data) => setActivityShareData(data)}
+          canTrade={
+            profilePopup.id !== session?.user?.id &&
+            tradeState.phase === "idle" &&
+            !!lastSavePath &&
+            onlineUserIds.has(profilePopup.id) &&
+            friendsList.some((f) => f.status === "accepted" && (f.user_id === profilePopup.id || f.friend_id === profilePopup.id))
+          }
+          onProposeTrade={async () => {
+            if (!session?.user?.id || !profile) return;
+            // Vérifier que le jeu n'est pas en cours
+            try {
+              const running = await invoke<boolean>("cmd_is_game_running");
+              if (running) {
+                setTradeState({ phase: "error", tradeId: "", partnerId: "", partnerName: "", message: "Fermez le jeu avant de proposer un échange." });
+                return;
+              }
+            } catch {}
+            const tradeId = generateTradeId();
+            const targetId = profilePopup.id;
+            // Find existing DM with this specific user
+            let dmChannelId = 0;
+            for (const c of channels) {
+              if (c.type !== "dm") continue;
+              const partner = dmPartners[c.id];
+              if (!partner) continue;
+              // Check if this DM's partner is the target user
+              const { data: members } = await supabase.from("channel_members").select("user_id").eq("channel_id", c.id);
+              if (members?.some((m: any) => m.user_id === targetId)) {
+                dmChannelId = c.id;
+                break;
+              }
+            }
+            // Create DM if it doesn't exist
+            if (!dmChannelId) {
+              try {
+                const { data } = await supabase.rpc("create_dm_channel", { target_user_id: targetId });
+                if (data) {
+                  dmChannelId = data;
+                  // Reload channels to include the new DM
+                  const { data: chs } = await supabase.from("channels").select("*").order("created_at", { ascending: true });
+                  if (chs) setChannels(chs);
+                }
+              } catch {}
+            }
+            if (!dmChannelId) return;
+            // Navigate to the DM channel
+            const dmCh = channels.find((c) => c.id === dmChannelId) || { id: dmChannelId, name: null, type: "dm" as const, background_url: null, slowmode_seconds: 0, created_at: "" };
+            setActiveChannel(dmCh);
+            // Send trade request via broadcast
+            gameLiveRef2.current?.send({
+              type: "broadcast",
+              event: "trade_request",
+              payload: {
+                tradeId,
+                fromId: session.user.id,
+                fromName: profile.display_name || profile.username,
+                fromAvatar: profile.avatar_url,
+                toId: targetId,
+                dmChannelId,
+                saveId: gameProfile?.rawTrainerId ?? 0,
+              },
+            });
+            setTradeState({
+              phase: "pending",
+              role: "initiator",
+              tradeId,
+              partnerId: profilePopup.id,
+              partnerName: profilePopup.display_name || profilePopup.username,
+              partnerAvatar: profilePopup.avatar_url,
+              dmChannelId,
+              startedAt: Date.now(),
+            });
+          }}
+          canBattle={
+            profilePopup.id !== session?.user?.id &&
+            battleState.phase === "idle" &&
+            tradeState.phase === "idle" &&
+            onlineUserIds.has(profilePopup.id) &&
+            friendsList.some((f) => f.status === "accepted" && (f.user_id === profilePopup.id || f.friend_id === profilePopup.id))
+          }
+          onProposeBattle={async () => {
+            if (!session?.user?.id || !profile) return;
+            const roomCode = generateRoomCode();
+            const targetId = profilePopup.id;
+            // Find or create DM
+            let dmChannelId = 0;
+            for (const c of channels) {
+              if (c.type !== "dm") continue;
+              const { data: members } = await supabase.from("channel_members").select("user_id").eq("channel_id", c.id);
+              if (members?.some((m: any) => m.user_id === targetId)) { dmChannelId = c.id; break; }
+            }
+            if (!dmChannelId) {
+              try {
+                const { data } = await supabase.rpc("create_dm_channel", { target_user_id: targetId });
+                if (data) { dmChannelId = data; const { data: chs } = await supabase.from("channels").select("*").order("created_at", { ascending: true }); if (chs) setChannels(chs); }
+              } catch {}
+            }
+            if (!dmChannelId) return;
+            const dmCh = channels.find((c) => c.id === dmChannelId) || { id: dmChannelId, name: null, type: "dm" as const, background_url: null, slowmode_seconds: 0, created_at: "" };
+            setActiveChannel(dmCh);
+            // ─── Dual delivery: table persistante + broadcast ───
+            const invPayload = { roomCode, fromId: session.user.id, fromName: profile.display_name || profile.username, fromAvatar: profile.avatar_url, toId: targetId, dmChannelId };
+
+            // 1) INSERT dans battle_invites (persistant)
+            const { error: dbErr } = await supabase.from("battle_invites").insert({
+              room_code: roomCode,
+              from_id: session.user.id,
+              from_name: profile.display_name || profile.username,
+              from_avatar: profile.avatar_url,
+              to_id: targetId,
+              dm_channel_id: dmChannelId,
+              status: "pending",
+            });
+            if (dbErr) console.error("[Battle] DB invite insert error:", dbErr);
+
+            // 2) Broadcast (rapide)
+            const ch = gameLiveRef2.current;
+            if (ch) {
+              try {
+                const res = await ch.send({ type: "broadcast", event: "battle_room_invite", payload: invPayload });
+                if (res !== "ok") console.warn("[Battle] invite broadcast failed:", res, "— table insert should deliver it");
+              } catch (e) { console.warn("[Battle] invite broadcast error:", e, "— table insert should deliver it"); }
+            }
+
+            if (dbErr && !ch) return; // Both failed
+
+            setBattleState({
+              phase: "inviting",
+              roomCode,
+              partnerId: profilePopup.id,
+              partnerName: profilePopup.display_name || profilePopup.username,
+              partnerAvatar: profilePopup.avatar_url,
+              dmChannelId,
+              startedAt: Date.now(),
+            });
+            // Timeout + cleanup table
+            battleTimeoutRef.current = setTimeout(async () => {
+              setBattleState((prev) => prev.phase === "inviting" ? { phase: "idle" } : prev);
+              await supabase.from("battle_invites").update({ status: "expired" }).eq("room_code", roomCode).eq("from_id", session.user.id).eq("status", "pending");
+            }, BATTLE_INVITE_TIMEOUT);
+          }}
           onClose={() => setProfilePopup(null)}
           onEdit={() => setEditingProfile(true)}
           onSendDm={() => handleDmFromProfile(profilePopup)}
@@ -3822,6 +5722,65 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, gtsSharePend
                   <button key={ch.id} className="pnw-chat-gts-share-ch" onClick={async () => {
                     await supabase.from("messages").insert({ channel_id: ch.id, user_id: session.user.id, content: GTS_PREFIX + JSON.stringify(gtsSharePending) });
                     setShowGtsShareModal(false); onGtsShareDone?.();
+                  }}>
+                    <FaEnvelope /> <span>{partner?.displayName || partner?.name || "DM"}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Activity share modal */}
+      {activityShareData && session && (
+        <div className="pnw-chat-profile-overlay" onClick={() => setActivityShareData(null)}>
+          <div className="pnw-chat-gts-share-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="pnw-chat-gts-share-modal-header">
+              <FaGamepad /> <span>Partager l'activité</span>
+              <button className="pnw-chat-profile-close" onClick={() => setActivityShareData(null)}><FaXmark /></button>
+            </div>
+            <div className="pnw-chat-activity-share-preview">
+              <div className="pnw-chat-activity-share-player">
+                {activityShareData.targetAvatar && <img src={activityShareData.targetAvatar} alt="" className="pnw-chat-activity-share-avatar" />}
+                <div>
+                  <div className="pnw-chat-activity-share-name">{activityShareData.targetName}</div>
+                  <div className={`pnw-chat-activity-share-status${activityShareData.inBattle ? " pnw-chat-activity-share-status--battle" : ""}`}>
+                    <FaGamepad /> {activityShareData.inBattle ? "En combat" : activityShareData.mapName || "En jeu"}
+                  </div>
+                </div>
+              </div>
+              {activityShareData.party.length > 0 && (
+                <div className="pnw-chat-activity-share-party">
+                  {activityShareData.party.map((pk, i) => (
+                    <span key={i} className="pnw-chat-activity-share-poke">
+                      {pk.altShiny && <FaStar style={{ fontSize: 6, color: "#c084fc" }} />}
+                      {pk.shiny && !pk.altShiny && <FaStar style={{ fontSize: 6, color: "#f1c40f" }} />}
+                      {pk.species} Nv.{pk.level}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="pnw-chat-gts-share-label">Envoyer dans :</div>
+            <div className="pnw-chat-gts-share-channels pnw-scrollbar">
+              {channels.filter((c) => c.type === "public").map((ch) => (
+                <button key={ch.id} className="pnw-chat-gts-share-ch" onClick={async () => {
+                  await supabase.from("messages").insert({ channel_id: ch.id, user_id: session.user.id, content: ACTIVITY_PREFIX + JSON.stringify(activityShareData) });
+                  setActivityShareData(null);
+                }}>
+                  <FaMessage /> <span>#{ch.name}</span>
+                </button>
+              ))}
+              {channels.filter((c) => c.type === "dm").length > 0 && (
+                <div className="pnw-chat-gts-share-divider">Messages privés</div>
+              )}
+              {channels.filter((c) => c.type === "dm").map((ch) => {
+                const partner = dmPartners[ch.id];
+                return (
+                  <button key={ch.id} className="pnw-chat-gts-share-ch" onClick={async () => {
+                    await supabase.from("messages").insert({ channel_id: ch.id, user_id: session.user.id, content: ACTIVITY_PREFIX + JSON.stringify(activityShareData) });
+                    setActivityShareData(null);
                   }}>
                     <FaEnvelope /> <span>{partner?.displayName || partner?.name || "DM"}</span>
                   </button>
@@ -4231,6 +6190,251 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, gtsSharePend
         };
         return <DmBgModal />;
       })()}
+
+      {/* ═══════ P2P Trade Modal (fullscreen overlay) ═══════ */}
+      {tradeState.phase !== "idle" && tradeState.phase !== "complete" && createPortal(
+        <div className="pnw-trade-modal-overlay">
+          <div className="pnw-trade-modal">
+            {/* Header */}
+            <div className="pnw-trade-modal-header">
+              <FaArrowRightArrowLeft />
+              <span>Échange avec {(tradeState as any).partnerName}</span>
+              <span className="pnw-trade-modal-phase">
+                {tradeState.phase === "pending" ? "En attente..." : tradeState.phase === "selecting" ? "Sélection" : tradeState.phase === "confirming" ? "Confirmation" : tradeState.phase === "executing" ? "Échange..." : tradeState.phase === "error" ? "Erreur" : ""}
+              </span>
+              <button className="pnw-trade-modal-close" onClick={() => cancelTrade()}>
+                <FaXmark />
+              </button>
+            </div>
+
+            {/* Pending — waiting for response */}
+            {tradeState.phase === "pending" && tradeState.role === "initiator" && (
+              <div className="pnw-trade-modal-body pnw-trade-modal-center">
+                <FaSpinner className="pnw-trade-spinner" style={{ fontSize: "2rem", color: "#4ade80" }} />
+                <p>En attente de la réponse de <strong>{tradeState.partnerName}</strong>...</p>
+              </div>
+            )}
+            {tradeState.phase === "pending" && tradeState.role === "responder" && (
+              <div className="pnw-trade-modal-body pnw-trade-modal-center">
+                <p><strong>{tradeState.partnerName}</strong> souhaite échanger un Pokémon avec vous !</p>
+                <div className="pnw-trade-modal-actions">
+                  <button className="pnw-trade-btn pnw-trade-btn--accept" onClick={async () => {
+                    try {
+                      const running = await invoke<boolean>("cmd_is_game_running");
+                      if (running) {
+                        gameLiveRef2.current?.send({ type: "broadcast", event: "trade_decline", payload: { tradeId: tradeState.tradeId, fromId: session?.user?.id, toId: tradeState.partnerId, reason: "game_running" } });
+                        setTradeState({ phase: "error", tradeId: tradeState.tradeId, partnerId: tradeState.partnerId, partnerName: tradeState.partnerName, message: "Fermez le jeu avant d'accepter un échange." });
+                        return;
+                      }
+                    } catch {}
+                    gameLiveRef2.current?.send({ type: "broadcast", event: "trade_accept", payload: { tradeId: tradeState.tradeId, fromId: session?.user?.id, toId: tradeState.partnerId } });
+                    setTradeState({ phase: "selecting", role: "responder", tradeId: tradeState.tradeId, partnerId: tradeState.partnerId, partnerName: tradeState.partnerName, partnerAvatar: tradeState.partnerAvatar, dmChannelId: tradeState.dmChannelId, mySelection: null, theirPreview: null });
+                  }}>
+                    <FaUserCheck /> Accepter
+                  </button>
+                  <button className="pnw-trade-btn pnw-trade-btn--decline" onClick={() => {
+                    gameLiveRef2.current?.send({ type: "broadcast", event: "trade_decline", payload: { tradeId: tradeState.tradeId, fromId: session?.user?.id, toId: tradeState.partnerId } });
+                    setTradeState({ phase: "idle" });
+                  }}>
+                    <FaXmark /> Refuser
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Selecting — two columns: my pick + their pick */}
+            {tradeState.phase === "selecting" && (
+              <div className="pnw-trade-modal-body">
+                <div className="pnw-trade-modal-columns">
+                  {/* My side */}
+                  <div className="pnw-trade-modal-col">
+                    <div className="pnw-trade-modal-col-label">Votre Pokémon</div>
+                    {tradeState.mySelection ? (
+                      <div className="pnw-trade-modal-poke-card">
+                        <VdSprite speciesId={tradeState.mySelection.speciesId} form={tradeState.mySelection.form} shiny={tradeState.mySelection.shiny} altShiny={tradeState.mySelection.altShiny} className="pnw-trade-modal-poke-sprite" />
+                        <div className="pnw-trade-modal-poke-name">{tradeState.mySelection.name}</div>
+                        <div className="pnw-trade-modal-poke-level">Nv. {tradeState.mySelection.level}</div>
+                        {tradeState.mySelection.altShiny && <FaStar style={{ color: "#c084fc", fontSize: 12 }} />}
+                        {tradeState.mySelection.shiny && !tradeState.mySelection.altShiny && <FaStar style={{ color: "#facc15", fontSize: 12 }} />}
+                        <TradePokeOverlay pk={tradeState.mySelection} psdkNames={psdkNames} />
+                        <button className="pnw-trade-modal-change" onClick={() => setShowTradeBoxes(true)}>Changer</button>
+                      </div>
+                    ) : (
+                      <button className="pnw-trade-modal-poke-empty" onClick={() => setShowTradeBoxes(true)}>
+                        <FaPlus style={{ fontSize: "1.5rem" }} />
+                        <span>Choisir un Pokémon</span>
+                      </button>
+                    )}
+                  </div>
+                  {/* Arrow */}
+                  <div className="pnw-trade-modal-arrow"><FaArrowRightArrowLeft /></div>
+                  {/* Their side */}
+                  <div className="pnw-trade-modal-col">
+                    <div className="pnw-trade-modal-col-label">{tradeState.partnerName}</div>
+                    {tradeState.theirPreview ? (
+                      <div className="pnw-trade-modal-poke-card">
+                        <VdSprite speciesId={tradeState.theirPreview.speciesId} form={tradeState.theirPreview.form} shiny={tradeState.theirPreview.shiny} altShiny={tradeState.theirPreview.altShiny} className="pnw-trade-modal-poke-sprite" />
+                        <div className="pnw-trade-modal-poke-name">{tradeState.theirPreview.name}</div>
+                        <div className="pnw-trade-modal-poke-level">Nv. {tradeState.theirPreview.level}</div>
+                        {tradeState.theirPreview.altShiny && <FaStar style={{ color: "#c084fc", fontSize: 12 }} />}
+                        {tradeState.theirPreview.shiny && !tradeState.theirPreview.altShiny && <FaStar style={{ color: "#facc15", fontSize: 12 }} />}
+                        <TradePokeOverlay pk={tradeState.theirPreview} psdkNames={psdkNames} />
+                      </div>
+                    ) : (
+                      <div className="pnw-trade-modal-poke-waiting">
+                        <FaSpinner className="pnw-trade-spinner" />
+                        <span>En attente...</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+                {tradeState.mySelection && tradeState.theirPreview && (
+                  <button className="pnw-trade-btn pnw-trade-btn--confirm pnw-trade-modal-main-btn" onClick={() => {
+                    // Broadcast confirm directly — skip separate confirming phase
+                    gameLiveRef2.current?.send({ type: "broadcast", event: "trade_confirm", payload: { tradeId: tradeState.tradeId, userId: session?.user?.id } });
+                    setTradeState({ phase: "confirming", role: tradeState.role, tradeId: tradeState.tradeId, partnerId: tradeState.partnerId, partnerName: tradeState.partnerName, partnerAvatar: tradeState.partnerAvatar, dmChannelId: tradeState.dmChannelId, mySelection: tradeState.mySelection!, theirPreview: tradeState.theirPreview!, myConfirmed: true, theirConfirmed: false });
+                  }}>
+                    <FaUserCheck /> Confirmer l'échange
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* Confirming */}
+            {tradeState.phase === "confirming" && (
+              <div className="pnw-trade-modal-body">
+                <div className="pnw-trade-modal-columns">
+                  <div className="pnw-trade-modal-col">
+                    <div className="pnw-trade-modal-col-label">Vous envoyez</div>
+                    <div className="pnw-trade-modal-poke-card">
+                      <VdSprite speciesId={tradeState.mySelection.speciesId} form={tradeState.mySelection.form} shiny={tradeState.mySelection.shiny} altShiny={tradeState.mySelection.altShiny} className="pnw-trade-modal-poke-sprite" />
+                      <div className="pnw-trade-modal-poke-name">{tradeState.mySelection.name}</div>
+                      <div className="pnw-trade-modal-poke-level">Nv. {tradeState.mySelection.level}</div>
+                      <TradePokeOverlay pk={tradeState.mySelection} psdkNames={psdkNames} />
+                    </div>
+                    <div className="pnw-trade-modal-check">{tradeState.myConfirmed ? "✅" : "⏳"} Vous</div>
+                  </div>
+                  <div className="pnw-trade-modal-arrow"><FaArrowRightArrowLeft /></div>
+                  <div className="pnw-trade-modal-col">
+                    <div className="pnw-trade-modal-col-label">Vous recevez</div>
+                    <div className="pnw-trade-modal-poke-card">
+                      <VdSprite speciesId={tradeState.theirPreview.speciesId} form={tradeState.theirPreview.form} shiny={tradeState.theirPreview.shiny} altShiny={tradeState.theirPreview.altShiny} className="pnw-trade-modal-poke-sprite" />
+                      <div className="pnw-trade-modal-poke-name">{tradeState.theirPreview.name}</div>
+                      <div className="pnw-trade-modal-poke-level">Nv. {tradeState.theirPreview.level}</div>
+                      <TradePokeOverlay pk={tradeState.theirPreview} psdkNames={psdkNames} />
+                    </div>
+                    <div className="pnw-trade-modal-check">{tradeState.theirConfirmed ? "✅" : "⏳"} {tradeState.partnerName}</div>
+                  </div>
+                </div>
+                {!tradeState.myConfirmed ? (
+                  <button className="pnw-trade-btn pnw-trade-btn--confirm pnw-trade-modal-main-btn" onClick={() => {
+                    gameLiveRef2.current?.send({ type: "broadcast", event: "trade_confirm", payload: { tradeId: tradeState.tradeId, userId: session?.user?.id } });
+                    setTradeState({ ...tradeState, myConfirmed: true });
+                  }}>
+                    <FaUserCheck /> Confirmer l'échange
+                  </button>
+                ) : (
+                  <div className="pnw-trade-modal-waiting">En attente de {tradeState.partnerName}...</div>
+                )}
+              </div>
+            )}
+
+            {/* Executing */}
+            {tradeState.phase === "executing" && (
+              <div className="pnw-trade-modal-body pnw-trade-modal-center">
+                <FaSpinner className="pnw-trade-spinner" style={{ fontSize: "2rem", color: "#60a5fa" }} />
+                <p>Échange en cours...</p>
+              </div>
+            )}
+
+            {/* Error */}
+            {tradeState.phase === "error" && (
+              <div className="pnw-trade-modal-body pnw-trade-modal-center">
+                <FaXmark style={{ fontSize: "2rem", color: "#ef4444" }} />
+                <p>{tradeState.message}</p>
+                <button className="pnw-trade-btn pnw-trade-btn--decline" onClick={() => setTradeState({ phase: "idle" })}>
+                  Fermer
+                </button>
+              </div>
+            )}
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* P2P Trade — PCBox selection (sub-modal) */}
+      {showTradeBoxes && tradeState.phase === "selecting" && gameProfile && lastSavePath && createPortal(
+        <div className="pnw-trade-pcbox-overlay" onClick={() => setShowTradeBoxes(false)}>
+          <div className="pnw-trade-pcbox-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="pnw-trade-pcbox-header">
+              <span>Choisir un Pokémon à échanger</span>
+              <button onClick={() => setShowTradeBoxes(false)}><FaXmark /></button>
+            </div>
+            <PCBoxView
+              profile={gameProfile}
+              embedded
+              savePath={lastSavePath}
+              p2pTradeMode
+              onTradeSelect={(poke, boxIdx) => {
+                (async () => {
+                  try {
+                    const blob = await invoke<{ bytes_b64: string } | null>("cmd_get_save_blob", { savePath: lastSavePath });
+                    if (!blob) return;
+                    const rawBytes = Uint8Array.from(atob(blob.bytes_b64), (c) => c.charCodeAt(0));
+                    const { pokemonB64 } = extractAndEncode(rawBytes, boxIdx, poke.slot);
+                    const speciesId = typeof poke.code === "string" ? parseInt(poke.code, 10) : (poke.code ?? 0);
+                    const formN = typeof poke.form === "string" ? parseInt(poke.form, 10) : (poke.form ?? 0);
+                    // Resolve names from game_state cache or psdkNames
+                    const resolvedItemName = poke.itemHolding != null && poke.itemHolding > 0 ? (psdkNames.items?.[poke.itemHolding] ?? null) : null;
+                    const resolvedMoveNames = poke.moves?.map((mid) => psdkNames.skills?.[mid] ?? `#${mid}`) ?? [];
+                    const selection: TradeSelection = {
+                      boxIdx, slotIdx: poke.slot, speciesId,
+                      name: poke.speciesName || (psdkNames.species && speciesId > 0 ? psdkNames.species[speciesId] : null) || poke.nickname || `#${speciesId}`,
+                      nickname: poke.nickname, level: poke.level ?? 0,
+                      shiny: poke.isShiny ?? false, altShiny: poke.isAltShiny ?? false,
+                      gender: poke.gender, nature: poke.nature,
+                      form: formN,
+                      ability: poke.ability, abilityName: null,
+                      itemHolding: poke.itemHolding, itemName: resolvedItemName,
+                      moves: poke.moves, moveNames: resolvedMoveNames,
+                      ivHp: poke.ivHp, ivAtk: poke.ivAtk, ivDfe: poke.ivDfe,
+                      ivSpd: poke.ivSpd, ivAts: poke.ivAts, ivDfs: poke.ivDfs,
+                      pokemonB64,
+                    };
+                    setTradeState((prev) => prev.phase === "selecting" ? { ...prev, mySelection: selection } : prev);
+                    const { pokemonB64: _, ...preview } = selection;
+                    gameLiveRef2.current?.send({ type: "broadcast", event: "trade_select", payload: { tradeId: (tradeState as any).tradeId, userId: session?.user?.id, preview } });
+                    setShowTradeBoxes(false);
+                  } catch (err: any) {
+                    console.error("[Trade] Error encoding Pokémon:", err);
+                  }
+                })();
+              }}
+            />
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* P2P Trade — Swap animation */}
+      {showTradeSwapAnim && tradeSwapInfo && (
+        <GtsSwapAnim
+          mySpriteUrl={tradeSwapInfo.mySpriteUrl}
+          myName={tradeSwapInfo.myName}
+          myShiny={tradeSwapInfo.myShiny}
+          myAltShiny={tradeSwapInfo.myAltShiny}
+          theirSpriteUrl={tradeSwapInfo.theirSpriteUrl}
+          theirName={tradeSwapInfo.theirName}
+          theirShiny={tradeSwapInfo.theirShiny}
+          theirAltShiny={tradeSwapInfo.theirAltShiny}
+          boxName={tradeSwapInfo.boxName}
+          onComplete={() => {
+            setShowTradeSwapAnim(false);
+            setTradeSwapInfo(null);
+            setTradeState({ phase: "idle" });
+          }}
+        />
+      )}
 
       {/* Image lightbox */}
       {lightboxUrl && (
