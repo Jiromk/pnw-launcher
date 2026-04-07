@@ -14,7 +14,7 @@ const http = require("http");
 const { Server } = require("socket.io");
 
 const PORT = process.env.PORT || 3001;
-const RNG_VALUES_PER_TURN = 50; // assez pour couvrir tous les rand() d'un tour
+const RNG_VALUES_PER_TURN = 200; // doit couvrir TOUS les rand() d'un tour (multi-hit, abilities, weather, etc.)
 
 // ==================== Room management ====================
 
