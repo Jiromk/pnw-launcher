@@ -137,7 +137,7 @@ export default function BattleArenaView({
     await fullCleanup(battleRelayCleanupRef);
     sendBattleAccept(st.roomCode, st.partnerId, session.user.id, profile.display_name || profile.username);
     setBattleState({ ...st, phase: "waiting_game" });
-    try { await writeBattleTrigger(Number(st.roomCode), st.partnerName, "client"); } catch {}
+    try { await writeBattleTrigger(Number(st.roomCode), st.partnerName, "client"); console.log("[Battle] Trigger written OK (client)"); } catch (e) { console.error("[Battle] writeBattleTrigger FAILED:", e); }
     const cleanup = startRelay(st.roomCode, session.user.id,
       () => setBattleState((prev) => (prev as any).roomCode === st.roomCode ? { ...prev, phase: "relaying" } as any : prev),
       () => { setBattleState({ phase: "complete", roomCode: st.roomCode, partnerId: st.partnerId, partnerName: st.partnerName }); cleanupBattleFiles(); },
