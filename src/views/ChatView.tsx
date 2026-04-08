@@ -3950,54 +3950,14 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
                       const welcomeName = msg.content.replace("🌟WELCOME🌟", "");
                       const welcomeAvatar = author?.avatar_url;
                       return (
-                        <div key={msg.id} className="pnw-chat-welcome-card">
-                          <div className="pnw-chat-welcome-glow" />
-                          <div className="pnw-chat-welcome-content">
-                            <div className="pnw-chat-welcome-icon">
-                              <img src="/logo.png" alt="PNW" className="pnw-chat-welcome-logo" />
-                            </div>
-                            <div className="pnw-chat-welcome-hero">
-                              {welcomeAvatar && (
-                                <img src={welcomeAvatar} alt="" className="pnw-chat-welcome-avatar" />
-                              )}
-                              <h3 className="pnw-chat-welcome-title">
-                                Bienvenue <span className="pnw-chat-welcome-name">@{welcomeName}</span> !
-                              </h3>
-                            </div>
-                            <p className="pnw-chat-welcome-subtitle">
-                              Un nouveau dresseur rejoint l'aventure Pokémon New World !
-                            </p>
-                            <div className="pnw-chat-welcome-features">
-                              <div className="pnw-chat-welcome-feature">
-                                <FaMessage className="pnw-chat-welcome-feature-icon" />
-                                <div>
-                                  <strong>Salons</strong>
-                                  <span>Discute dans #Général</span>
-                                </div>
-                              </div>
-                              <div className="pnw-chat-welcome-feature">
-                                <FaEnvelope className="pnw-chat-welcome-feature-icon" />
-                                <div>
-                                  <strong>Messages privés</strong>
-                                  <span>Envoie des DMs aux autres joueurs</span>
-                                </div>
-                              </div>
-                              <div className="pnw-chat-welcome-feature">
-                                <FaUserPlus className="pnw-chat-welcome-feature-icon" />
-                                <div>
-                                  <strong>Amis</strong>
-                                  <span>Ajoute des joueurs à ta liste d'amis</span>
-                                </div>
-                              </div>
-                              <div className="pnw-chat-welcome-feature">
-                                <FaPen className="pnw-chat-welcome-feature-icon" />
-                                <div>
-                                  <strong>Ton profil</strong>
-                                  <span>Personnalise ton avatar, bannière et bio</span>
-                                </div>
-                              </div>
-                            </div>
+                        <div key={msg.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 16px", margin: "4px 0" }}>
+                          <div style={{ width: 20, height: 20, borderRadius: "50%", background: "linear-gradient(135deg, #4ade80, #22d3ee)", display: "grid", placeItems: "center", fontSize: 10, flexShrink: 0 }}>
+                            <FaUserPlus style={{ fontSize: 9, color: "#fff" }} />
                           </div>
+                          <span style={{ fontSize: ".8rem", color: "rgba(255,255,255,.45)" }}>
+                            {welcomeAvatar && <img src={welcomeAvatar} alt="" style={{ width: 16, height: 16, borderRadius: "50%", marginRight: 5, verticalAlign: "middle" }} />}
+                            <strong style={{ color: "#4ade80" }}>{welcomeName}</strong> a rejoint l'aventure
+                          </span>
                         </div>
                       );
                     }
