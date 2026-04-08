@@ -59,13 +59,9 @@ pub fn cmd_battle_write_trigger(data: String) -> Result<String, String> {
     Ok(path.to_string_lossy().into_owned())
 }
 
-/// Dossier des logs de combat persistants.
+/// Dossier des logs de combat (même dossier que le battle IPC).
 fn battle_logs_dir() -> Result<PathBuf, String> {
-    let dir = app_local_dir().map_err(|e| e.to_string())?.join("battle_logs");
-    if !dir.exists() {
-        fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    }
-    Ok(dir)
+    battle_dir()
 }
 
 /// Nombre max de logs conservés. Les plus anciens sont supprimés.
@@ -98,13 +94,18 @@ pub fn cmd_battle_save_log(data: String) -> Result<String, String> {
     Ok(path.to_string_lossy().into_owned())
 }
 
-/// Supprime tous les fichiers du dossier battle/ (cleanup).
+/// Supprime les fichiers IPC du dossier battle/ (cleanup).
+/// Préserve les fichiers de log (YYYY-MM-DD_*.json) et vms_debug.log.
 #[tauri::command]
 pub fn cmd_battle_cleanup() -> Result<(), String> {
     let dir = battle_dir()?;
     if dir.exists() {
         for entry in fs::read_dir(&dir).map_err(|e| e.to_string())? {
             if let Ok(entry) = entry {
+                let name = entry.file_name().to_string_lossy().to_string();
+                // Ne pas supprimer les logs de combat ni le debug log
+                if name.starts_with("20") && name.ends_with(".json") { continue; }
+                if name == "vms_debug.log" { continue; }
                 let _ = fs::remove_file(entry.path());
             }
         }
