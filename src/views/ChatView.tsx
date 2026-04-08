@@ -31,7 +31,7 @@ import {
   togglePinMessage, fetchPinnedMessages,
 } from "../chatAuth";
 import type { ChatChannel, ChatMessage, ChatProfile, ChatMute, ChatBan, ChatFriend, PlayerProfile, GameLiveState, GameLivePlayer, GameActivityShareData, TradeState, TradeSelection, TradeSelectionPreview, TradeMessageData, BattleRoomState } from "../types";
-import { generateRoomCode, writeBattleTrigger, writeStopTrigger, startRelay, cleanupBattleFiles, fullCleanup, isGameRunning, BATTLE_INVITE_TIMEOUT, connectLobby, sendBattleInvite, sendBattleCancel } from "../battleRelay";
+import { generateRoomCode, writeBattleTrigger, writeStopTrigger, startRelay, cleanupBattleFiles, fullCleanup, isGameRunning, BATTLE_INVITE_TIMEOUT, connectLobby, sendBattleInvite, sendBattleCancel, playTurnSound } from "../battleRelay";
 import BattleArenaView from "./BattleArenaView";
 import { TRADE_PREFIX, generateTradeId, validateIncomingBytes, extractAndEncode, executeTradeLocally, buildTradeMessage, parseTradeMessage, TRADE_PENDING_TIMEOUT, TRADE_SELECTING_TIMEOUT, TRADE_CONFIRMING_TIMEOUT, TRADE_EXECUTING_TIMEOUT } from "../tradeP2P";
 import { loadSaveForEdit, extractPokemonFromBox, encodePokemonForGts } from "../saveWriter";
@@ -2690,10 +2690,12 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
         const relayCleanup = startRelay(
           code, session?.user?.id || "",
           () => setBattleState((prev) => (prev as any).roomCode === code ? { ...prev, phase: "relaying" } as any : prev),
-          () => {
-            setBattleState((prev) => (prev as any).roomCode === code ? { phase: "complete", roomCode: code, partnerId: (prev as any).partnerId || "", partnerName: (prev as any).partnerName || "" } : prev);
+          (reason) => {
+            setBattleState((prev) => (prev as any).roomCode === code ? { phase: "complete", roomCode: code, partnerId: (prev as any).partnerId || "", partnerName: (prev as any).partnerName || "", endReason: reason } : prev);
             cleanupBattleFiles().catch(() => {});
           },
+          () => { playTurnSound(); },
+          undefined, // spectator count handled in BattleArenaView
         );
         battleRelayCleanupRef.current = relayCleanup;
       },

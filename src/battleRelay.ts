@@ -35,9 +35,10 @@ export function generateRoomCode(): string {
 /* ==================== Trigger ==================== */
 
 export async function writeBattleTrigger(clusterId: number, opponentName: string, role: "host" | "client" = "host"): Promise<void> {
-  await invoke("cmd_battle_write_trigger", {
+  const path = await invoke<string>("cmd_battle_write_trigger", {
     data: JSON.stringify({ action: "start_battle", cluster_id: clusterId, opponent_name: opponentName, role }),
   });
+  console.log("[Battle] Trigger written to:", path);
 }
 
 export async function writeStopTrigger(): Promise<void> {
@@ -51,6 +52,7 @@ export async function writeStopTrigger(): Promise<void> {
 /* ==================== Cleanup ==================== */
 
 export async function cleanupBattleFiles(): Promise<void> {
+  console.trace("[Battle] cleanupBattleFiles called from:");
   try { await invoke("cmd_battle_cleanup"); } catch {}
 }
 
@@ -172,11 +174,29 @@ let battleSocket: Socket | null = null;
  *
  * Retourne une cleanup function.
  */
+export function playTurnSound(): void {
+  try {
+    const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.frequency.value = 800;
+    osc.type = "sine";
+    gain.gain.setValueAtTime(0.12, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.15);
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 0.15);
+  } catch {}
+}
+
 export function startRelay(
   roomCode: string,
   myUserId: string,
   onBattleStarted?: () => void,
-  onDisconnect?: () => void,
+  onDisconnect?: (reason?: "forfeit" | "crash" | "opponent_forfeit" | "opponent_crash") => void,
+  onTurnReady?: () => void,
+  onSpectatorCount?: (count: number) => void,
 ): () => void {
   let running = true;
   let battleDetected = false;
@@ -223,7 +243,6 @@ export function startRelay(
     console.log("[BattleRelay] Turn", msg.turn, "resolved —", msg.rng.length, "RNG values");
     waitingForServer = false;
 
-    // Injecter les RNG dans les donnees adverses pour que le jeu les lise
     const opponentData = msg.opponentData;
     if (opponentData) {
       opponentData.vms_rng = msg.rng;
@@ -236,6 +255,7 @@ export function startRelay(
     } catch (e) {
       console.error("[BattleRelay] Write inbox error:", e);
     }
+    onTurnReady?.();
   });
 
   // ─── Receive switch resolution ───
@@ -250,15 +270,29 @@ export function startRelay(
     } catch (e) {
       console.error("[BattleRelay] Write inbox error:", e);
     }
+    onTurnReady?.();
+  });
+
+  // ─── Spectator count update ───
+  socket.on("spectator_count", (data: { count: number }) => {
+    console.log("[BattleRelay] Spectators:", data.count);
+    onSpectatorCount?.(data.count);
+  });
+
+  // ─── Battle ended by opponent (result from their game) ───
+  socket.on("battle_ended", (data: { roomCode?: string; result?: string; reason?: string }) => {
+    console.log("[BattleRelay] Battle ended by opponent, our result:", data.result);
+    // The game will also detect the result locally — this is for the launcher UI
   });
 
   // ─── Opponent disconnected ───
-  socket.on("player_left", () => {
-    console.log("[BattleRelay] Opponent left");
+  socket.on("player_left", (data: { userId?: string; reason?: string }) => {
+    const reason = data?.reason === "crash" ? "opponent_crash" : "opponent_forfeit";
+    console.log("[BattleRelay] Opponent left, reason:", reason);
     if (!disconnectFired) {
       disconnectFired = true;
       running = false;
-      onDisconnect?.();
+      onDisconnect?.(reason);
     }
   });
 
@@ -349,8 +383,15 @@ export function startRelay(
             if (!disconnectFired) {
               disconnectFired = true;
               running = false;
-              onDisconnect?.();
+              socket.emit("leave_room", { roomCode, userId: myUserId, reason: "forfeit" });
+              onDisconnect?.("forfeit");
             }
+            pendingOutbox = null;
+          } else if (messageType === "battle_result") {
+            // Le jeu envoie le resultat (win/loss) apres le combat
+            const result = playerData?.result;
+            console.log("[BattleRelay] Battle result from game:", result);
+            socket.emit("battle_end", { roomCode, userId: myUserId, result });
             pendingOutbox = null;
           }
 
@@ -367,14 +408,74 @@ export function startRelay(
 
   poll();
 
+  // ─── Game process monitor (crash detection) ───
+  const gameMonitor = setInterval(async () => {
+    if (!running || !battleDetected) return;
+    const alive = await isGameRunning();
+    if (!alive && !disconnectFired) {
+      console.log("[BattleRelay] Game process died — crash detected");
+      disconnectFired = true;
+      running = false;
+      socket.emit("leave_room", { roomCode, userId: myUserId, reason: "crash" });
+      onDisconnect?.("crash");
+    }
+  }, 3000);
+
   // ─── Cleanup ───
   return () => {
     running = false;
+    clearInterval(gameMonitor);
     if (socket.connected) {
       socket.emit("leave_room", { roomCode, userId: myUserId });
       socket.disconnect();
     }
     battleSocket = null;
+  };
+}
+
+/* ==================== Spectator ==================== */
+
+export function startSpectator(
+  roomCode: string,
+  myUserId: string,
+  onTurnUpdate?: (data: { turn: number; players: string[] }) => void,
+  onBattleEnded?: (reason: string) => void,
+  onError?: (msg: string) => void,
+): () => void {
+  const socket = io(BATTLE_SERVER_URL, {
+    transports: ["websocket", "polling"],
+    reconnection: true,
+    reconnectionAttempts: 5,
+    reconnectionDelay: 2000,
+  });
+
+  socket.on("connect", () => {
+    console.log("[Spectator] Connected:", socket.id);
+    socket.emit("spectate_room", { roomCode, userId: myUserId });
+  });
+
+  socket.on("spectate_error", (data: { message: string }) => {
+    console.warn("[Spectator] Error:", data.message);
+    onError?.(data.message);
+  });
+
+  socket.on("spectate_joined", (data: { roomCode: string; players: string[] }) => {
+    console.log("[Spectator] Joined room", data.roomCode, "players:", data.players);
+  });
+
+  socket.on("spectate_turn", (data: { turn: number; players: string[] }) => {
+    console.log("[Spectator] Turn", data.turn, "resolved");
+    onTurnUpdate?.(data);
+  });
+
+  socket.on("player_left", (data: { userId?: string; reason?: string }) => {
+    console.log("[Spectator] Player left:", data.reason);
+    onBattleEnded?.(data.reason || "unknown");
+  });
+
+  return () => {
+    socket.emit("leave_spectate", { roomCode });
+    socket.disconnect();
   };
 }
 

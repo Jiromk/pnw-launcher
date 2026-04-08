@@ -13,9 +13,10 @@ import {
   generateRoomCode, writeBattleTrigger, startRelay,
   cleanupBattleFiles, fullCleanup, isGameRunning,
   BATTLE_INVITE_TIMEOUT,
-  sendBattleInvite, sendBattleAccept, sendBattleDecline, sendBattleCancel,
+  sendBattleInvite, sendBattleAccept, sendBattleDecline, sendBattleCancel, playTurnSound,
 } from "../battleRelay";
 import { supabase } from "../supabaseClient"; // kept for DM channel lookup only
+import { fetchPvpStats, fetchBattleHistory, recordBattleResult, type PvpStats, type BattleResultEntry } from "../leaderboard";
 
 /* ==================== History (localStorage) ==================== */
 
@@ -83,12 +84,48 @@ export default function BattleArenaView({
   battleRelayCleanupRef, battleTimeoutRef, onBack,
 }: BattleArenaViewProps) {
   const [history, setHistory] = useState<BattleHistoryEntry[]>([]);
+  const [pvpStats, setPvpStats] = useState<PvpStats>({ pvp_wins: 0, pvp_losses: 0, pvp_draws: 0 });
+  const [serverHistory, setServerHistory] = useState<BattleResultEntry[]>([]);
   const [errorPopup, setErrorPopup] = useState<string | null>(null);
+  const [spectatorCount, setSpectatorCount] = useState(0);
   const [inviteTimer, setInviteTimer] = useState(0);
 
-  useEffect(() => { setHistory(loadHistory()); }, []);
+  // Fetch stats from Supabase on mount
   useEffect(() => {
-    if (battleState.phase === "complete") setHistory(loadHistory());
+    setHistory(loadHistory());
+    fetchPvpStats(session.user.id).then(setPvpStats).catch(() => {});
+    fetchBattleHistory(session.user.id).then(setServerHistory).catch(() => {});
+  }, [session.user.id]);
+
+  // Refresh stats when battle completes + record result
+  useEffect(() => {
+    if (battleState.phase !== "complete") return;
+    setHistory(loadHistory());
+    const st = battleState as any;
+    const endReason = st.endReason;
+    let result: string = "draw";
+    if (endReason === "opponent_forfeit") result = "win";
+    else if (endReason === "opponent_crash") result = "draw";
+
+    if (endReason && st.partnerId) {
+      // Mise à jour optimiste immédiate (pas d'attente réseau)
+      setPvpStats((prev) => ({
+        pvp_wins: prev.pvp_wins + (result === "win" ? 1 : 0),
+        pvp_losses: prev.pvp_losses + (result === "loss" ? 1 : 0),
+        pvp_draws: prev.pvp_draws + (result === "draw" ? 1 : 0),
+      }));
+      const typedResult = result as "win" | "loss" | "draw";
+      setServerHistory((prev) => [{ id: Date.now(), room_code: st.roomCode, opponent_id: st.partnerId, opponent_name: st.partnerName, result: typedResult, reason: endReason, created_at: new Date().toISOString() }, ...prev]);
+      appendBattleHistory({ date: new Date().toISOString(), opponentName: st.partnerName, opponentId: st.partnerId, result: typedResult });
+
+      // Écrire en base puis refresh pour confirmer
+      recordBattleResult(session.user.id, st.partnerId, st.roomCode, st.partnerName, typedResult, endReason)
+        .then(() => Promise.all([
+          fetchPvpStats(session.user.id).then(setPvpStats),
+          fetchBattleHistory(session.user.id).then(setServerHistory),
+        ]))
+        .catch(() => {});
+    }
   }, [battleState.phase]);
 
   // Countdown timer for invite
@@ -140,7 +177,9 @@ export default function BattleArenaView({
     try { await writeBattleTrigger(Number(st.roomCode), st.partnerName, "client"); console.log("[Battle] Trigger written OK (client)"); } catch (e) { console.error("[Battle] writeBattleTrigger FAILED:", e); }
     const cleanup = startRelay(st.roomCode, session.user.id,
       () => setBattleState((prev) => (prev as any).roomCode === st.roomCode ? { ...prev, phase: "relaying" } as any : prev),
-      () => { setBattleState({ phase: "complete", roomCode: st.roomCode, partnerId: st.partnerId, partnerName: st.partnerName }); cleanupBattleFiles(); },
+      (reason) => { setSpectatorCount(0); setBattleState({ phase: "complete", roomCode: st.roomCode, partnerId: st.partnerId, partnerName: st.partnerName, endReason: reason } as any); cleanupBattleFiles(); },
+      () => { playTurnSound(); },
+      (count) => { setSpectatorCount(count); },
     );
     battleRelayCleanupRef.current = cleanup;
   }, [battleState, session, profile, setBattleState, battleRelayCleanupRef]);
@@ -195,10 +234,11 @@ export default function BattleArenaView({
 
   const onlineFriends = friendProfiles.filter((f) => f.online);
 
-  // --- Stats ---
-  const wins = history.filter((h) => h.result === "win").length;
-  const losses = history.filter((h) => h.result === "loss").length;
-  const total = wins + losses;
+  // --- Stats (Supabase) ---
+  const wins = pvpStats.pvp_wins;
+  const losses = pvpStats.pvp_losses;
+  const draws = pvpStats.pvp_draws;
+  const total = wins + losses + draws;
   const winRate = total > 0 ? Math.round((wins / total) * 100) : 0;
 
   const isActive = battleState.phase !== "idle";
@@ -289,7 +329,7 @@ export default function BattleArenaView({
               <div className="ba-active-left">
                 <FaGamepad className="ba-pulse" />
                 <div>
-                  <div className="ba-active-title"><span className="ba-live-dot" /> EN DIRECT</div>
+                  <div className="ba-active-title"><span className="ba-live-dot" /> EN DIRECT {spectatorCount > 0 && <span style={{ fontSize: "0.7rem", opacity: 0.7, marginLeft: 8 }}><FaUsers style={{ fontSize: "0.6rem", marginRight: 3 }} />{spectatorCount} spectateur{spectatorCount > 1 ? "s" : ""}</span>}</div>
                   <div className="ba-active-desc">Combat contre <strong>{battleState.partnerName}</strong></div>
                 </div>
               </div>
@@ -300,10 +340,22 @@ export default function BattleArenaView({
           {battleState.phase === "complete" && (
             <>
               <div className="ba-active-left">
-                <FaTrophy className="ba-trophy-anim" />
+                {(battleState as any).endReason === "opponent_crash"
+                  ? <FaTriangleExclamation style={{ color: "#facc15", fontSize: "1.4rem" }} />
+                  : <FaTrophy className="ba-trophy-anim" />}
                 <div>
-                  <div className="ba-active-title">Combat termine !</div>
-                  <div className="ba-active-desc">vs <strong>{battleState.partnerName}</strong></div>
+                  <div className="ba-active-title">
+                    {(battleState as any).endReason === "opponent_forfeit" ? "Victoire !" :
+                     (battleState as any).endReason === "opponent_crash" ? "Match nul" :
+                     "Combat termine !"}
+                  </div>
+                  <div className="ba-active-desc">
+                    {(battleState as any).endReason === "opponent_forfeit"
+                      ? <>{battleState.partnerName} a abandonne le combat</>
+                      : (battleState as any).endReason === "opponent_crash"
+                      ? <>Probleme technique de {battleState.partnerName}</>
+                      : <>vs <strong>{battleState.partnerName}</strong></>}
+                  </div>
                 </div>
               </div>
               <button className="ba-btn ba-btn--primary" onClick={closeBattle}>Fermer</button>
@@ -361,17 +413,17 @@ export default function BattleArenaView({
           <div className="ba-panel ba-panel--grow">
             <div className="ba-panel-head"><FaClock /> Historique recent</div>
             <div className="ba-history-list">
-              {history.length === 0 && (
+              {serverHistory.length === 0 && history.length === 0 && (
                 <div className="ba-empty">Aucun combat pour l'instant</div>
               )}
-              {history.slice(0, 15).map((h, i) => (
+              {(serverHistory.length > 0 ? serverHistory : history).slice(0, 15).map((h, i) => (
                 <div key={i} className={`ba-history-row ba-history-row--${h.result}`}>
                   <div className={`ba-history-badge ba-history-badge--${h.result}`}>
-                    {h.result === "win" ? <FaTrophy /> : <FaSkull />}
+                    {h.result === "win" ? <FaTrophy /> : h.result === "draw" ? <FaTriangleExclamation /> : <FaSkull />}
                   </div>
                   <div className="ba-history-info">
-                    <span className="ba-history-name">{h.result === "win" ? "Victoire" : "Defaite"} vs <strong>{h.opponentName}</strong></span>
-                    <span className="ba-history-time">{timeAgo(h.date)}</span>
+                    <span className="ba-history-name">{h.result === "win" ? "Victoire" : h.result === "draw" ? "Match nul" : "Defaite"} vs <strong>{(h as any).opponentName || (h as any).opponent_name || "?"}</strong></span>
+                    <span className="ba-history-time">{timeAgo((h as any).date || (h as any).created_at)}</span>
                   </div>
                 </div>
               ))}

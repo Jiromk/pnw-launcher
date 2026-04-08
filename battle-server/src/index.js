@@ -62,6 +62,7 @@ function getOrCreateRoom(code) {
     room = {
       code,
       players: new Map(),
+      spectators: new Set(),
       turnData: new Map(),
       switchData: new Map(),
       initialData: new Map(),
@@ -81,11 +82,19 @@ function cleanupRoom(code) {
 
 function removePlayerFromAllRooms(socketId, io) {
   for (const [code, room] of rooms) {
+    // Spectator cleanup
+    if (room.spectators.has(socketId)) {
+      room.spectators.delete(socketId);
+      for (const [, player] of room.players) {
+        io.to(player.socketId).emit("spectator_count", { count: room.spectators.size });
+      }
+    }
     for (const [userId, player] of room.players) {
       if (player.socketId === socketId) {
         room.players.delete(userId);
-        io.to(code).emit("player_left", { userId });
-        console.log(`[Room ${code}] ${userId} deconnecte`);
+        // Socket mort sans leave_room = crash probable
+        io.to(code).emit("player_left", { userId, reason: "crash" });
+        console.log(`[Room ${code}] ${userId} deconnecte (crash)`);
       }
     }
     cleanupRoom(code);
@@ -220,8 +229,13 @@ io.on("connection", (socket) => {
         }
       }
 
+      // Notify spectators
+      for (const specSid of room.spectators) {
+        io.to(specSid).emit("spectate_turn", { turn, players: entries.map(([uid, d]) => uid) });
+      }
+
       room.turnData.clear();
-      console.log(`[Room ${roomCode}] Tour ${turn} resolu (${rng.length} RNG)`);
+      console.log(`[Room ${roomCode}] Tour ${turn} resolu (${rng.length} RNG, ${room.spectators.size} spectateurs)`);
     }
   });
 
@@ -255,13 +269,58 @@ io.on("connection", (socket) => {
     }
   });
 
+  // ─── Battle end (result from game) ───
+  socket.on("battle_end", ({ roomCode, userId, result }) => {
+    const room = rooms.get(roomCode);
+    if (!room) return;
+    const opponentResult = result === "win" ? "loss" : result === "loss" ? "win" : "draw";
+    // Notify opponent
+    for (const [uid, player] of room.players) {
+      if (uid !== userId) {
+        io.to(player.socketId).emit("battle_ended", { roomCode, result: opponentResult, reason: "battle_end" });
+      }
+    }
+    console.log(`[Room ${roomCode}] Battle end: ${userId} ${result}`);
+  });
+
+  // ─── Spectate room (read-only) ───
+  socket.on("spectate_room", ({ roomCode, userId }) => {
+    const room = rooms.get(roomCode);
+    if (!room) { socket.emit("spectate_error", { message: "Room introuvable" }); return; }
+    room.spectators.add(socket.id);
+    socket.join(roomCode);
+    socket.data.roomCode = roomCode;
+    socket.data.userId = userId;
+    socket.data.isSpectator = true;
+    const playerIds = [...room.players.keys()];
+    socket.emit("spectate_joined", { roomCode, players: playerIds, turn: room.turnData.size > 0 ? "in_progress" : "waiting" });
+    // Notifier les joueurs qu'un spectateur a rejoint
+    for (const [, player] of room.players) {
+      io.to(player.socketId).emit("spectator_count", { count: room.spectators.size });
+    }
+    console.log(`[Room ${roomCode}] Spectateur ${userId} (${room.spectators.size} spectateurs)`);
+  });
+
+  socket.on("leave_spectate", ({ roomCode }) => {
+    const room = rooms.get(roomCode);
+    if (room) {
+      room.spectators.delete(socket.id);
+      socket.leave(roomCode);
+      // Notifier les joueurs du départ
+      for (const [, player] of room.players) {
+        io.to(player.socketId).emit("spectator_count", { count: room.spectators.size });
+      }
+    }
+  });
+
   // ─── Leave room ───
-  socket.on("leave_room", ({ roomCode, userId }) => {
+  socket.on("leave_room", ({ roomCode, userId, reason }) => {
     const room = rooms.get(roomCode);
     if (room) {
       room.players.delete(userId);
-      socket.to(roomCode).emit("player_left", { userId });
+      socket.to(roomCode).emit("player_left", { userId, reason: reason || "forfeit" });
       socket.leave(roomCode);
+      console.log(`[Room ${roomCode}] ${userId} quitte (${reason || "forfeit"})`);
       cleanupRoom(roomCode);
     }
   });
