@@ -367,7 +367,7 @@ export default function BattleArenaView({
                   </div>
                   {(battleState as any).endReason === "opponent_crash" && (
                     <div style={{ fontSize: ".65rem", color: "rgba(255,255,255,.3)", marginTop: 2 }}>
-                      Logs : %LOCALAPPDATA%\PNW Launcher\battle_logs\
+                      Logs : %LOCALAPPDATA%\PNW Launcher\battle\logs\
                     </div>
                   )}
                 </div>
