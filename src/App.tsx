@@ -315,7 +315,7 @@ function IconButton({
 }
 
 /* ==================== Types de vues ==================== */
-type ViewName = "launcher" | "lore" | "pokedex" | "guide" | "boss" | "patchnotes" | "items" | "evs" | "bst" | "nerfs" | "team" | "contact" | "gts";
+type ViewName = "launcher" | "lore" | "pokedex" | "guide" | "boss" | "patchnotes" | "items" | "evs" | "bst" | "nerfs" | "team" | "contact" | "gts" | "battle";
 
 /* ==================== Dropdown Dossier (portail) ==================== */
 function FolderDropdown({
@@ -562,8 +562,11 @@ export default function App() {
   const [teamNormalSpriteCache, setTeamNormalSpriteCache] = useState<Record<string, string | null>>({});
   const teamNormalRequestedRef = useRef<Set<string>>(new Set());
   const [saveList, setSaveList] = useState<{ path: string; name: string; modified: number; size: number }[]>([]);
-  const [selectedSaveIdx, setSelectedSaveIdx] = useState(0);
-  const selectedSaveIdxRef = useRef(0);
+  const [selectedSaveIdx, setSelectedSaveIdx] = useState(() => {
+    const saved = localStorage.getItem("pnw_last_save_idx");
+    return saved ? parseInt(saved, 10) : 0;
+  });
+  const selectedSaveIdxRef = useRef(parseInt(localStorage.getItem("pnw_last_save_idx") || "0", 10));
   const [openSaveMenu, setOpenSaveMenu] = useState(false);
   const saveMenuRef = useRef<HTMLDivElement>(null);
 
@@ -992,8 +995,10 @@ export default function App() {
         setProfileState("none");
         return;
       }
-      const idx = forceIdx ?? selectedSaveIdxRef.current;
+      const rawIdx = forceIdx ?? selectedSaveIdxRef.current;
+      const idx = Math.min(rawIdx, saves.length - 1);
       setSelectedSaveIdx(idx);
+      localStorage.setItem("pnw_last_save_idx", String(idx));
       const blob = await invoke<{ path: string; modified: number; bytes_b64: string } | null>(
         "cmd_get_save_blob",
         { savePath: saves[idx].path },
@@ -1025,6 +1030,7 @@ export default function App() {
     setOpenSaveMenu(false);
     if (idx === selectedSaveIdx && profileState === "ready") return;
     setSelectedSaveIdx(idx);
+    localStorage.setItem("pnw_last_save_idx", String(idx));
     await loadProfile(idx);
   }
 
@@ -1461,14 +1467,18 @@ export default function App() {
   }
 
   async function handleFirstTimeUser() {
-    setShowInitialChoice(false);
-    setLog((l) => prependUnique(l, ui.log.newInstall));
-    await invoke("cmd_set_default_install_dir");
-    const info = await readInstallInfo();
-    setInstallDir(info.installDir);
-    const L: "fr" | "en" = info.gameLang === "fr" || info.gameLang === "en" ? info.gameLang : "fr";
-    const m = await fetchManifest({ lang: L });
-    if (m) startInstallOrUpdate(m);
+    try {
+      setShowInitialChoice(false);
+      setLog((l) => prependUnique(l, ui.log.newInstall));
+      await invoke("cmd_set_default_install_dir");
+      const info = await readInstallInfo();
+      setInstallDir(info.installDir);
+      const L: "fr" | "en" = info.gameLang === "fr" || info.gameLang === "en" ? info.gameLang : "fr";
+      const m = await fetchManifest({ lang: L });
+      if (m) startInstallOrUpdate(m);
+    } catch (e: any) {
+      setLog((l) => prependUnique(l, `❌ ${formatErrorForUser(String(e), uiLang)}`));
+    }
   }
 
   // ⚠️ Modifié : plus d’auto-scan ici. On ouvre directement l’explorateur pour choisir le DOSSIER du jeu.
@@ -1870,7 +1880,7 @@ export default function App() {
             />
           </div>
           <div className="launcher-home-actions">
-            <LauncherMenu onOpenGts={() => setActiveView("gts")} uiLang={uiLang} gtsWishlistMatches={gtsWishlistMatches} />
+            <LauncherMenu onOpenGts={() => setActiveView("gts")} onOpenBattle={() => setActiveView("battle")} uiLang={uiLang} gtsWishlistMatches={gtsWishlistMatches} />
             <ThemeMenu defaultBgUrl={manifest?.launcherBackgroundUrl} uiLang={uiLang} />
             <IconButton
               tone="ghost"
@@ -2680,6 +2690,9 @@ export default function App() {
                   </div>
                 </button>
               </div>
+              <p className="col-span-2 text-xs text-amber-200/80 bg-amber-500/10 border border-amber-400/20 rounded-lg px-3 py-2 leading-relaxed">
+                {ui.welcome.firstTimeNote}
+              </p>
             </div>
 
             <p className="text-xs opacity-60 text-center">
@@ -2763,8 +2776,8 @@ export default function App() {
       )}
 
       {/* Chat fullscreen page — toujours monté pour garder les subscriptions Supabase actives */}
-      <div className="pnw-chat-fullscreen" style={chatOpen ? undefined : { display: "none" }}>
-        <ChatView siteUrl={siteUrl} onBack={() => setChatOpen(false)} onUnreadChange={setChatUnread} visible={chatOpen} gtsSharePending={gtsSharePending} onGtsShareDone={() => setGtsSharePending(null)} onOpenGts={(onlineId) => { setChatOpen(false); setGtsPendingOnlineId(onlineId ?? null); setActiveView("gts"); }} gameProfile={profile} installDir={installDir} lastSavePath={lastSavePath} onProfileReload={() => loadProfile(selectedSaveIdx)} />
+      <div className="pnw-chat-fullscreen" style={(chatOpen || activeView === "battle") ? undefined : { display: "none" }}>
+        <ChatView siteUrl={siteUrl} onBack={() => { if (activeView === "battle") setActiveView("launcher"); else setChatOpen(false); }} onUnreadChange={setChatUnread} visible={chatOpen || activeView === "battle"} battleMode={activeView === "battle"} gtsSharePending={gtsSharePending} onGtsShareDone={() => setGtsSharePending(null)} onOpenGts={(onlineId) => { setChatOpen(false); setGtsPendingOnlineId(onlineId ?? null); setActiveView("gts"); }} gameProfile={profile} installDir={installDir} lastSavePath={lastSavePath} onProfileReload={() => loadProfile(selectedSaveIdx)} />
       </div>
       </div>
     </div>

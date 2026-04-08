@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { open } from "@tauri-apps/plugin-dialog";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import {
@@ -113,8 +114,8 @@ export function LauncherMenu({
         </div>
       )}
 
-      {/* Modal code d'acces */}
-      {showCodeModal && (
+      {/* Modal code d'acces (portail pour eviter les problemes de transform/position) */}
+      {showCodeModal && createPortal(
         <div style={{
           position: "fixed", inset: 0, zIndex: 99999,
           background: "rgba(0,0,0,.65)", backdropFilter: "blur(6px)",
@@ -189,7 +190,8 @@ export function LauncherMenu({
               }}>Entrer</button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );
