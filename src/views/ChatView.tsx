@@ -2280,6 +2280,13 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
       })
       .subscribe((status) => {
         console.log("[PNW Notif] Subscription status:", status);
+        // Quand le channel revient de CLOSED → SUBSCRIBED, re-fetch les données perdues
+        if (status === "SUBSCRIBED") {
+          supabase.from("profiles").select("*").order("created_at").then(({ data }) => {
+            if (data) setAllMembers(data as ChatProfile[]);
+          });
+          getFriends(session.user.id).then(setFriendsList);
+        }
       });
 
     // Presence: track online users
@@ -2299,10 +2306,13 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
       .on("presence", { event: "leave" }, syncPresence)
       .subscribe(async (status) => {
         if (status === "SUBSCRIBED") {
+          // (Re)track presence — couvre aussi la reconnexion après CLOSED
           await presenceChannel.track({
             user_id: session.user.id,
             username: profile?.display_name || profile?.username || "",
           });
+          // Re-sync la liste des en ligne après reconnexion
+          syncPresence();
         }
       });
 
