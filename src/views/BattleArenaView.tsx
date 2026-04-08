@@ -10,7 +10,7 @@ import {
 import type { Session } from "@supabase/supabase-js";
 import type { ChatProfile, ChatFriend, ChatChannel, GameLivePlayer, BattleRoomState } from "../types";
 import {
-  generateRoomCode, writeBattleTrigger, startRelay,
+  generateRoomCode, writeBattleTrigger, writeStopTrigger, startRelay,
   cleanupBattleFiles, fullCleanup, isGameRunning,
   BATTLE_INVITE_TIMEOUT,
   sendBattleInvite, sendBattleAccept, sendBattleDecline, sendBattleCancel, playTurnSound,
@@ -177,7 +177,7 @@ export default function BattleArenaView({
     try { await writeBattleTrigger(Number(st.roomCode), st.partnerName, "client"); console.log("[Battle] Trigger written OK (client)"); } catch (e) { console.error("[Battle] writeBattleTrigger FAILED:", e); }
     const cleanup = startRelay(st.roomCode, session.user.id,
       () => setBattleState((prev) => (prev as any).roomCode === st.roomCode ? { ...prev, phase: "relaying" } as any : prev),
-      (reason) => { setSpectatorCount(0); setBattleState({ phase: "complete", roomCode: st.roomCode, partnerId: st.partnerId, partnerName: st.partnerName, endReason: reason } as any); cleanupBattleFiles(); },
+      (reason) => { setSpectatorCount(0); writeStopTrigger().then(() => cleanupBattleFiles()); setBattleState({ phase: "complete", roomCode: st.roomCode, partnerId: st.partnerId, partnerName: st.partnerName, endReason: reason } as any); },
       () => { playTurnSound(); },
       (count) => { setSpectatorCount(count); },
     );
@@ -422,7 +422,13 @@ export default function BattleArenaView({
                     {h.result === "win" ? <FaTrophy /> : h.result === "draw" ? <FaTriangleExclamation /> : <FaSkull />}
                   </div>
                   <div className="ba-history-info">
-                    <span className="ba-history-name">{h.result === "win" ? "Victoire" : h.result === "draw" ? "Match nul" : "Defaite"} vs <strong>{(h as any).opponentName || (h as any).opponent_name || "?"}</strong></span>
+                    <span className="ba-history-name">
+                      {h.result === "win"
+                        ? ((h as any).reason === "opponent_forfeit" ? "Victoire (abandon)" : "Victoire")
+                        : h.result === "draw"
+                        ? "Match nul (bug technique)"
+                        : "Defaite"} vs <strong>{(h as any).opponentName || (h as any).opponent_name || "?"}</strong>
+                    </span>
                     <span className="ba-history-time">{timeAgo((h as any).date || (h as any).created_at)}</span>
                   </div>
                 </div>

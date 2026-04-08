@@ -2702,7 +2702,7 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
           () => setBattleState((prev) => (prev as any).roomCode === code ? { ...prev, phase: "relaying" } as any : prev),
           (reason) => {
             setBattleState((prev) => (prev as any).roomCode === code ? { phase: "complete", roomCode: code, partnerId: (prev as any).partnerId || "", partnerName: (prev as any).partnerName || "", endReason: reason } : prev);
-            cleanupBattleFiles().catch(() => {});
+            writeStopTrigger().then(() => cleanupBattleFiles()).catch(() => {});
           },
           () => { playTurnSound(); },
           undefined, // spectator count handled in BattleArenaView
