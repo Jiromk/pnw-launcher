@@ -51,6 +51,25 @@ export async function writeStopTrigger(): Promise<void> {
 
 /* ==================== Cleanup ==================== */
 
+export async function saveBattleLog(log: {
+  roomCode: string;
+  myUserId: string;
+  partnerId: string;
+  partnerName: string;
+  result: string;
+  reason: string;
+  turns: number;
+  startedAt: string;
+  endedAt: string;
+}): Promise<void> {
+  try {
+    const path = await invoke<string>("cmd_battle_save_log", { data: JSON.stringify(log, null, 2) });
+    console.log("[Battle] Log saved to:", path);
+  } catch (e) {
+    console.warn("[Battle] Failed to save log:", e);
+  }
+}
+
 export async function cleanupBattleFiles(): Promise<void> {
   console.trace("[Battle] cleanupBattleFiles called from:");
   try { await invoke("cmd_battle_cleanup"); } catch {}

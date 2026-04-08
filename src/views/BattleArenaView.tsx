@@ -1,7 +1,7 @@
 /**
  * BattleArenaView.tsx — Tour de Combat (redesign)
  */
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   FaShieldHalved, FaGamepad, FaUserCheck, FaXmark, FaSpinner,
   FaTrophy, FaSkull, FaChartLine, FaClock,
@@ -13,7 +13,7 @@ import {
   generateRoomCode, writeBattleTrigger, writeStopTrigger, startRelay,
   cleanupBattleFiles, fullCleanup, isGameRunning,
   BATTLE_INVITE_TIMEOUT,
-  sendBattleInvite, sendBattleAccept, sendBattleDecline, sendBattleCancel, playTurnSound,
+  sendBattleInvite, sendBattleAccept, sendBattleDecline, sendBattleCancel, playTurnSound, saveBattleLog,
 } from "../battleRelay";
 import { supabase } from "../supabaseClient"; // kept for DM channel lookup only
 import { fetchPvpStats, fetchBattleHistory, recordBattleResult, type PvpStats, type BattleResultEntry } from "../leaderboard";
@@ -89,6 +89,8 @@ export default function BattleArenaView({
   const [errorPopup, setErrorPopup] = useState<string | null>(null);
   const [spectatorCount, setSpectatorCount] = useState(0);
   const [inviteTimer, setInviteTimer] = useState(0);
+  const battleStartedAtRef = useRef<string>("");
+  const turnCountRef = useRef(0);
 
   // Fetch stats from Supabase on mount
   useEffect(() => {
@@ -175,10 +177,17 @@ export default function BattleArenaView({
     sendBattleAccept(st.roomCode, st.partnerId, session.user.id, profile.display_name || profile.username);
     setBattleState({ ...st, phase: "waiting_game" });
     try { await writeBattleTrigger(Number(st.roomCode), st.partnerName, "client"); console.log("[Battle] Trigger written OK (client)"); } catch (e) { console.error("[Battle] writeBattleTrigger FAILED:", e); }
+    battleStartedAtRef.current = new Date().toISOString();
+    turnCountRef.current = 0;
     const cleanup = startRelay(st.roomCode, session.user.id,
       () => setBattleState((prev) => (prev as any).roomCode === st.roomCode ? { ...prev, phase: "relaying" } as any : prev),
-      (reason) => { setSpectatorCount(0); writeStopTrigger().then(() => cleanupBattleFiles()); setBattleState({ phase: "complete", roomCode: st.roomCode, partnerId: st.partnerId, partnerName: st.partnerName, endReason: reason } as any); },
-      () => { playTurnSound(); },
+      (reason) => {
+        const result = reason === "opponent_forfeit" ? "win" : reason === "opponent_crash" ? "draw" : "unknown";
+        saveBattleLog({ roomCode: st.roomCode, myUserId: session.user.id, partnerId: st.partnerId, partnerName: st.partnerName, result, reason: reason || "unknown", turns: turnCountRef.current, startedAt: battleStartedAtRef.current, endedAt: new Date().toISOString() });
+        setSpectatorCount(0); writeStopTrigger().then(() => cleanupBattleFiles());
+        setBattleState({ phase: "complete", roomCode: st.roomCode, partnerId: st.partnerId, partnerName: st.partnerName, endReason: reason } as any);
+      },
+      () => { turnCountRef.current++; playTurnSound(); },
       (count) => { setSpectatorCount(count); },
     );
     battleRelayCleanupRef.current = cleanup;

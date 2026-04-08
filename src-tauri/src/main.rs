@@ -31,6 +31,7 @@ use walkdir::WalkDir;
 use zip::ZipArchive;
 
 mod psdk_data2;
+mod battle_relay;
 
 /* ============== Modèles ============== */
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -138,6 +139,30 @@ fn app_local_dir() -> Result<PathBuf> {
     let base = dirs::data_local_dir().ok_or_else(|| anyhow!("no data_local_dir()"))?;
     Ok(base.join(APP_DIR_NAME))
 }
+/// Marque un fichier/dossier comme caché sur Windows (attrib +H).
+#[cfg(target_os = "windows")]
+fn set_hidden(path: &Path) {
+    use std::os::windows::process::CommandExt;
+    let _ = std::process::Command::new("attrib")
+        .arg("+H")
+        .arg(path.as_os_str())
+        .creation_flags(0x08000000) // CREATE_NO_WINDOW
+        .status();
+}
+#[cfg(not(target_os = "windows"))]
+fn set_hidden(_path: &Path) {}
+
+/// Crée le sous-dossier `sprite_cache/<sub>` et masque le dossier parent `sprite_cache` sur Windows.
+fn ensure_sprite_cache_dir(sub: &str) -> Result<PathBuf, String> {
+    let root = app_local_dir().map_err(errs)?.join("sprite_cache");
+    let dir = root.join(sub);
+    if !dir.exists() {
+        fs::create_dir_all(&dir).map_err(errs)?;
+        set_hidden(&root);
+    }
+    Ok(dir)
+}
+
 fn config_path() -> Result<PathBuf> {
     Ok(app_local_dir()?.join("config.json"))
 }
@@ -844,6 +869,7 @@ async fn cmd_gts_browse_all(
     game_id: u32,
     known_ids: Vec<u32>,
     last_max_id: u32,
+    extra_ids: Vec<u32>,
 ) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
         use std::sync::{Arc, Mutex};
@@ -855,7 +881,7 @@ async fn cmd_gts_browse_all(
             .map_err(errs)?;
 
         // Construire la liste d'IDs à vérifier
-        let all_ids: Vec<u32> = if !known_ids.is_empty() && last_max_id > 0 {
+        let mut all_ids: Vec<u32> = if !known_ids.is_empty() && last_max_id > 0 {
             // Mode incrémental : re-vérifier les IDs connus + scanner au-delà du max
             let new_scan_end = last_max_id + 3000; // marge pour les nouveaux dépôts
             let mut ids = known_ids.clone();
@@ -864,10 +890,8 @@ async fn cmd_gts_browse_all(
                     ids.push(id);
                 }
             }
-            ids.sort();
-            ids.dedup();
             eprintln!(
-                "[GTS browse] Mode incrémental — {} IDs connus + scan {}..{} = {} IDs total",
+                "[GTS browse] Mode incrémental — {} IDs connus + scan {}..{} = {} IDs",
                 known_ids.len(), last_max_id + 1, new_scan_end, ids.len()
             );
             ids
@@ -877,6 +901,14 @@ async fn cmd_gts_browse_all(
             eprintln!("[GTS browse] Mode complet — IDs 1 à {}", max_id);
             (1..=max_id).collect()
         };
+        // Toujours inclure les IDs supplémentaires (propre dépôt, extras launcher)
+        for &eid in &extra_ids {
+            if eid > 0 && !all_ids.contains(&eid) {
+                all_ids.push(eid);
+            }
+        }
+        all_ids.sort();
+        all_ids.dedup();
 
         let total = all_ids.len();
         let entries: Arc<Mutex<Vec<serde_json::Value>>> = Arc::new(Mutex::new(Vec::new()));
@@ -2016,6 +2048,37 @@ impl ZoneData {
     }
 }
 
+/// Lit le game_state.json et retourne le JSON brut pour le dashboard live.
+/// Lit le fichier .trade_evolutions.json (caché) écrit par le bridge du jeu.
+#[tauri::command]
+fn cmd_read_trade_evolutions() -> Result<Option<String>, String> {
+    let path = app_local_dir().map_err(errs)?.join(".trade_evolutions.json");
+    if !path.is_file() { return Ok(None); }
+    fs::read_to_string(&path).map(Some).map_err(errs)
+}
+
+/// Lit le game_state.json et retourne le JSON brut pour le dashboard live.
+/// Retourne None si le fichier est absent, inactif ou stale (> 10s).
+#[tauri::command]
+fn cmd_read_game_state() -> Option<serde_json::Value> {
+    let path = game_state_path()?;
+    let content = fs::read_to_string(&path).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&content).ok()?;
+    if v.get("active").and_then(|a| a.as_bool()) != Some(true) {
+        return None;
+    }
+    if let Some(ts) = v.get("timestamp").and_then(|t| t.as_u64()) {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        if now.saturating_sub(ts) > 10 {
+            return None;
+        }
+    }
+    Some(v)
+}
+
 /// Lit le game_state.json et construit le kind + details pour le Rich Presence
 /// Retourne (kind, details, state_override, small_text)
 fn read_game_state_for_presence(path: &Path, zones: Option<&ZoneData>) -> Option<(String, String, Option<String>, Option<String>)> {
@@ -2230,7 +2293,6 @@ fn cmd_launch_game(
 
             let mut last_state_override: Option<String> = None;
             let mut last_small_text: Option<String> = None;
-
             while game_running.load(Ordering::SeqCst) {
                 if let Some((kind, details, state_ov, sm_text)) = read_game_state_for_presence(&state_path, zone_data.as_ref()) {
                     // Ne mettre à jour que si l'état a changé
@@ -2681,20 +2743,22 @@ fn marshal_skip_value(data: &[u8], pos: &mut usize) -> Option<()> {
 
 #[tauri::command]
 /// Génère les variantes de clé VD à essayer pour un sprite.
-/// Ex: species=4, form=None → ["4", "004", "4.gif", "004.gif"]
-/// Ex: species=257, form=Some(1) → ["257_01", "257_01.gif"]
+/// Priorité GIF (animé) avant PNG.
+/// Ex: species=4, form=None → ["4.gif", "004.gif", "4", "004"]
+/// Ex: species=257, form=Some(1) → ["257_01.gif", "257_01", ...]
 fn vd_key_candidates(species_id: u32, form: Option<u32>) -> Vec<String> {
     let mut keys = Vec::new();
     match form {
         Some(f) if f > 0 => {
+            // GIF en priorité
+            keys.push(format!("{}_{:02}.gif", species_id, f));
+            if species_id < 1000 {
+                keys.push(format!("{:03}_{:02}.gif", species_id, f));
+            }
+            // PNG en fallback
             keys.push(format!("{}_{:02}", species_id, f));
             if species_id < 1000 {
                 keys.push(format!("{:03}_{:02}", species_id, f));
-            }
-            // Variantes avec extension .gif
-            let base_keys: Vec<String> = keys.clone();
-            for k in base_keys {
-                keys.push(format!("{}.gif", k));
             }
             // Forme _30 (alternate) en fallback
             keys.push(format!("{}_{:02}", species_id, 30 + f));
@@ -2703,13 +2767,15 @@ fn vd_key_candidates(species_id: u32, form: Option<u32>) -> Vec<String> {
             }
         }
         _ => {
+            // GIF en priorité
+            keys.push(format!("{}.gif", species_id));
+            if species_id < 1000 {
+                keys.push(format!("{:03}.gif", species_id));
+            }
+            // PNG en fallback
             keys.push(format!("{}", species_id));
             if species_id < 1000 {
                 keys.push(format!("{:03}", species_id));
-            }
-            let base_keys: Vec<String> = keys.clone();
-            for k in base_keys {
-                keys.push(format!("{}.gif", k));
             }
         }
     }
@@ -2758,23 +2824,37 @@ fn cmd_get_normal_sprite(species_id: u32, form: Option<u32>) -> Result<Option<St
     }
 
     let vd_path = game_dir.join("pokemonsdk").join("master").join("poke_front");
-    if !vd_path.is_file() {
-        return Ok(None);
+    if vd_path.is_file() {
+        if let Some((data, mime)) = vd_try_sprite(&vd_path, species_id, form) {
+            ensure_sprite_cache_dir("normal")?;
+            fs::write(&cache_path, &data).map_err(errs)?;
+
+            use base64::Engine;
+            let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+            return Ok(Some(format!("data:{};base64,{}", mime, b64)));
+        }
     }
 
-    let (data, mime) = match vd_try_sprite(&vd_path, species_id, form) {
-        Some(r) => r,
-        None => return Ok(None),
-    };
+    // Fallback: chercher dans les loose files de graphics/pokedex/pokefront/
+    let loose_dir = game_dir.join("graphics").join("pokedex").join("pokefront");
+    if loose_dir.is_dir() {
+        let candidates = normal_file_candidates(species_id, form);
+        for name in &candidates {
+            let file_path = loose_dir.join(name);
+            if file_path.is_file() {
+                let data = fs::read(&file_path).map_err(errs)?;
+                ensure_sprite_cache_dir("normal")?;
+                fs::write(&cache_path, &data).map_err(errs)?;
 
-    if !cache_dir.exists() {
-        fs::create_dir_all(&cache_dir).map_err(errs)?;
+                use base64::Engine;
+                let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                let mime = detect_sprite_mime(&data);
+                return Ok(Some(format!("data:{};base64,{}", mime, b64)));
+            }
+        }
     }
-    fs::write(&cache_path, &data).map_err(errs)?;
 
-    use base64::Engine;
-    let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
-    Ok(Some(format!("data:{};base64,{}", mime, b64)))
+    Ok(None)
 }
 
 #[tauri::command]
@@ -2808,14 +2888,122 @@ fn cmd_get_shiny_sprite(species_id: u32, form: Option<u32>) -> Result<Option<Str
         None => return Ok(None),
     };
 
-    if !cache_dir.exists() {
-        fs::create_dir_all(&cache_dir).map_err(errs)?;
-    }
+    ensure_sprite_cache_dir("shiny")?;
     fs::write(&cache_path, &data).map_err(errs)?;
 
     use base64::Engine;
     let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
     Ok(Some(format!("data:{};base64,{}", mime, b64)))
+}
+
+/// Génère les noms de fichiers candidats pour un sprite normal (loose files).
+fn normal_file_candidates(species_id: u32, form: Option<u32>) -> Vec<String> {
+    let mut keys = Vec::new();
+    match form {
+        Some(f) if f > 0 => {
+            keys.push(format!("{}_{:02}.gif", species_id, f));
+            if species_id < 1000 {
+                keys.push(format!("{:03}_{:02}.gif", species_id, f));
+            }
+            keys.push(format!("{}_{:02}.png", species_id, f));
+            if species_id < 1000 {
+                keys.push(format!("{:03}_{:02}.png", species_id, f));
+            }
+        }
+        _ => {}
+    }
+    keys.push(format!("{}.gif", species_id));
+    if species_id < 1000 {
+        keys.push(format!("{:03}.gif", species_id));
+    }
+    keys.push(format!("{}.png", species_id));
+    if species_id < 1000 {
+        keys.push(format!("{:03}.png", species_id));
+    }
+    keys
+}
+
+/// Génère les noms de fichiers candidats pour un sprite alt shiny (loose files, suffixe "a").
+fn alt_shiny_file_candidates(species_id: u32, form: Option<u32>) -> Vec<String> {
+    let mut keys = Vec::new();
+    match form {
+        Some(f) if f > 0 => {
+            // GIF en priorité
+            keys.push(format!("{}a_{:02}.gif", species_id, f));
+            if species_id < 1000 {
+                keys.push(format!("{:03}a_{:02}.gif", species_id, f));
+            }
+            keys.push(format!("{}a_{:02}.png", species_id, f));
+            if species_id < 1000 {
+                keys.push(format!("{:03}a_{:02}.png", species_id, f));
+            }
+        }
+        _ => {}
+    }
+    // Sans forme (fallback) — GIF en priorité
+    keys.push(format!("{}a.gif", species_id));
+    if species_id < 1000 {
+        keys.push(format!("{:03}a.gif", species_id));
+    }
+    keys.push(format!("{}a.png", species_id));
+    if species_id < 1000 {
+        keys.push(format!("{:03}a.png", species_id));
+    }
+    keys
+}
+
+/// Détecte le MIME d'un fichier sprite par ses magic bytes.
+fn detect_sprite_mime(data: &[u8]) -> &'static str {
+    if data.len() >= 4 && &data[..4] == b"\x89PNG" {
+        "image/png"
+    } else {
+        "image/gif"
+    }
+}
+
+#[tauri::command]
+fn cmd_get_alt_shiny_sprite(species_id: u32, form: Option<u32>) -> Result<Option<String>, String> {
+    let game_dir = current_install_dir()
+        .ok_or_else(|| "Dossier du jeu non défini".to_string())?;
+
+    let vd_key = match form {
+        Some(f) if f > 0 => format!("{}a_{:02}", species_id, f),
+        _ => format!("{}a", species_id),
+    };
+
+    let cache_dir = app_local_dir().map_err(errs)?.join("sprite_cache").join("alt_shiny");
+    let cache_path = cache_dir.join(format!("{}.dat", vd_key));
+
+    if cache_path.is_file() {
+        let data = fs::read(&cache_path).map_err(errs)?;
+        use base64::Engine;
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+        let mime = detect_sprite_mime(&data);
+        return Ok(Some(format!("data:{};base64,{}", mime, b64)));
+    }
+
+    // Chercher dans les loose files de graphics/pokedex/pokefrontshiny/
+    let loose_dir = game_dir.join("graphics").join("pokedex").join("pokefrontshiny");
+    if !loose_dir.is_dir() {
+        return Ok(None);
+    }
+
+    let candidates = alt_shiny_file_candidates(species_id, form);
+    for name in &candidates {
+        let file_path = loose_dir.join(name);
+        if file_path.is_file() {
+            let data = fs::read(&file_path).map_err(errs)?;
+            ensure_sprite_cache_dir("alt_shiny")?;
+            fs::write(&cache_path, &data).map_err(errs)?;
+
+            use base64::Engine;
+            let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+            let mime = detect_sprite_mime(&data);
+            return Ok(Some(format!("data:{};base64,{}", mime, b64)));
+        }
+    }
+
+    Ok(None)
 }
 
 /* ============== GTS Deposit & Save Write ============== */
@@ -2902,6 +3090,53 @@ fn cmd_gts_delete_extras(online_id: u32) -> Result<(), String> {
         fs::remove_file(&file_path).map_err(errs)?;
     }
     Ok(())
+}
+
+/// Liste tous les onlineId ayant un fichier extras (= dépôts launcher).
+#[tauri::command]
+fn cmd_gts_list_extras_ids() -> Result<Vec<u32>, String> {
+    let game_dir = current_install_dir()
+        .ok_or_else(|| "Dossier du jeu non défini".to_string())?;
+    let extras_dir = game_dir.join("Saves").join("gts_extras");
+    if !extras_dir.is_dir() {
+        return Ok(vec![]);
+    }
+    let mut ids = Vec::new();
+    for entry in fs::read_dir(&extras_dir).map_err(errs)? {
+        if let Ok(e) = entry {
+            if let Some(name) = e.path().file_stem().and_then(|s| s.to_str()) {
+                if let Ok(id) = name.parse::<u32>() {
+                    ids.push(id);
+                }
+            }
+        }
+    }
+    Ok(ids)
+}
+
+/// Sauvegarde le cache browse GTS sur disque (Saves/gts_browse_cache.json).
+#[tauri::command]
+fn cmd_gts_save_browse_cache(json_data: String) -> Result<(), String> {
+    let game_dir = current_install_dir()
+        .ok_or_else(|| "Dossier du jeu non défini".to_string())?;
+    let saves_dir = game_dir.join("Saves");
+    fs::create_dir_all(&saves_dir).map_err(errs)?;
+    let file_path = saves_dir.join("gts_browse_cache.json");
+    fs::write(&file_path, json_data.as_bytes()).map_err(errs)?;
+    Ok(())
+}
+
+/// Lit le cache browse GTS depuis le disque.
+#[tauri::command]
+fn cmd_gts_read_browse_cache() -> Result<Option<String>, String> {
+    let game_dir = current_install_dir()
+        .ok_or_else(|| "Dossier du jeu non défini".to_string())?;
+    let file_path = game_dir.join("Saves").join("gts_browse_cache.json");
+    if !file_path.is_file() {
+        return Ok(None);
+    }
+    let content = fs::read_to_string(&file_path).map_err(errs)?;
+    Ok(Some(content))
 }
 
 /// Ajoute une entrée à l'historique des échanges GTS.
@@ -3191,6 +3426,7 @@ fn main() {
             cmd_latest_save_blob,
             cmd_get_normal_sprite,
             cmd_get_shiny_sprite,
+            cmd_get_alt_shiny_sprite,
             cmd_is_game_running,
             cmd_write_save_blob,
             cmd_gts_upload_pokemon,
@@ -3203,8 +3439,18 @@ fn main() {
             cmd_gts_save_extras,
             cmd_gts_read_extras,
             cmd_gts_delete_extras,
+            cmd_gts_list_extras_ids,
+            cmd_gts_save_browse_cache,
+            cmd_gts_read_browse_cache,
             cmd_gts_append_history,
             cmd_gts_read_history,
+            cmd_read_trade_evolutions,
+            cmd_read_game_state,
+            battle_relay::cmd_battle_read_outbox,
+            battle_relay::cmd_battle_write_inbox,
+            battle_relay::cmd_battle_write_trigger,
+            battle_relay::cmd_battle_cleanup,
+            battle_relay::cmd_battle_save_log,
         ])
         .run(tauri::generate_context!())
         .expect("erreur au démarrage");
