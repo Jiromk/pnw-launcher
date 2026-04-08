@@ -68,8 +68,11 @@ fn battle_logs_dir() -> Result<PathBuf, String> {
     Ok(dir)
 }
 
+/// Nombre max de logs conservés. Les plus anciens sont supprimés.
+const MAX_BATTLE_LOGS: usize = 100;
+
 /// Sauvegarde un log de combat en JSON dans `battle_logs/`.
-/// Le fichier est nommé `{date}_{roomCode}.json`.
+/// Supprime automatiquement les plus anciens si > MAX_BATTLE_LOGS.
 #[tauri::command]
 pub fn cmd_battle_save_log(data: String) -> Result<String, String> {
     let dir = battle_logs_dir()?;
@@ -77,6 +80,21 @@ pub fn cmd_battle_save_log(data: String) -> Result<String, String> {
     let filename = format!("{}.json", now.format("%Y-%m-%d_%H-%M-%S"));
     let path = dir.join(&filename);
     fs::write(&path, &data).map_err(|e| e.to_string())?;
+
+    // Cleanup : garder seulement les MAX_BATTLE_LOGS plus récents
+    if let Ok(entries) = fs::read_dir(&dir) {
+        let mut files: Vec<_> = entries
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().map_or(false, |ext| ext == "json"))
+            .collect();
+        if files.len() > MAX_BATTLE_LOGS {
+            files.sort_by_key(|e| e.file_name());
+            for old in &files[..files.len() - MAX_BATTLE_LOGS] {
+                let _ = fs::remove_file(old.path());
+            }
+        }
+    }
+
     Ok(path.to_string_lossy().into_owned())
 }
 

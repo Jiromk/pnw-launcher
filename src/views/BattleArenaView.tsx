@@ -365,6 +365,11 @@ export default function BattleArenaView({
                       ? <>Probleme technique de {battleState.partnerName}</>
                       : <>vs <strong>{battleState.partnerName}</strong></>}
                   </div>
+                  {(battleState as any).endReason === "opponent_crash" && (
+                    <div style={{ fontSize: ".65rem", color: "rgba(255,255,255,.3)", marginTop: 2 }}>
+                      Logs : %LOCALAPPDATA%\PNW Launcher\battle_logs\
+                    </div>
+                  )}
                 </div>
               </div>
               <button className="ba-btn ba-btn--primary" onClick={closeBattle}>Fermer</button>
