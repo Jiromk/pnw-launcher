@@ -242,12 +242,13 @@ export function startRelay(
   let waitingForServer = false;
   let initialDataSent = false; // envoyer player_data UNE SEULE FOIS
   let lastResolvedTurn = 0; // guard: ignorer les battle_command pour les tours deja resolus
-  const turnLog: { turn: number; sentAt: string; resolvedAt: string; rngCount: number; myActions: any; opponentActions: any }[] = [];
+  const turnLog: { turn: number; sentAt: string; resolvedAt: string; rngCount: number; rngSeeds?: number[]; myActions: any; opponentActions: any; waitTimeMs?: number }[] = [];
   const eventLog: { time: string; event: string; data?: any }[] = [];
   // Exposer les logs pour saveBattleLog
   _currentBattleTurnLog = turnLog;
   _currentBattleEventLog = eventLog;
 
+  eventLog.push({ time: new Date().toISOString(), event: "relay_start", data: { roomCode, userId: myUserId, serverUrl: BATTLE_SERVER_URL } });
   console.log("[BattleRelay] Starting relay for room", roomCode, "via", BATTLE_SERVER_URL);
 
   // ─── Connect to battle server ───
@@ -261,22 +262,41 @@ export function startRelay(
 
   socket.on("connect", () => {
     console.log("[BattleRelay] Connected to server:", socket.id);
+    eventLog.push({ time: new Date().toISOString(), event: "socket_connect", data: { socketId: socket.id } });
     socket.emit("join_room", { roomCode, userId: myUserId });
   });
 
   socket.on("connect_error", (err) => {
     console.error("[BattleRelay] Connection error:", err.message);
+    eventLog.push({ time: new Date().toISOString(), event: "socket_error", data: { error: err.message } });
+  });
+
+  socket.on("disconnect", (reason) => {
+    eventLog.push({ time: new Date().toISOString(), event: "socket_disconnect", data: { reason } });
+  });
+
+  socket.on("reconnect", (attempt: number) => {
+    eventLog.push({ time: new Date().toISOString(), event: "socket_reconnect", data: { attempt } });
   });
 
   // ─── Receive opponent initial data ───
   socket.on("opponent_data", async (msg: { fullPlayerData: any }) => {
     console.log("[BattleRelay] Received opponent initial data");
+    // Log les donnees d'equipe adverses
+    const opParty = msg.fullPlayerData?.party;
+    eventLog.push({ time: new Date().toISOString(), event: "opponent_data_received", data: {
+      opponentName: msg.fullPlayerData?.name,
+      opponentId: msg.fullPlayerData?.id,
+      partySize: Array.isArray(opParty) ? opParty.length : 0,
+      party: Array.isArray(opParty) ? opParty.map((p: any) => ({ id: p?.id, level: p?.level, name: p?.given_name })) : [],
+    }});
     try {
       await invoke("cmd_battle_write_inbox", {
         data: JSON.stringify([msg.fullPlayerData]),
       });
     } catch (e) {
       console.error("[BattleRelay] Write inbox error:", e);
+      eventLog.push({ time: new Date().toISOString(), event: "error_write_inbox", data: { context: "opponent_data", error: String(e) } });
     }
   });
 
@@ -287,13 +307,16 @@ export function startRelay(
     lastResolvedTurn = msg.turn;
 
     // Log detaille du tour
+    const rngSeeds = msg.rng.slice(0, 4).map((v) => Math.floor(v * 2147483647));
     const existingTurn = turnLog.find((t) => t.turn === msg.turn);
     if (existingTurn) {
       existingTurn.resolvedAt = new Date().toISOString();
       existingTurn.rngCount = msg.rng.length;
+      existingTurn.rngSeeds = rngSeeds;
       existingTurn.opponentActions = msg.opponentData?.state;
+      existingTurn.waitTimeMs = existingTurn.sentAt ? new Date().getTime() - new Date(existingTurn.sentAt).getTime() : 0;
     } else {
-      turnLog.push({ turn: msg.turn, sentAt: "", resolvedAt: new Date().toISOString(), rngCount: msg.rng.length, myActions: null, opponentActions: msg.opponentData?.state });
+      turnLog.push({ turn: msg.turn, sentAt: "", resolvedAt: new Date().toISOString(), rngCount: msg.rng.length, rngSeeds, myActions: null, opponentActions: msg.opponentData?.state, waitTimeMs: 0 } as any);
     }
 
     const opponentData = msg.opponentData;
@@ -307,6 +330,7 @@ export function startRelay(
       });
     } catch (e) {
       console.error("[BattleRelay] Write inbox error:", e);
+      eventLog.push({ time: new Date().toISOString(), event: "error_write_inbox", data: { context: "turn_resolved", turn: msg.turn, error: String(e) } });
     }
     onTurnReady?.();
   });
@@ -315,7 +339,7 @@ export function startRelay(
   socket.on("switch_resolved", async (msg: { opponentData: any; opponentSwitchInfo: any }) => {
     console.log("[BattleRelay] Switch resolved");
     waitingForServer = false;
-    eventLog.push({ time: new Date().toISOString(), event: "switch_resolved", data: { opponentSwitchInfo: msg.opponentSwitchInfo } });
+    eventLog.push({ time: new Date().toISOString(), event: "switch_resolved", data: { opponentSwitchInfo: msg.opponentSwitchInfo, hasOpponentData: !!msg.opponentData } });
 
     try {
       await invoke("cmd_battle_write_inbox", {
@@ -323,6 +347,7 @@ export function startRelay(
       });
     } catch (e) {
       console.error("[BattleRelay] Write inbox error:", e);
+      eventLog.push({ time: new Date().toISOString(), event: "error_write_inbox", data: { context: "switch_resolved", error: String(e) } });
     }
     onTurnReady?.();
   });
@@ -402,6 +427,7 @@ export function startRelay(
               const turn = state[2];
               // Guard: ignorer les re-envois de tours deja resolus (evite de bloquer les switch)
               if (typeof turn === "number" && turn <= lastResolvedTurn) {
+                eventLog.push({ time: new Date().toISOString(), event: "turn_dedup_skipped", data: { turn, lastResolvedTurn } });
                 lastSentHash = hash;
                 pendingOutbox = null;
                 await sleep(POLL_INTERVAL);
@@ -436,6 +462,12 @@ export function startRelay(
               if (playerData.party && playerData.party.length > 0) {
                 initialDataSent = true;
                 console.log("[BattleRelay] Sending initial player data to server");
+                eventLog.push({ time: new Date().toISOString(), event: "initial_data_sent", data: {
+                  name: playerData.name,
+                  trainerId: playerData.id,
+                  partySize: playerData.party.length,
+                  party: playerData.party.map((p: any) => ({ id: p?.id, level: p?.level, name: p?.given_name })),
+                }});
                 socket.emit("player_data", {
                   roomCode,
                   userId: myUserId,
@@ -450,6 +482,7 @@ export function startRelay(
               pendingOutbox = null;
             }
           } else if (messageType === "disconnect") {
+            eventLog.push({ time: new Date().toISOString(), event: "game_disconnect", data: { messageType } });
             if (!disconnectFired) {
               disconnectFired = true;
               running = false;
@@ -461,6 +494,7 @@ export function startRelay(
             // Le jeu envoie le resultat (win/loss) apres le combat
             const result = playerData?.result;
             console.log("[BattleRelay] Battle result from game:", result);
+            eventLog.push({ time: new Date().toISOString(), event: "battle_result_from_game", data: { result } });
             socket.emit("battle_end", { roomCode, userId: myUserId, result });
             pendingOutbox = null;
             // Stopper le relay et notifier le launcher
@@ -478,7 +512,9 @@ export function startRelay(
             onBattleStarted?.();
           }
         }
-      } catch {}
+      } catch (pollErr) {
+        eventLog.push({ time: new Date().toISOString(), event: "poll_error", data: { error: String(pollErr) } });
+      }
       if (running) await sleep(POLL_INTERVAL);
     }
   };
@@ -491,6 +527,7 @@ export function startRelay(
     const alive = await isGameRunning();
     if (!alive && !disconnectFired) {
       console.log("[BattleRelay] Game process died — crash detected");
+      eventLog.push({ time: new Date().toISOString(), event: "game_crash_detected" });
       disconnectFired = true;
       running = false;
       socket.emit("leave_room", { roomCode, userId: myUserId, reason: "crash" });
