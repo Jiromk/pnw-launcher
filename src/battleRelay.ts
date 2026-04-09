@@ -61,6 +61,8 @@ export async function saveBattleLog(log: {
   turns: number;
   startedAt: string;
   endedAt: string;
+  turnLog?: { turn: number; sentAt: string; resolvedAt: string; rngCount: number; myActions: any; opponentActions: any }[];
+  eventLog?: { time: string; event: string; data?: any }[];
 }): Promise<void> {
   try {
     const path = await invoke<string>("cmd_battle_save_log", { data: JSON.stringify(log, null, 2) });
@@ -181,6 +183,10 @@ export function sendBattleCancel(roomCode: string, toId: string, userId: string)
 
 let battleSocket: Socket | null = null;
 
+/** Logs detailles du combat en cours — accessibles pour saveBattleLog */
+export let _currentBattleTurnLog: any[] = [];
+export let _currentBattleEventLog: any[] = [];
+
 /**
  * Demarre le relay entre le jeu local et le serveur de combat.
  *
@@ -236,6 +242,11 @@ export function startRelay(
   let waitingForServer = false;
   let initialDataSent = false; // envoyer player_data UNE SEULE FOIS
   let lastResolvedTurn = 0; // guard: ignorer les battle_command pour les tours deja resolus
+  const turnLog: { turn: number; sentAt: string; resolvedAt: string; rngCount: number; myActions: any; opponentActions: any }[] = [];
+  const eventLog: { time: string; event: string; data?: any }[] = [];
+  // Exposer les logs pour saveBattleLog
+  _currentBattleTurnLog = turnLog;
+  _currentBattleEventLog = eventLog;
 
   console.log("[BattleRelay] Starting relay for room", roomCode, "via", BATTLE_SERVER_URL);
 
@@ -275,6 +286,16 @@ export function startRelay(
     waitingForServer = false;
     lastResolvedTurn = msg.turn;
 
+    // Log detaille du tour
+    const existingTurn = turnLog.find((t) => t.turn === msg.turn);
+    if (existingTurn) {
+      existingTurn.resolvedAt = new Date().toISOString();
+      existingTurn.rngCount = msg.rng.length;
+      existingTurn.opponentActions = msg.opponentData?.state;
+    } else {
+      turnLog.push({ turn: msg.turn, sentAt: "", resolvedAt: new Date().toISOString(), rngCount: msg.rng.length, myActions: null, opponentActions: msg.opponentData?.state });
+    }
+
     const opponentData = msg.opponentData;
     if (opponentData) {
       opponentData.vms_rng = msg.rng;
@@ -294,6 +315,7 @@ export function startRelay(
   socket.on("switch_resolved", async (msg: { opponentData: any; opponentSwitchInfo: any }) => {
     console.log("[BattleRelay] Switch resolved");
     waitingForServer = false;
+    eventLog.push({ time: new Date().toISOString(), event: "switch_resolved", data: { opponentSwitchInfo: msg.opponentSwitchInfo } });
 
     try {
       await invoke("cmd_battle_write_inbox", {
@@ -314,6 +336,7 @@ export function startRelay(
   // ─── Battle ended by opponent (result from their game) ───
   socket.on("battle_ended", (data: { roomCode?: string; result?: string; reason?: string }) => {
     console.log("[BattleRelay] Battle ended by opponent, our result:", data.result);
+    eventLog.push({ time: new Date().toISOString(), event: "battle_ended", data });
     if (!disconnectFired) {
       disconnectFired = true;
       running = false;
@@ -326,6 +349,7 @@ export function startRelay(
   socket.on("player_left", (data: { userId?: string; reason?: string }) => {
     const reason = data?.reason === "crash" ? "opponent_crash" : "opponent_forfeit";
     console.log("[BattleRelay] Opponent left, reason:", reason);
+    eventLog.push({ time: new Date().toISOString(), event: "player_left", data: { reason } });
     if (!disconnectFired) {
       disconnectFired = true;
       running = false;
@@ -384,6 +408,7 @@ export function startRelay(
                 continue;
               }
               console.log("[BattleRelay] Sending turn", turn, "actions to server");
+              turnLog.push({ turn, sentAt: new Date().toISOString(), resolvedAt: "", rngCount: 0, myActions: state[3], opponentActions: null });
               socket.emit("turn_actions", {
                 roomCode,
                 userId: myUserId,
@@ -396,6 +421,7 @@ export function startRelay(
             } else if (stateType === "battle_switch" || stateType === ":battle_switch") {
               // Forced switch — send to server
               console.log("[BattleRelay] Sending forced switch to server");
+              eventLog.push({ time: new Date().toISOString(), event: "switch_sent", data: { switchInfo: state[2] } });
               socket.emit("switch_data", {
                 roomCode,
                 userId: myUserId,

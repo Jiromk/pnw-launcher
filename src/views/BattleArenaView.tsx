@@ -14,6 +14,7 @@ import {
   cleanupBattleFiles, fullCleanup, isGameRunning,
   BATTLE_INVITE_TIMEOUT,
   sendBattleInvite, sendBattleAccept, sendBattleDecline, sendBattleCancel, playTurnSound, saveBattleLog,
+  _currentBattleTurnLog, _currentBattleEventLog,
 } from "../battleRelay";
 import { supabase } from "../supabaseClient"; // kept for DM channel lookup only
 import { fetchPvpStats, fetchBattleHistory, recordBattleResult, type PvpStats, type BattleResultEntry } from "../leaderboard";
@@ -186,7 +187,7 @@ export default function BattleArenaView({
       () => setBattleState((prev) => (prev as any).roomCode === st.roomCode ? { ...prev, phase: "relaying" } as any : prev),
       (reason) => {
         const result = reason === "opponent_forfeit" ? "win" : reason === "opponent_crash" ? "draw" : reason === "game_end" ? (battleResultRef.current || "unknown") : "unknown";
-        saveBattleLog({ roomCode: st.roomCode, myUserId: session.user.id, partnerId: st.partnerId, partnerName: st.partnerName, result, reason: reason || "unknown", turns: turnCountRef.current, startedAt: battleStartedAtRef.current, endedAt: new Date().toISOString() });
+        saveBattleLog({ roomCode: st.roomCode, myUserId: session.user.id, partnerId: st.partnerId, partnerName: st.partnerName, result, reason: reason || "unknown", turns: turnCountRef.current, startedAt: battleStartedAtRef.current, endedAt: new Date().toISOString(), turnLog: [..._currentBattleTurnLog], eventLog: [..._currentBattleEventLog] });
         setSpectatorCount(0); writeStopTrigger().then(() => cleanupBattleFiles());
         setBattleState({ phase: "complete", roomCode: st.roomCode, partnerId: st.partnerId, partnerName: st.partnerName, endReason: reason, battleResult: result } as any);
       },
