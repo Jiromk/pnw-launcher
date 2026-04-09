@@ -89,6 +89,7 @@ export async function fullCleanup(relayCleanupRef: React.MutableRefObject<(() =>
 /* ==================== Lobby (invite system via Socket.io) ==================== */
 
 let lobbySocket: Socket | null = null;
+let lobbyUserId: string | null = null;
 
 export interface LobbyCallbacks {
   onInvite: (payload: {
@@ -102,10 +103,29 @@ export interface LobbyCallbacks {
 
 /**
  * Connexion persistante au serveur Railway pour le systeme d'invitation.
+ * Reutilise le socket existant si deja connecte avec le meme userId.
  * Retourne une cleanup function.
  */
 export function connectLobby(userId: string, callbacks: LobbyCallbacks): () => void {
+  // Reutiliser le socket existant si deja connecte avec le meme userId
+  if (lobbySocket && lobbyUserId === userId && lobbySocket.connected) {
+    console.log("[BattleLobby] Reusing existing connection for", userId);
+    // Mettre a jour les callbacks (les listeners precedents sont remplaces)
+    lobbySocket.removeAllListeners("battle_invite");
+    lobbySocket.removeAllListeners("battle_accepted");
+    lobbySocket.removeAllListeners("battle_declined");
+    lobbySocket.removeAllListeners("battle_cancelled");
+    lobbySocket.on("battle_invite", (payload) => { callbacks.onInvite(payload); });
+    lobbySocket.on("battle_accepted", (payload) => { callbacks.onAccepted(payload); });
+    lobbySocket.on("battle_declined", (payload) => { callbacks.onDeclined(payload); });
+    lobbySocket.on("battle_cancelled", (payload) => { callbacks.onCancelled(payload); });
+    return () => {
+      // Ne PAS deconnecter — le socket est partage et persistant
+    };
+  }
+
   if (lobbySocket) { lobbySocket.disconnect(); lobbySocket = null; }
+  lobbyUserId = userId;
 
   const socket = io(BATTLE_SERVER_URL, {
     transports: ["websocket", "polling"],
@@ -146,13 +166,13 @@ export function connectLobby(userId: string, callbacks: LobbyCallbacks): () => v
   });
 
   return () => {
-    socket.disconnect();
-    if (lobbySocket === socket) lobbySocket = null;
+    // Ne PAS deconnecter sur cleanup React — garder la connexion persistante
+    // Seul disconnectLobby() deconnecte vraiment (quand on quitte le chat)
   };
 }
 
 export function disconnectLobby(): void {
-  if (lobbySocket) { lobbySocket.disconnect(); lobbySocket = null; }
+  if (lobbySocket) { lobbySocket.disconnect(); lobbySocket = null; lobbyUserId = null; }
 }
 
 export function sendBattleInvite(payload: {
