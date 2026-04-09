@@ -2709,7 +2709,7 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
             setBattleState((prev2) => (prev2 as any).roomCode === code ? { phase: "complete", roomCode: code, partnerId: (prev2 as any).partnerId || "", partnerName: (prev2 as any).partnerName || "", endReason: reason, battleResult: result } : prev2);
             writeStopTrigger().then(() => cleanupBattleFiles()).catch(() => {});
           },
-          () => { playTurnSound(); },
+          undefined, // son de tour gere par le jeu
           undefined, // spectator count handled in BattleArenaView
           (result) => { battleResultRef.current = result; },
         );

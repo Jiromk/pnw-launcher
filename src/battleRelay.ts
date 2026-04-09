@@ -235,6 +235,7 @@ export function startRelay(
   let lastSentHash = "";
   let waitingForServer = false;
   let initialDataSent = false; // envoyer player_data UNE SEULE FOIS
+  let lastResolvedTurn = 0; // guard: ignorer les battle_command pour les tours deja resolus
 
   console.log("[BattleRelay] Starting relay for room", roomCode, "via", BATTLE_SERVER_URL);
 
@@ -272,6 +273,7 @@ export function startRelay(
   socket.on("turn_resolved", async (msg: { turn: number; opponentData: any; rng: number[] }) => {
     console.log("[BattleRelay] Turn", msg.turn, "resolved —", msg.rng.length, "RNG values");
     waitingForServer = false;
+    lastResolvedTurn = msg.turn;
 
     const opponentData = msg.opponentData;
     if (opponentData) {
@@ -374,6 +376,13 @@ export function startRelay(
             if (stateType === "battle_command" || stateType === ":battle_command") {
               // Turn actions — send to server for synchronized resolution
               const turn = state[2];
+              // Guard: ignorer les re-envois de tours deja resolus (evite de bloquer les switch)
+              if (typeof turn === "number" && turn <= lastResolvedTurn) {
+                lastSentHash = hash;
+                pendingOutbox = null;
+                await sleep(POLL_INTERVAL);
+                continue;
+              }
               console.log("[BattleRelay] Sending turn", turn, "actions to server");
               socket.emit("turn_actions", {
                 roomCode,

@@ -190,7 +190,7 @@ export default function BattleArenaView({
         setSpectatorCount(0); writeStopTrigger().then(() => cleanupBattleFiles());
         setBattleState({ phase: "complete", roomCode: st.roomCode, partnerId: st.partnerId, partnerName: st.partnerName, endReason: reason, battleResult: result } as any);
       },
-      () => { turnCountRef.current++; playTurnSound(); },
+      () => { turnCountRef.current++; },
       (count) => { setSpectatorCount(count); },
       (result) => { battleResultRef.current = result; },
     );
