@@ -31,7 +31,7 @@ import {
   togglePinMessage, fetchPinnedMessages,
 } from "../chatAuth";
 import type { ChatChannel, ChatMessage, ChatProfile, ChatMute, ChatBan, ChatFriend, PlayerProfile, GameLiveState, GameLivePlayer, GameActivityShareData, TradeState, TradeSelection, TradeSelectionPreview, TradeMessageData, BattleRoomState } from "../types";
-import { generateRoomCode, writeBattleTrigger, writeStopTrigger, startRelay, cleanupBattleFiles, fullCleanup, isGameRunning, BATTLE_INVITE_TIMEOUT, connectLobby, sendBattleInvite, sendBattleCancel, playTurnSound } from "../battleRelay";
+import { generateRoomCode, writeBattleTrigger, writeStopTrigger, startRelay, cleanupBattleFiles, fullCleanup, isGameRunning, BATTLE_INVITE_TIMEOUT, connectLobby, sendBattleInvite, sendBattleCancel, playTurnSound, saveBattleLog } from "../battleRelay";
 import BattleArenaView from "./BattleArenaView";
 import { TRADE_PREFIX, generateTradeId, validateIncomingBytes, extractAndEncode, executeTradeLocally, buildTradeMessage, parseTradeMessage, TRADE_PENDING_TIMEOUT, TRADE_SELECTING_TIMEOUT, TRADE_CONFIRMING_TIMEOUT, TRADE_EXECUTING_TIMEOUT } from "../tradeP2P";
 import { loadSaveForEdit, extractPokemonFromBox, encodePokemonForGts } from "../saveWriter";
@@ -1548,6 +1548,7 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
   const battleStateRef = useRef<BattleRoomState>({ phase: "idle" });
   const battleTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const battleRelayCleanupRef = useRef<(() => void) | null>(null);
+  const battleResultRef = useRef<string>("");
   const [showTradeBoxes, setShowTradeBoxes] = useState(false);
   const [showTradeSwapAnim, setShowTradeSwapAnim] = useState(false);
   const [tradeSwapInfo, setTradeSwapInfo] = useState<{ mySpriteUrl: string | null; myName: string; myShiny: boolean; myAltShiny: boolean; theirSpriteUrl: string | null; theirName: string; theirShiny: boolean; theirAltShiny: boolean; boxName: string | null } | null>(null);
@@ -2697,15 +2698,20 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
         if (battleRelayCleanupRef.current) { battleRelayCleanupRef.current(); battleRelayCleanupRef.current = null; }
         await cleanupBattleFiles();
         try { await writeBattleTrigger(Number(code), partnerName, "host"); } catch (e) { console.error("[Battle] writeBattleTrigger error:", e); }
+        battleResultRef.current = "";
         const relayCleanup = startRelay(
           code, session?.user?.id || "",
           () => setBattleState((prev) => (prev as any).roomCode === code ? { ...prev, phase: "relaying" } as any : prev),
           (reason) => {
-            setBattleState((prev) => (prev as any).roomCode === code ? { phase: "complete", roomCode: code, partnerId: (prev as any).partnerId || "", partnerName: (prev as any).partnerName || "", endReason: reason } : prev);
+            const prev = battleStateRef.current;
+            const result = reason === "opponent_forfeit" ? "win" : reason === "opponent_crash" ? "draw" : reason === "game_end" ? (battleResultRef.current || "unknown") : "unknown";
+            saveBattleLog({ roomCode: code, myUserId: session?.user?.id || "", partnerId: (prev as any).partnerId || "", partnerName: (prev as any).partnerName || partnerName, result, reason: reason || "unknown", turns: 0, startedAt: new Date().toISOString(), endedAt: new Date().toISOString() });
+            setBattleState((prev2) => (prev2 as any).roomCode === code ? { phase: "complete", roomCode: code, partnerId: (prev2 as any).partnerId || "", partnerName: (prev2 as any).partnerName || "", endReason: reason, battleResult: result } : prev2);
             writeStopTrigger().then(() => cleanupBattleFiles()).catch(() => {});
           },
           () => { playTurnSound(); },
           undefined, // spectator count handled in BattleArenaView
+          (result) => { battleResultRef.current = result; },
         );
         battleRelayCleanupRef.current = relayCleanup;
       },

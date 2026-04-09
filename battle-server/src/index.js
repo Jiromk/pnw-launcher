@@ -14,7 +14,8 @@ const http = require("http");
 const { Server } = require("socket.io");
 
 const PORT = process.env.PORT || 3001;
-const RNG_VALUES_PER_TURN = 200; // doit couvrir TOUS les rand() d'un tour (multi-hit, abilities, weather, etc.)
+const RNG_VALUES_PER_TURN = 300; // doit couvrir TOUS les rand() d'un tour (multi-hit, abilities, weather, etc.)
+const SWITCH_TIMEOUT_MS = 15000; // timeout si un seul joueur envoie ses switch forces
 
 // ==================== Lobby (user -> sockets) ====================
 
@@ -235,6 +236,8 @@ io.on("connection", (socket) => {
       }
 
       room.turnData.clear();
+      room.switchData.clear(); // Nettoyer les switch stale du tour precedent
+      if (room._switchTimeout) { clearTimeout(room._switchTimeout); room._switchTimeout = null; }
       console.log(`[Room ${roomCode}] Tour ${turn} resolu (${rng.length} RNG, ${room.spectators.size} spectateurs)`);
     }
   });
@@ -245,27 +248,42 @@ io.on("connection", (socket) => {
     if (!room) return;
 
     room.switchData.set(userId, { switchInfo, fullData: fullPlayerData });
-    console.log(`[Room ${roomCode}] Switch forces de ${userId}`);
+    console.log(`[Room ${roomCode}] Switch forces de ${userId} (ack vide: ${switchInfo === null || (Array.isArray(switchInfo) && switchInfo.length === 0)})`);
 
-    // Les deux ont soumis → echanger
-    if (room.switchData.size >= 2) {
+    // Fonction de resolution des switches
+    const resolveSwitch = () => {
       const entries = [...room.switchData.entries()];
 
       for (const [uid] of entries) {
         const otherEntry = entries.find(([id]) => id !== uid);
-        if (!otherEntry) continue;
-
         const player = room.players.get(uid);
         if (player) {
           io.to(player.socketId).emit("switch_resolved", {
-            opponentData: otherEntry[1].fullData,
-            opponentSwitchInfo: otherEntry[1].switchInfo,
+            opponentData: otherEntry ? otherEntry[1].fullData : fullPlayerData,
+            opponentSwitchInfo: otherEntry ? otherEntry[1].switchInfo : null,
           });
         }
       }
 
       room.switchData.clear();
-      console.log(`[Room ${roomCode}] Switches resolus`);
+      if (room._switchTimeout) { clearTimeout(room._switchTimeout); room._switchTimeout = null; }
+      console.log(`[Room ${roomCode}] Switches resolus (${entries.length} joueurs)`);
+    };
+
+    // Les deux ont soumis → echanger immediatement
+    if (room.switchData.size >= 2) {
+      resolveSwitch();
+    } else {
+      // Timeout de securite : si un seul joueur soumet dans les 15s, resoudre quand meme
+      if (!room._switchTimeout) {
+        room._switchTimeout = setTimeout(() => {
+          if (room.switchData.size >= 1) {
+            console.warn(`[Room ${roomCode}] Switch timeout — resolution avec ${room.switchData.size} joueur(s)`);
+            resolveSwitch();
+          }
+          room._switchTimeout = null;
+        }, SWITCH_TIMEOUT_MS);
+      }
     }
   });
 

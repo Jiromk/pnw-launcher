@@ -19,6 +19,7 @@ export type TeamMember = {
   nickname?: string | null;
   speciesName?: string | null;
   isShiny?: boolean | null;
+  isAltShiny?: boolean | null;
   gender?: 0 | 1 | 2 | undefined; // 0=♂, 1=♀, 2=sans genre
   iconPath?: string | null;
   ivHp?: number;
@@ -145,9 +146,105 @@ export type ChatBlock = {
 
 export type GtsShareData = {
   onlineId: string | number;
-  deposited: { name: string; sprite: string; level: number; shiny: boolean; nature: string; gender: number };
+  deposited: { name: string; sprite: string; level: number; shiny: boolean; altShiny: boolean; nature: string; gender: number };
   wanted: { name: string; sprite: string; levelMin: number; levelMax: number; gender: number } | null;
   trainer: string;
+};
+
+export type GameActivitySharePartyMember = {
+  species: string; speciesId: number; level: number; form: number; shiny: boolean; altShiny: boolean;
+  nickname?: string | null;
+  gender?: number | null;
+  nature?: number | null;
+  ability?: number | null;
+  itemHolding?: number | null;
+  exp?: number | null;
+  moves?: number[];
+  ivHp?: number | null; ivAtk?: number | null; ivDfe?: number | null;
+  ivSpd?: number | null; ivAts?: number | null; ivDfs?: number | null;
+};
+
+export type GameActivityShareData = {
+  targetUserId: string;
+  targetName: string;
+  targetAvatar: string | null;
+  mapName: string;
+  inBattle: boolean;
+  party: GameActivitySharePartyMember[];
+  battleAlly?: { species: string; speciesId: number; level: number; shiny?: boolean; altShiny?: boolean; hp?: number; max_hp?: number } | null;
+  battleFoes?: { species: string; speciesId: number; level: number; shiny?: boolean; altShiny?: boolean; hp: number; max_hp: number }[];
+  timestamp: number;
+};
+
+/* ==================== Game Live Dashboard types ==================== */
+
+export type GameLivePartyMember = {
+  name: string;
+  species: string;
+  species_id?: number;
+  form?: number;
+  level: number;
+  hp: number;
+  max_hp: number;
+  shiny: boolean;
+  alt_shiny?: boolean;
+  gender?: number;
+  nature?: number | null;
+  ability?: number | null;
+  ability_name?: string | null;
+  item?: number;
+  exp?: number;
+  atk?: number;
+  dfe?: number;
+  spd?: number;
+  ats?: number;
+  dfs?: number;
+  iv_hp?: number | null;
+  iv_atk?: number | null;
+  iv_dfe?: number | null;
+  iv_spd?: number | null;
+  iv_ats?: number | null;
+  iv_dfs?: number | null;
+  moves?: number[];
+};
+
+export type GameLiveState = {
+  active: boolean;
+  timestamp: number;
+  trainer_name?: string;
+  play_time?: number;
+  money?: number;
+  badge_count?: number;
+  party_size?: number;
+  party?: GameLivePartyMember[];
+  map_name?: string;
+  in_battle?: boolean;
+  is_trainer_battle?: boolean;
+  trainer_battle_names?: string[];
+  trainer_battle_classes?: string[];
+  battle_ally?: { name: string; species: string; species_id?: number; form?: number; level: number; hp?: number; max_hp?: number; shiny?: boolean; alt_shiny?: boolean };
+  battle_foes?: GameLivePartyMember[];
+  battle_turn?: number;
+  vms_connected?: boolean;
+  vms_cluster?: number;
+  vms_player_count?: number;
+};
+
+export type GameLivePlayer = {
+  userId: string;
+  displayName: string;
+  avatarUrl: string | null;
+  roles: string[];
+  /** Full game state — only available for our own user (local polling). Null for other players (lightweight Presence). */
+  gameState?: GameLiveState | null;
+  /** Lightweight status from Presence (available for all players). */
+  liveStatus?: {
+    gameActive: boolean;
+    mapName: string;
+    inBattle: boolean;
+    partySize: number;
+    timestamp: number;
+  } | null;
 };
 
 /* ==================== Launcher types ==================== */
@@ -171,3 +268,65 @@ export type Manifest = {
   /** URL de l'image de fond de la barre latérale du launcher (définie depuis le site). */
   launcherSidebarImageUrl?: string;
 }
+
+/* ==================== P2P Trade types ==================== */
+
+export type TradePhase = "idle" | "pending" | "selecting" | "confirming" | "executing" | "complete" | "error";
+
+export type TradeSelectionPreview = {
+  speciesId: number;
+  name: string;
+  nickname?: string | null;
+  level: number;
+  shiny: boolean;
+  altShiny: boolean;
+  gender?: number;
+  nature?: number | null;
+  form: number;
+  ability?: number | null;
+  abilityName?: string | null;
+  itemHolding?: number | null;
+  itemName?: string | null;
+  moves?: number[];
+  moveNames?: string[];
+  ivHp?: number | null;
+  ivAtk?: number | null;
+  ivDfe?: number | null;
+  ivSpd?: number | null;
+  ivAts?: number | null;
+  ivDfs?: number | null;
+};
+
+export type TradeSelection = TradeSelectionPreview & {
+  boxIdx: number;
+  slotIdx: number;
+  pokemonB64: string;
+};
+
+export type TradeState =
+  | { phase: "idle" }
+  | { phase: "pending"; role: "initiator" | "responder"; tradeId: string; partnerId: string; partnerName: string; partnerAvatar: string | null; dmChannelId: number; startedAt: number }
+  | { phase: "selecting"; role: "initiator" | "responder"; tradeId: string; partnerId: string; partnerName: string; partnerAvatar: string | null; dmChannelId: number; mySelection: TradeSelection | null; theirPreview: TradeSelectionPreview | null }
+  | { phase: "confirming"; role: "initiator" | "responder"; tradeId: string; partnerId: string; partnerName: string; partnerAvatar: string | null; dmChannelId: number; mySelection: TradeSelection; theirPreview: TradeSelectionPreview; myConfirmed: boolean; theirConfirmed: boolean }
+  | { phase: "executing"; role: "initiator" | "responder"; tradeId: string; partnerId: string; partnerName: string; partnerAvatar: string | null; dmChannelId: number; mySelection: TradeSelection; theirPreview: TradeSelectionPreview }
+  | { phase: "complete"; tradeId: string; partnerId: string; partnerName: string }
+  | { phase: "error"; tradeId: string; partnerId: string; partnerName: string; message: string };
+
+export type TradeMessageData = {
+  tradeId: string;
+  playerA: { userId: string; name: string; pokemon: TradeSelectionPreview };
+  playerB: { userId: string; name: string; pokemon: TradeSelectionPreview };
+  timestamp: number;
+};
+
+/* ==================== PvP Battle types ==================== */
+
+export type BattlePhase = "idle" | "inviting" | "waiting_game" | "relaying" | "complete" | "error";
+
+export type BattleRoomState =
+  | { phase: "idle" }
+  | { phase: "inviting"; roomCode: string; partnerId: string; partnerName: string; partnerAvatar: string | null; dmChannelId: number; startedAt?: number }
+  | { phase: "waiting_game"; roomCode: string; partnerId: string; partnerName: string; partnerAvatar: string | null; dmChannelId: number }
+  | { phase: "relaying"; roomCode: string; partnerId: string; partnerName: string; partnerAvatar: string | null; dmChannelId: number }
+  | { phase: "complete"; roomCode: string; partnerId: string; partnerName: string; endReason?: string; battleResult?: string }
+  | { phase: "error"; roomCode: string; partnerId: string; partnerName: string; message: string };

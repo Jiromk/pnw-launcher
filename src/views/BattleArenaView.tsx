@@ -91,6 +91,7 @@ export default function BattleArenaView({
   const [inviteTimer, setInviteTimer] = useState(0);
   const battleStartedAtRef = useRef<string>("");
   const turnCountRef = useRef(0);
+  const battleResultRef = useRef<string>("");
 
   // Fetch stats from Supabase on mount
   useEffect(() => {
@@ -108,6 +109,7 @@ export default function BattleArenaView({
     let result: string = "draw";
     if (endReason === "opponent_forfeit") result = "win";
     else if (endReason === "opponent_crash") result = "draw";
+    else if (endReason === "game_end") result = st.battleResult || battleResultRef.current || "draw";
 
     if (endReason && st.partnerId) {
       // Mise à jour optimiste immédiate (pas d'attente réseau)
@@ -179,16 +181,18 @@ export default function BattleArenaView({
     try { await writeBattleTrigger(Number(st.roomCode), st.partnerName, "client"); console.log("[Battle] Trigger written OK (client)"); } catch (e) { console.error("[Battle] writeBattleTrigger FAILED:", e); }
     battleStartedAtRef.current = new Date().toISOString();
     turnCountRef.current = 0;
+    battleResultRef.current = "";
     const cleanup = startRelay(st.roomCode, session.user.id,
       () => setBattleState((prev) => (prev as any).roomCode === st.roomCode ? { ...prev, phase: "relaying" } as any : prev),
       (reason) => {
-        const result = reason === "opponent_forfeit" ? "win" : reason === "opponent_crash" ? "draw" : "unknown";
+        const result = reason === "opponent_forfeit" ? "win" : reason === "opponent_crash" ? "draw" : reason === "game_end" ? (battleResultRef.current || "unknown") : "unknown";
         saveBattleLog({ roomCode: st.roomCode, myUserId: session.user.id, partnerId: st.partnerId, partnerName: st.partnerName, result, reason: reason || "unknown", turns: turnCountRef.current, startedAt: battleStartedAtRef.current, endedAt: new Date().toISOString() });
         setSpectatorCount(0); writeStopTrigger().then(() => cleanupBattleFiles());
-        setBattleState({ phase: "complete", roomCode: st.roomCode, partnerId: st.partnerId, partnerName: st.partnerName, endReason: reason } as any);
+        setBattleState({ phase: "complete", roomCode: st.roomCode, partnerId: st.partnerId, partnerName: st.partnerName, endReason: reason, battleResult: result } as any);
       },
       () => { turnCountRef.current++; playTurnSound(); },
       (count) => { setSpectatorCount(count); },
+      (result) => { battleResultRef.current = result; },
     );
     battleRelayCleanupRef.current = cleanup;
   }, [battleState, session, profile, setBattleState, battleRelayCleanupRef]);
@@ -351,11 +355,15 @@ export default function BattleArenaView({
               <div className="ba-active-left">
                 {(battleState as any).endReason === "opponent_crash"
                   ? <FaTriangleExclamation style={{ color: "#facc15", fontSize: "1.4rem" }} />
+                  : (battleState as any).endReason === "game_end" && (battleState as any).battleResult === "loss"
+                  ? <FaSkull style={{ color: "#f87171", fontSize: "1.4rem" }} />
                   : <FaTrophy className="ba-trophy-anim" />}
                 <div>
                   <div className="ba-active-title">
                     {(battleState as any).endReason === "opponent_forfeit" ? "Victoire !" :
                      (battleState as any).endReason === "opponent_crash" ? "Match nul" :
+                     (battleState as any).endReason === "game_end" && (battleState as any).battleResult === "win" ? "Victoire !" :
+                     (battleState as any).endReason === "game_end" && (battleState as any).battleResult === "loss" ? "Defaite..." :
                      "Combat termine !"}
                   </div>
                   <div className="ba-active-desc">

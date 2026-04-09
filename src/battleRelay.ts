@@ -223,9 +223,10 @@ export function startRelay(
   roomCode: string,
   myUserId: string,
   onBattleStarted?: () => void,
-  onDisconnect?: (reason?: "forfeit" | "crash" | "opponent_forfeit" | "opponent_crash") => void,
+  onDisconnect?: (reason?: "forfeit" | "crash" | "opponent_forfeit" | "opponent_crash" | "game_end") => void,
   onTurnReady?: () => void,
   onSpectatorCount?: (count: number) => void,
+  onBattleResult?: (result: string) => void,
 ): () => void {
   let running = true;
   let battleDetected = false;
@@ -311,7 +312,12 @@ export function startRelay(
   // ─── Battle ended by opponent (result from their game) ───
   socket.on("battle_ended", (data: { roomCode?: string; result?: string; reason?: string }) => {
     console.log("[BattleRelay] Battle ended by opponent, our result:", data.result);
-    // The game will also detect the result locally — this is for the launcher UI
+    if (!disconnectFired) {
+      disconnectFired = true;
+      running = false;
+      onBattleResult?.(data.result || "unknown");
+      onDisconnect?.("game_end");
+    }
   });
 
   // ─── Opponent disconnected ───
@@ -422,6 +428,13 @@ export function startRelay(
             console.log("[BattleRelay] Battle result from game:", result);
             socket.emit("battle_end", { roomCode, userId: myUserId, result });
             pendingOutbox = null;
+            // Stopper le relay et notifier le launcher
+            if (!disconnectFired) {
+              disconnectFired = true;
+              running = false;
+              onBattleResult?.(result || "unknown");
+              onDisconnect?.("game_end");
+            }
           }
 
           // Detect battle started
