@@ -32,7 +32,7 @@ import {
 } from "../chatAuth";
 import type { ChatChannel, ChatMessage, ChatProfile, ChatMute, ChatBan, ChatFriend, PlayerProfile, GameLiveState, GameLivePlayer, GameActivityShareData, TradeState, TradeSelection, TradeSelectionPreview, TradeMessageData, BattleRoomState } from "../types";
 import { generateRoomCode, writeBattleTrigger, writeStopTrigger, startRelay, cleanupBattleFiles, fullCleanup, isGameRunning, BATTLE_INVITE_TIMEOUT, connectLobby, sendBattleInvite, sendBattleCancel, playTurnSound, saveBattleLog, _currentBattleTurnLog, _currentBattleEventLog, writeOpponentLeft } from "../battleRelay";
-import BattleArenaView from "./BattleArenaView";
+import BattleTowerView from "./battleTower/BattleTowerView";
 import { TRADE_PREFIX, generateTradeId, validateIncomingBytes, extractAndEncode, executeTradeLocally, buildTradeMessage, parseTradeMessage, TRADE_PENDING_TIMEOUT, TRADE_SELECTING_TIMEOUT, TRADE_CONFIRMING_TIMEOUT, TRADE_EXECUTING_TIMEOUT } from "../tradeP2P";
 import { loadSaveForEdit, extractPokemonFromBox, encodePokemonForGts } from "../saveWriter";
 import { upsertLeaderboardScore, fetchLeaderboard, type LeaderboardEntry } from "../leaderboard";
@@ -2698,7 +2698,10 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
         if (battleTimeoutRef.current) { clearTimeout(battleTimeoutRef.current); battleTimeoutRef.current = null; }
         setBattleState((prev) => ({ ...prev, phase: "waiting_game" } as any));
         if (battleRelayCleanupRef.current) { battleRelayCleanupRef.current(); battleRelayCleanupRef.current = null; }
+        // Cleanup AVANT le trigger pour garantir un etat IPC propre (pas de trigger stale)
         await cleanupBattleFiles();
+        // Petit delai pour laisser le filesystem flush avant d'ecrire le nouveau trigger
+        await new Promise(r => setTimeout(r, 50));
         try { await writeBattleTrigger(Number(code), partnerName, "host"); } catch (e) { console.error("[Battle] writeBattleTrigger error:", e); }
         battleResultRef.current = "";
         battleTurnCountRef.current = 0;
@@ -2711,7 +2714,12 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
             const result = reason === "opponent_forfeit" ? "win" : reason === "opponent_crash" ? "draw" : reason === "game_end" ? (battleResultRef.current || "unknown") : "unknown";
             saveBattleLog({ roomCode: code, myUserId: session?.user?.id || "", partnerId: (prev as any).partnerId || "", partnerName: (prev as any).partnerName || partnerName, result, reason: reason || "unknown", turns: battleTurnCountRef.current, startedAt: battleStartedAtRef.current, endedAt: new Date().toISOString(), turnLog: [..._currentBattleTurnLog], eventLog: [..._currentBattleEventLog] });
             setBattleState((prev2) => (prev2 as any).roomCode === code ? { phase: "complete", roomCode: code, partnerId: (prev2 as any).partnerId || "", partnerName: (prev2 as any).partnerName || "", endReason: reason, battleResult: result } : prev2);
-            writeOpponentLeft(reason || "unknown").then(() => writeStopTrigger()).then(() => cleanupBattleFiles()).catch(() => {});
+            // Ecrire opponent_left dans l'inbox + delai pour que le jeu le lise avant cleanup
+            writeOpponentLeft(reason || "unknown")
+              .then(() => new Promise(r => setTimeout(r, 2500))) // 2.5s pour que le jeu traite le signal
+              .then(() => writeStopTrigger())
+              .then(() => cleanupBattleFiles())
+              .catch(() => {});
           },
           () => { battleTurnCountRef.current++; }, // compteur de tours
           undefined, // spectator count handled in BattleArenaView
@@ -3472,16 +3480,15 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
     );
   }
 
-  // ──�� Battle Mode: render BattleArenaView instead of chat ───
+  // ─── Battle Mode: render BattleTowerView instead of chat ───
   if (battleMode && session && profile) {
     return (
-      <BattleArenaView
+      <BattleTowerView
         session={session}
         profile={profile}
-        friendsList={friendsList}
+        allMembers={allMembers}
         onlineUserIds={onlineUserIds}
         gameLivePlayers={gameLivePlayers}
-        dmPartners={dmPartners}
         channels={channels}
         battleState={battleState}
         setBattleState={setBattleState}

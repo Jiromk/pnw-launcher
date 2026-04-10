@@ -98,16 +98,18 @@ pub fn cmd_battle_save_log(data: String) -> Result<String, String> {
     Ok(path.to_string_lossy().into_owned())
 }
 
-/// Supprime les fichiers IPC du dossier battle/ (cleanup).
-/// Le sous-dossier logs/ est préservé automatiquement (remove_file ignore les dossiers).
+/// Supprime UNIQUEMENT les fichiers IPC du dossier battle/ (cleanup).
+/// Preserve vms_debug.log et le sous-dossier logs/ pour garder l'historique de debug.
 #[tauri::command]
 pub fn cmd_battle_cleanup() -> Result<(), String> {
     let dir = battle_dir()?;
     if dir.exists() {
-        for entry in fs::read_dir(&dir).map_err(|e| e.to_string())? {
-            if let Ok(entry) = entry {
-                // remove_file ignore les dossiers (logs/) — ne supprime que les fichiers IPC
-                let _ = fs::remove_file(entry.path());
+        // Liste explicite des fichiers IPC a supprimer (ne touche pas au reste)
+        let ipc_files = ["vms_outbox.json", "vms_outbox.json.tmp", "vms_inbox.json", "vms_trigger.json"];
+        for filename in ipc_files.iter() {
+            let path = dir.join(filename);
+            if path.exists() {
+                let _ = fs::remove_file(&path);
             }
         }
     }
