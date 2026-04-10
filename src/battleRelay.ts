@@ -262,6 +262,7 @@ export function startRelay(
   let waitingForServer = false;
   let initialDataSent = false; // envoyer player_data UNE SEULE FOIS
   let lastResolvedTurn = 0; // guard: ignorer les battle_command pour les tours deja resolus
+  let switchResolvedForPhase = false; // guard: ignorer les battle_switch apres resolution
   const turnLog: { turn: number; sentAt: string; resolvedAt: string; rngCount: number; rngSeeds?: number[]; myActions: any; opponentActions: any; waitTimeMs?: number }[] = [];
   const eventLog: { time: string; event: string; data?: any }[] = [];
   // Exposer les logs pour saveBattleLog
@@ -325,6 +326,7 @@ export function startRelay(
     console.log("[BattleRelay] Turn", msg.turn, "resolved —", msg.rng.length, "RNG values");
     waitingForServer = false;
     lastResolvedTurn = msg.turn;
+    switchResolvedForPhase = false; // nouveau tour = reset du guard switch
 
     // Log detaille du tour
     const rngSeeds = msg.rng.slice(0, 4).map((v) => Math.floor(v * 2147483647));
@@ -369,7 +371,7 @@ export function startRelay(
       console.error("[BattleRelay] Write inbox error:", e);
       eventLog.push({ time: new Date().toISOString(), event: "error_write_inbox", data: { context: "switch_resolved", error: String(e) } });
     }
-    onTurnReady?.();
+    // NE PAS appeler onTurnReady ici — les switch ne sont pas des tours
   });
 
   // ─── Spectator count update ───
@@ -392,9 +394,14 @@ export function startRelay(
 
   // ─── Opponent disconnected ───
   socket.on("player_left", (data: { userId?: string; reason?: string }) => {
-    const reason = data?.reason === "crash" ? "opponent_crash" : "opponent_forfeit";
-    console.log("[BattleRelay] Opponent left, reason:", reason);
-    eventLog.push({ time: new Date().toISOString(), event: "player_left", data: { reason } });
+    const rawReason = data?.reason || "unknown";
+    // crash = bug technique, game_end = fin normale, forfeit = abandon volontaire, autre = crash presume
+    const reason = rawReason === "crash" ? "opponent_crash"
+                 : rawReason === "game_end" ? "game_end"
+                 : rawReason === "forfeit" ? "opponent_forfeit"
+                 : "opponent_crash";
+    console.log("[BattleRelay] Opponent left, reason:", reason, "(raw:", rawReason, ")");
+    eventLog.push({ time: new Date().toISOString(), event: "player_left", data: { reason, rawReason } });
     if (!disconnectFired) {
       disconnectFired = true;
       running = false;
@@ -465,6 +472,13 @@ export function startRelay(
               lastSentHash = hash;
               pendingOutbox = null;
             } else if (stateType === "battle_switch" || stateType === ":battle_switch") {
+              // Guard: ignorer les switch deja resolus pour cette phase
+              if (switchResolvedForPhase) {
+                lastSentHash = hash;
+                pendingOutbox = null;
+                await sleep(POLL_INTERVAL);
+                continue;
+              }
               // Forced switch — send to server
               console.log("[BattleRelay] Sending forced switch to server");
               eventLog.push({ time: new Date().toISOString(), event: "switch_sent", data: { switchInfo: state[2] } });
@@ -474,6 +488,7 @@ export function startRelay(
                 switchInfo: state[2],
                 fullPlayerData: playerData,
               });
+              switchResolvedForPhase = true; // Bloquer les re-envois jusqu'au prochain tour
               waitingForServer = true;
               lastSentHash = hash;
               pendingOutbox = null;
@@ -502,12 +517,15 @@ export function startRelay(
               pendingOutbox = null;
             }
           } else if (messageType === "disconnect") {
+            // Le VMS envoie "disconnect" quand le combat se termine (VMS.leave)
+            // Ce n'est PAS un forfait — c'est une fin normale. Le vrai forfait
+            // est gere par le bouton "Abandonner" dans le launcher.
             eventLog.push({ time: new Date().toISOString(), event: "game_disconnect", data: { messageType } });
             if (!disconnectFired) {
               disconnectFired = true;
               running = false;
-              socket.emit("leave_room", { roomCode, userId: myUserId, reason: "forfeit" });
-              onDisconnect?.("forfeit");
+              socket.emit("leave_room", { roomCode, userId: myUserId, reason: "game_end" });
+              onDisconnect?.("game_end");
             }
             pendingOutbox = null;
           } else if (messageType === "battle_result") {

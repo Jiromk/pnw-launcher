@@ -93,6 +93,7 @@ export default function BattleArenaView({
   const battleStartedAtRef = useRef<string>("");
   const turnCountRef = useRef(0);
   const battleResultRef = useRef<string>("");
+  const lastRecordedRoomRef = useRef<string>(""); // guard: eviter d'enregistrer 2x le meme combat
 
   // Fetch stats from Supabase on mount
   useEffect(() => {
@@ -112,7 +113,8 @@ export default function BattleArenaView({
     else if (endReason === "opponent_crash") result = "draw";
     else if (endReason === "game_end") result = st.battleResult || battleResultRef.current || "draw";
 
-    if (endReason && st.partnerId) {
+    if (endReason && st.partnerId && st.roomCode !== lastRecordedRoomRef.current) {
+      lastRecordedRoomRef.current = st.roomCode; // guard: ne pas enregistrer 2x le meme combat
       // Mise à jour optimiste immédiate (pas d'attente réseau)
       setPvpStats((prev) => ({
         pvp_wins: prev.pvp_wins + (result === "win" ? 1 : 0),
