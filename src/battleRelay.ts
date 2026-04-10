@@ -49,6 +49,18 @@ export async function writeStopTrigger(): Promise<void> {
   } catch {}
 }
 
+/** Ecrire un signal dans l'inbox pour que le jeu sache que l'adversaire est parti */
+export async function writeOpponentLeft(reason: string): Promise<void> {
+  try {
+    await invoke("cmd_battle_write_inbox", {
+      data: JSON.stringify([{ id: 0, state: ["opponent_left", reason], party: [] }]),
+    });
+    console.log("[Battle] Wrote opponent_left signal to inbox, reason:", reason);
+  } catch (e) {
+    console.warn("[Battle] Failed to write opponent_left:", e);
+  }
+}
+
 /* ==================== Cleanup ==================== */
 
 export async function saveBattleLog(log: {

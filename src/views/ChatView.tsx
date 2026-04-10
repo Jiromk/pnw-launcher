@@ -31,7 +31,7 @@ import {
   togglePinMessage, fetchPinnedMessages,
 } from "../chatAuth";
 import type { ChatChannel, ChatMessage, ChatProfile, ChatMute, ChatBan, ChatFriend, PlayerProfile, GameLiveState, GameLivePlayer, GameActivityShareData, TradeState, TradeSelection, TradeSelectionPreview, TradeMessageData, BattleRoomState } from "../types";
-import { generateRoomCode, writeBattleTrigger, writeStopTrigger, startRelay, cleanupBattleFiles, fullCleanup, isGameRunning, BATTLE_INVITE_TIMEOUT, connectLobby, sendBattleInvite, sendBattleCancel, playTurnSound, saveBattleLog, _currentBattleTurnLog, _currentBattleEventLog } from "../battleRelay";
+import { generateRoomCode, writeBattleTrigger, writeStopTrigger, startRelay, cleanupBattleFiles, fullCleanup, isGameRunning, BATTLE_INVITE_TIMEOUT, connectLobby, sendBattleInvite, sendBattleCancel, playTurnSound, saveBattleLog, _currentBattleTurnLog, _currentBattleEventLog, writeOpponentLeft } from "../battleRelay";
 import BattleArenaView from "./BattleArenaView";
 import { TRADE_PREFIX, generateTradeId, validateIncomingBytes, extractAndEncode, executeTradeLocally, buildTradeMessage, parseTradeMessage, TRADE_PENDING_TIMEOUT, TRADE_SELECTING_TIMEOUT, TRADE_CONFIRMING_TIMEOUT, TRADE_EXECUTING_TIMEOUT } from "../tradeP2P";
 import { loadSaveForEdit, extractPokemonFromBox, encodePokemonForGts } from "../saveWriter";
@@ -2707,7 +2707,7 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
             const result = reason === "opponent_forfeit" ? "win" : reason === "opponent_crash" ? "draw" : reason === "game_end" ? (battleResultRef.current || "unknown") : "unknown";
             saveBattleLog({ roomCode: code, myUserId: session?.user?.id || "", partnerId: (prev as any).partnerId || "", partnerName: (prev as any).partnerName || partnerName, result, reason: reason || "unknown", turns: 0, startedAt: new Date().toISOString(), endedAt: new Date().toISOString(), turnLog: [..._currentBattleTurnLog], eventLog: [..._currentBattleEventLog] });
             setBattleState((prev2) => (prev2 as any).roomCode === code ? { phase: "complete", roomCode: code, partnerId: (prev2 as any).partnerId || "", partnerName: (prev2 as any).partnerName || "", endReason: reason, battleResult: result } : prev2);
-            writeStopTrigger().then(() => cleanupBattleFiles()).catch(() => {});
+            writeOpponentLeft(reason || "unknown").then(() => writeStopTrigger()).then(() => cleanupBattleFiles()).catch(() => {});
           },
           undefined, // son de tour gere par le jeu
           undefined, // spectator count handled in BattleArenaView

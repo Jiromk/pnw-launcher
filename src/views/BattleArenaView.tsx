@@ -14,7 +14,7 @@ import {
   cleanupBattleFiles, fullCleanup, isGameRunning,
   BATTLE_INVITE_TIMEOUT,
   sendBattleInvite, sendBattleAccept, sendBattleDecline, sendBattleCancel, playTurnSound, saveBattleLog,
-  _currentBattleTurnLog, _currentBattleEventLog,
+  _currentBattleTurnLog, _currentBattleEventLog, writeOpponentLeft,
 } from "../battleRelay";
 import { supabase } from "../supabaseClient"; // kept for DM channel lookup only
 import { fetchPvpStats, fetchBattleHistory, recordBattleResult, type PvpStats, type BattleResultEntry } from "../leaderboard";
@@ -113,7 +113,9 @@ export default function BattleArenaView({
     else if (endReason === "opponent_crash") result = "draw";
     else if (endReason === "game_end") result = st.battleResult || battleResultRef.current || "draw";
 
-    if (endReason && st.partnerId && st.roomCode !== lastRecordedRoomRef.current) {
+    // Ne pas enregistrer si le resultat est inconnu (cause des erreurs 400 Supabase)
+    const validResult = result === "win" || result === "loss" || result === "draw";
+    if (endReason && st.partnerId && st.roomCode !== lastRecordedRoomRef.current && validResult) {
       lastRecordedRoomRef.current = st.roomCode; // guard: ne pas enregistrer 2x le meme combat
       // Mise à jour optimiste immédiate (pas d'attente réseau)
       setPvpStats((prev) => ({
@@ -190,7 +192,9 @@ export default function BattleArenaView({
       (reason) => {
         const result = reason === "opponent_forfeit" ? "win" : reason === "opponent_crash" ? "draw" : reason === "game_end" ? (battleResultRef.current || "unknown") : "unknown";
         saveBattleLog({ roomCode: st.roomCode, myUserId: session.user.id, partnerId: st.partnerId, partnerName: st.partnerName, result, reason: reason || "unknown", turns: turnCountRef.current, startedAt: battleStartedAtRef.current, endedAt: new Date().toISOString(), turnLog: [..._currentBattleTurnLog], eventLog: [..._currentBattleEventLog] });
-        setSpectatorCount(0); writeStopTrigger().then(() => cleanupBattleFiles());
+        setSpectatorCount(0);
+        // Signaler au jeu que l'adversaire est parti AVANT de cleanup
+        writeOpponentLeft(reason || "unknown").then(() => writeStopTrigger()).then(() => cleanupBattleFiles());
         setBattleState({ phase: "complete", roomCode: st.roomCode, partnerId: st.partnerId, partnerName: st.partnerName, endReason: reason, battleResult: result } as any);
       },
       () => { turnCountRef.current++; },
