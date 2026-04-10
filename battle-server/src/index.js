@@ -118,7 +118,7 @@ const server = http.createServer((req, res) => {
   // Health check endpoint
   if (req.url === "/health") {
     res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ status: "ok", rooms: rooms.size }));
+    res.end(JSON.stringify({ status: "ok", rooms: rooms.size, version: "1.2.0", rngPerTurn: RNG_VALUES_PER_TURN, switchTimeoutMs: SWITCH_TIMEOUT_MS }));
     return;
   }
   res.writeHead(404);
