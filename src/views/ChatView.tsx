@@ -1549,6 +1549,8 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
   const battleTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const battleRelayCleanupRef = useRef<(() => void) | null>(null);
   const battleResultRef = useRef<string>("");
+  const battleTurnCountRef = useRef(0);
+  const battleStartedAtRef = useRef<string>("");
   const [showTradeBoxes, setShowTradeBoxes] = useState(false);
   const [showTradeSwapAnim, setShowTradeSwapAnim] = useState(false);
   const [tradeSwapInfo, setTradeSwapInfo] = useState<{ mySpriteUrl: string | null; myName: string; myShiny: boolean; myAltShiny: boolean; theirSpriteUrl: string | null; theirName: string; theirShiny: boolean; theirAltShiny: boolean; boxName: string | null } | null>(null);
@@ -2699,17 +2701,19 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
         await cleanupBattleFiles();
         try { await writeBattleTrigger(Number(code), partnerName, "host"); } catch (e) { console.error("[Battle] writeBattleTrigger error:", e); }
         battleResultRef.current = "";
+        battleTurnCountRef.current = 0;
+        battleStartedAtRef.current = new Date().toISOString();
         const relayCleanup = startRelay(
           code, session?.user?.id || "",
           () => setBattleState((prev) => (prev as any).roomCode === code ? { ...prev, phase: "relaying" } as any : prev),
           (reason) => {
             const prev = battleStateRef.current;
             const result = reason === "opponent_forfeit" ? "win" : reason === "opponent_crash" ? "draw" : reason === "game_end" ? (battleResultRef.current || "unknown") : "unknown";
-            saveBattleLog({ roomCode: code, myUserId: session?.user?.id || "", partnerId: (prev as any).partnerId || "", partnerName: (prev as any).partnerName || partnerName, result, reason: reason || "unknown", turns: 0, startedAt: new Date().toISOString(), endedAt: new Date().toISOString(), turnLog: [..._currentBattleTurnLog], eventLog: [..._currentBattleEventLog] });
+            saveBattleLog({ roomCode: code, myUserId: session?.user?.id || "", partnerId: (prev as any).partnerId || "", partnerName: (prev as any).partnerName || partnerName, result, reason: reason || "unknown", turns: battleTurnCountRef.current, startedAt: battleStartedAtRef.current, endedAt: new Date().toISOString(), turnLog: [..._currentBattleTurnLog], eventLog: [..._currentBattleEventLog] });
             setBattleState((prev2) => (prev2 as any).roomCode === code ? { phase: "complete", roomCode: code, partnerId: (prev2 as any).partnerId || "", partnerName: (prev2 as any).partnerName || "", endReason: reason, battleResult: result } : prev2);
             writeOpponentLeft(reason || "unknown").then(() => writeStopTrigger()).then(() => cleanupBattleFiles()).catch(() => {});
           },
-          undefined, // son de tour gere par le jeu
+          () => { battleTurnCountRef.current++; }, // compteur de tours
           undefined, // spectator count handled in BattleArenaView
           (result) => { battleResultRef.current = result; },
         );
