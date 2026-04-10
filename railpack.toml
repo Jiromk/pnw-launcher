@@ -1,3 +1,0 @@
-[build]
-cmd = "npm install"
-dir = "battle-server"
