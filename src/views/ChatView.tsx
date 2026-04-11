@@ -2739,13 +2739,16 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
           () => setBattleState((prev) => (prev as any).roomCode === code ? { ...prev, phase: "relaying" } as any : prev),
           (reason) => {
             const prev = battleStateRef.current;
-            // opponent_forfeit/opponent_crash = adversaire parti → win/draw
-            // forfeit/crash = nous (Alt-F4, crash local) = abandon → loss
-            // game_end = fin normale via battle_result du jeu
+            // opponent_forfeit = adversaire abandon → win
+            // opponent_crash = crash adverse → draw
+            // crash = notre propre crash technique → draw
+            // forfeit = notre abandon volontaire → loss
+            // game_end = fin normale via battle_result (Alt-F4 detecte par VMS → loss)
             const result =
               reason === "opponent_forfeit" ? "win"
               : reason === "opponent_crash" ? "draw"
-              : (reason === "forfeit" || reason === "crash") ? "loss"
+              : reason === "crash" ? "draw"
+              : reason === "forfeit" ? "loss"
               : reason === "game_end" ? (battleResultRef.current || "unknown")
               : "unknown";
             saveBattleLog({ roomCode: code, myUserId: session?.user?.id || "", partnerId: (prev as any).partnerId || "", partnerName: (prev as any).partnerName || partnerName, result, reason: reason || "unknown", turns: battleTurnCountRef.current, startedAt: battleStartedAtRef.current, endedAt: new Date().toISOString(), turnLog: [..._currentBattleTurnLog], eventLog: [..._currentBattleEventLog] });
@@ -3579,13 +3582,16 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
       () => setBattleState((prev) => (prev as any).roomCode === toast.roomCode ? { ...(prev as any), phase: "relaying" } as any : prev),
       (reason) => {
         const prev = battleStateRef.current as any;
-        // opponent_forfeit/crash = adversaire parti → win/draw
-        // forfeit/crash = nous (Alt-F4, crash local) = abandon → loss
-        // game_end = fin normale via battle_result du jeu
+        // opponent_forfeit = adversaire abandon → win
+        // opponent_crash = crash adverse → draw
+        // crash = notre crash technique → draw
+        // forfeit = notre abandon volontaire → loss
+        // game_end = fin normale via battle_result (Alt-F4 detecte par VMS → loss)
         const result =
           reason === "opponent_forfeit" ? "win"
           : reason === "opponent_crash" ? "draw"
-          : (reason === "forfeit" || reason === "crash") ? "loss"
+          : reason === "crash" ? "draw"
+          : reason === "forfeit" ? "loss"
           : reason === "game_end" ? (battleResultRef.current || "unknown")
           : "unknown";
         saveBattleLog({

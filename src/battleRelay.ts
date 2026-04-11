@@ -407,12 +407,14 @@ export function startRelay(
   // ─── Opponent disconnected ───
   socket.on("player_left", (data: { userId?: string; reason?: string }) => {
     const rawReason = data?.reason || "unknown";
-    // game_end = fin normale via battle_result, forfeit = abandon (Alt-F4, bouton Abandonner, crash)
-    // Ancien "crash" garde pour compatibilite mais mappe aussi sur forfeit maintenant
+    // game_end = fin normale via battle_result (Alt-F4 volontaire = loss)
+    // forfeit = abandon via bouton in-game → victoire pour nous
+    // crash = vrai crash technique du jeu adverse → match nul
     const reason: "opponent_forfeit" | "game_end" | "opponent_crash" =
       rawReason === "game_end" ? "game_end"
-      : rawReason === "forfeit" || rawReason === "crash" ? "opponent_forfeit"
-      : "opponent_forfeit";
+      : rawReason === "forfeit" ? "opponent_forfeit"
+      : rawReason === "crash" ? "opponent_crash"
+      : "opponent_crash";
     console.log("[BattleRelay] Opponent left, reason:", reason, "(raw:", rawReason, ")");
     eventLog.push({ time: new Date().toISOString(), event: "player_left", data: { reason, rawReason } });
     if (!disconnectFired) {
@@ -572,21 +574,26 @@ export function startRelay(
 
   poll();
 
-  // ─── Game process monitor ───
-  // Si le jeu meurt pendant un combat (Alt-F4, crash, fermeture volontaire),
-  // on traite ca comme un ABANDON pour eviter que des joueurs s'echappent
-  // d'un match perdu en fermant la fenetre. Resultat : defaite pour soi,
-  // victoire pour l'adversaire.
+  // ─── Game process monitor (detection de crash pur) ───
+  // Si le jeu meurt SANS avoir ecrit battle_result via l'outbox, c'est
+  // un vrai crash technique (freeze, exception PSDK, etc). Traite comme
+  // match nul pour les deux joueurs.
+  //
+  // Alt-F4 volontaire : le VMS detecte l'exception "Game Window closed"
+  // et ECRIT battle_result:loss via l'outbox AVANT de mourir. Le relay
+  // lit ce message et fire disconnectFired=true via le handler
+  // battle_result. Le gameMonitor trouvera disconnectFired deja true
+  // et ne fera rien. Resultat: Alt-F4 = defaite pour l'abandoner.
   const gameMonitor = setInterval(async () => {
     if (!running || !battleDetected) return;
     const alive = await isGameRunning();
     if (!alive && !disconnectFired) {
-      console.log("[BattleRelay] Game process died — traite comme abandon (forfeit)");
-      eventLog.push({ time: new Date().toISOString(), event: "game_closed_during_battle", data: { treated_as: "forfeit" } });
+      console.log("[BattleRelay] Game process died — crash technique (match nul)");
+      eventLog.push({ time: new Date().toISOString(), event: "game_crash_detected" });
       disconnectFired = true;
       running = false;
-      socket.emit("leave_room", { roomCode, userId: myUserId, reason: "forfeit" });
-      onDisconnect?.("forfeit");
+      socket.emit("leave_room", { roomCode, userId: myUserId, reason: "crash" });
+      onDisconnect?.("crash");
     }
   }, 3000);
 

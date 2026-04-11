@@ -101,7 +101,8 @@ export default function BattleTowerView({
     let result: string = "draw";
     if (endReason === "opponent_forfeit") result = "win";
     else if (endReason === "opponent_crash") result = "draw";
-    else if (endReason === "forfeit" || endReason === "crash") result = "loss";
+    else if (endReason === "crash") result = "draw"; // Notre propre crash technique → nul
+    else if (endReason === "forfeit") result = "loss"; // Abandon volontaire → defaite
     else if (endReason === "game_end") result = st.battleResult || battleResultRef.current || "draw";
 
     const validResult = result === "win" || result === "loss" || result === "draw";
@@ -255,12 +256,14 @@ export default function BattleTowerView({
           reason === "opponent_forfeit"
             ? "win"
             : reason === "opponent_crash"
-              ? "draw"
-              : reason === "forfeit" || reason === "crash"
-                ? "loss" // Alt-F4 ou crash local = abandon = defaite
-                : reason === "game_end"
-                  ? battleResultRef.current || "unknown"
-                  : "unknown";
+              ? "draw" // Crash adverse → match nul
+              : reason === "crash"
+                ? "draw" // Notre propre crash technique → match nul
+                : reason === "forfeit"
+                  ? "loss" // Notre abandon volontaire (bouton) → defaite
+                  : reason === "game_end"
+                    ? battleResultRef.current || "unknown" // Alt-F4 : VMS a ecrit loss via outbox
+                    : "unknown";
         saveBattleLog({
           roomCode: st.roomCode,
           myUserId: session.user.id,
@@ -555,9 +558,9 @@ export default function BattleTowerView({
             {battleState.phase === "complete" && (
               <>
                 <div className="flex items-center gap-3">
-                  {stAny.endReason === "opponent_crash" ? (
+                  {(stAny.endReason === "opponent_crash" || stAny.endReason === "crash") ? (
                     <FaTriangleExclamation className="text-2xl text-amber-300" />
-                  ) : (stAny.endReason === "forfeit" || stAny.endReason === "crash") ? (
+                  ) : stAny.endReason === "forfeit" ? (
                     <FaSkull className="text-2xl text-rose-300" />
                   ) : stAny.endReason === "game_end" && stAny.battleResult === "loss" ? (
                     <FaSkull className="text-2xl text-rose-300" />
@@ -568,9 +571,9 @@ export default function BattleTowerView({
                     <div className="text-sm font-bold text-white/90">
                       {stAny.endReason === "opponent_forfeit"
                         ? ui.banner.completeWin
-                        : stAny.endReason === "opponent_crash"
+                        : (stAny.endReason === "opponent_crash" || stAny.endReason === "crash")
                           ? ui.banner.completeDraw
-                          : (stAny.endReason === "forfeit" || stAny.endReason === "crash")
+                          : stAny.endReason === "forfeit"
                             ? ui.banner.completeLoss
                             : stAny.endReason === "game_end" && stAny.battleResult === "win"
                               ? ui.banner.completeWin
@@ -583,9 +586,11 @@ export default function BattleTowerView({
                         ? ui.banner.forfeitReason(stAny.partnerName ?? "?")
                         : stAny.endReason === "opponent_crash"
                           ? ui.banner.crashReason(stAny.partnerName ?? "?")
-                          : (stAny.endReason === "forfeit" || stAny.endReason === "crash")
-                            ? `Abandon vs ${stAny.partnerName ?? "?"}`
-                            : `vs ${stAny.partnerName ?? "?"}`}
+                          : stAny.endReason === "crash"
+                            ? `Problème technique (match nul) vs ${stAny.partnerName ?? "?"}`
+                            : stAny.endReason === "forfeit"
+                              ? `Abandon vs ${stAny.partnerName ?? "?"}`
+                              : `vs ${stAny.partnerName ?? "?"}`}
                     </div>
                   </div>
                 </div>
