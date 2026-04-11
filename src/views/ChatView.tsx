@@ -3543,7 +3543,7 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
       setBattleState({ phase: "idle" });
       setChallengeToast(null);
       if (challengeToastTimerRef.current) { clearTimeout(challengeToastTimerRef.current); challengeToastTimerRef.current = null; }
-      showErrorToast("Le jeu n'est pas lance. Le defi de " + toast.fromName + " a ete refuse automatiquement.");
+      showErrorToast("Le jeu n'est pas lancé. Le défi de " + toast.fromName + " a été refusé automatiquement.");
       return;
     }
 
@@ -3639,9 +3639,9 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
         <img src={challengeToast.fromAvatar} alt="" style={{ width: 44, height: 44, borderRadius: "50%", border: "2px solid rgba(255,80,130,0.8)" }} />
       )}
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 2 }}>Defi en combat</div>
+        <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 2 }}>Défi en combat</div>
         <div style={{ fontSize: 15, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-          <strong style={{ color: "#ff6b9d" }}>{challengeToast.fromName}</strong> te defie !
+          <strong style={{ color: "#ff6b9d" }}>{challengeToast.fromName}</strong> te défie !
         </div>
       </div>
       <div style={{ display: "flex", gap: 8 }}>
