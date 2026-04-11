@@ -144,11 +144,17 @@ export default function BattleTowerView({
 
   const challengePlayer = useCallback(
     async (target: ChatProfile) => {
-      if (battleState.phase !== "idle") return;
+      // Autoriser le defi si idle OU complete (la banniere de fin sera ecrasee par le nouveau defi)
+      // Bloquer dans tous les autres etats actifs (inviting/waiting_game/relaying/error)
+      if (battleState.phase !== "idle" && battleState.phase !== "complete" && battleState.phase !== "error") return;
       const running = await isGameRunning();
       if (!running) {
         setErrorPopup(ui.errors.gameNotRunning);
         return;
+      }
+      // Reset l'etat avant de lancer le nouveau defi (efface la banniere de fin)
+      if (battleState.phase === "complete" || battleState.phase === "error") {
+        setBattleState({ phase: "idle" });
       }
       await fullCleanup(battleRelayCleanupRef);
       const roomCode = generateRoomCode();

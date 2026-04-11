@@ -1551,6 +1551,9 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
   const battleResultRef = useRef<string>("");
   const battleTurnCountRef = useRef(0);
   const battleStartedAtRef = useRef<string>("");
+  // Notification toast pour les defis recus quand on n'est pas dans la Tour de Combat
+  const [challengeToast, setChallengeToast] = useState<{ fromName: string; fromAvatar: string | null; roomCode: string; expiresAt: number } | null>(null);
+  const challengeToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [showTradeBoxes, setShowTradeBoxes] = useState(false);
   const [showTradeSwapAnim, setShowTradeSwapAnim] = useState(false);
   const [tradeSwapInfo, setTradeSwapInfo] = useState<{ mySpriteUrl: string | null; myName: string; myShiny: boolean; myAltShiny: boolean; theirSpriteUrl: string | null; theirName: string; theirShiny: boolean; theirAltShiny: boolean; boxName: string | null } | null>(null);
@@ -1701,6 +1704,8 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
   const activeChannelRef = useRef<ChatChannel | null>(null);
   const visibleRef = useRef(visible);
   visibleRef.current = visible;
+  const battleModeRef = useRef(battleMode);
+  battleModeRef.current = battleMode;
   const channelsRef = useRef<ChatChannel[]>([]);
   const profileRef = useRef<ChatProfile | null>(null);
 
@@ -2689,6 +2694,18 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
           dmChannelId: p.dmChannelId || 0,
         });
         playInviteSound();
+        // Afficher un toast global SAUF si l'utilisateur est dans la Tour de Combat
+        // (la elle voit deja la banniere d'invitation)
+        if (!battleModeRef.current) {
+          if (challengeToastTimerRef.current) clearTimeout(challengeToastTimerRef.current);
+          setChallengeToast({
+            fromName: p.fromName,
+            fromAvatar: p.fromAvatar || null,
+            roomCode: p.roomCode,
+            expiresAt: Date.now() + 60_000,
+          });
+          challengeToastTimerRef.current = setTimeout(() => setChallengeToast(null), 60_000);
+        }
       },
       onAccepted: async (p) => {
         const cur = battleStateRef.current;
@@ -2740,6 +2757,9 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
         writeStopTrigger().catch(() => {});
         cleanupBattleFiles().catch(() => {});
         setBattleState({ phase: "idle" });
+        // Fermer le toast si il etait affiche pour ce defi
+        setChallengeToast((curr) => (curr && curr.roomCode === p.roomCode ? null : curr));
+        if (challengeToastTimerRef.current) { clearTimeout(challengeToastTimerRef.current); challengeToastTimerRef.current = null; }
       },
     });
 
@@ -3499,7 +3519,61 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
     );
   }
 
+  // Toast global pour les defis recus quand on n'est pas dans la Tour de Combat
+  const challengeToastEl = challengeToast && createPortal(
+    <div style={{
+      position: "fixed",
+      top: 20,
+      left: "50%",
+      transform: "translateX(-50%)",
+      zIndex: 999999,
+      background: "linear-gradient(135deg, rgba(20,20,30,0.95), rgba(40,30,60,0.95))",
+      border: "2px solid rgba(255, 80, 130, 0.6)",
+      borderRadius: 12,
+      padding: "14px 20px",
+      display: "flex",
+      alignItems: "center",
+      gap: 14,
+      boxShadow: "0 10px 40px rgba(0,0,0,0.6), 0 0 20px rgba(255, 80, 130, 0.3)",
+      color: "white",
+      fontFamily: "system-ui, sans-serif",
+      minWidth: 320,
+      animation: "pnw-challenge-toast-in 0.3s ease-out",
+    }}>
+      <style>{`@keyframes pnw-challenge-toast-in { from { opacity: 0; transform: translate(-50%, -20px); } to { opacity: 1; transform: translate(-50%, 0); } }`}</style>
+      {challengeToast.fromAvatar && (
+        <img src={challengeToast.fromAvatar} alt="" style={{ width: 44, height: 44, borderRadius: "50%", border: "2px solid rgba(255,80,130,0.8)" }} />
+      )}
+      <div style={{ flex: 1 }}>
+        <div style={{ fontSize: 13, opacity: 0.85, marginBottom: 2 }}>Defi en combat</div>
+        <div style={{ fontSize: 16, fontWeight: 700 }}>
+          <strong style={{ color: "#ff6b9d" }}>{challengeToast.fromName}</strong> te defie !
+        </div>
+      </div>
+      <button
+        style={{
+          padding: "8px 14px",
+          background: "rgba(255,255,255,0.1)",
+          border: "1px solid rgba(255,255,255,0.2)",
+          borderRadius: 8,
+          color: "white",
+          cursor: "pointer",
+          fontSize: 13,
+        }}
+        onClick={() => {
+          setChallengeToast(null);
+          if (challengeToastTimerRef.current) { clearTimeout(challengeToastTimerRef.current); challengeToastTimerRef.current = null; }
+        }}
+      >
+        <FaXmark />
+      </button>
+    </div>,
+    document.body
+  );
+
   return (
+    <>
+    {challengeToastEl}
     <div className="pnw-chat">
       {/* ====== LEFT: Channel sidebar ====== */}
       <div className="pnw-chat-sidebar">
@@ -6295,5 +6369,6 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
         </div>
       )}
     </div>
+    </>
   );
 }
