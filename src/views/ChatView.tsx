@@ -16,6 +16,7 @@ import {
   FaGamepad, FaMapLocationDot, FaCoins, FaMedal,
   FaChartLine, FaMars, FaVenus, FaVenusMars, FaLeaf, FaBagShopping,
   FaLayerGroup, FaChartPie, FaDna, FaHandFist, FaShield, FaWandMagicSparkles,
+  FaTriangleExclamation,
 } from "react-icons/fa6";
 import { supabase } from "../supabaseClient";
 import { LoadingScreen } from "../ui";
@@ -1556,6 +1557,14 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
   // Notification toast pour les defis recus quand on n'est pas dans la Tour de Combat
   const [challengeToast, setChallengeToast] = useState<{ fromName: string; fromAvatar: string | null; roomCode: string; expiresAt: number } | null>(null);
   const challengeToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Notification toast pour les erreurs (jeu non lance, etc.)
+  const [errorToast, setErrorToast] = useState<string | null>(null);
+  const errorToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showErrorToast = (message: string) => {
+    if (errorToastTimerRef.current) clearTimeout(errorToastTimerRef.current);
+    setErrorToast(message);
+    errorToastTimerRef.current = setTimeout(() => setErrorToast(null), 6000);
+  };
   const [showTradeBoxes, setShowTradeBoxes] = useState(false);
   const [showTradeSwapAnim, setShowTradeSwapAnim] = useState(false);
   const [tradeSwapInfo, setTradeSwapInfo] = useState<{ mySpriteUrl: string | null; myName: string; myShiny: boolean; myAltShiny: boolean; theirSpriteUrl: string | null; theirName: string; theirShiny: boolean; theirAltShiny: boolean; boxName: string | null } | null>(null);
@@ -3525,18 +3534,22 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
   const acceptChallengeFromToast = async () => {
     if (!challengeToast || !session) return;
     const toast = challengeToast;
-    setChallengeToast(null);
-    if (challengeToastTimerRef.current) { clearTimeout(challengeToastTimerRef.current); challengeToastTimerRef.current = null; }
 
     const running = await isGameRunning();
     if (!running) {
-      // Refuser le defi car le jeu n'est pas lance
+      // Refuser automatiquement le defi car le jeu n'est pas lance
       sendBattleDecline(toast.roomCode, (battleStateRef.current as any).partnerId || "", session.user.id);
+      cleanupBattleFiles().catch(() => {});
       setBattleState({ phase: "idle" });
-      // Naviguer quand meme vers la Tour pour montrer un message d'erreur
-      onOpenBattle?.();
+      setChallengeToast(null);
+      if (challengeToastTimerRef.current) { clearTimeout(challengeToastTimerRef.current); challengeToastTimerRef.current = null; }
+      showErrorToast("Le jeu n'est pas lance. Le defi de " + toast.fromName + " a ete refuse automatiquement.");
       return;
     }
+
+    // Le jeu est lance : on peut accepter
+    setChallengeToast(null);
+    if (challengeToastTimerRef.current) { clearTimeout(challengeToastTimerRef.current); challengeToastTimerRef.current = null; }
 
     await fullCleanup(battleRelayCleanupRef);
     sendBattleAccept(toast.roomCode, (battleStateRef.current as any).partnerId || "", session.user.id, profile?.display_name || profile?.username || "Joueur");
@@ -3668,9 +3681,58 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
     document.body
   );
 
+  // Toast d'erreur global (jeu non lance, etc.)
+  const errorToastEl = errorToast && createPortal(
+    <div style={{
+      position: "fixed",
+      top: 20,
+      left: "50%",
+      transform: "translateX(-50%)",
+      zIndex: 999999,
+      background: "linear-gradient(135deg, rgba(60,15,15,0.95), rgba(80,20,30,0.95))",
+      border: "2px solid rgba(248, 113, 113, 0.7)",
+      borderRadius: 12,
+      padding: "14px 20px",
+      display: "flex",
+      alignItems: "center",
+      gap: 14,
+      boxShadow: "0 10px 40px rgba(0,0,0,0.6), 0 0 20px rgba(248, 113, 113, 0.3)",
+      color: "white",
+      fontFamily: "system-ui, sans-serif",
+      maxWidth: 480,
+      animation: "pnw-error-toast-in 0.3s ease-out",
+    }}>
+      <style>{`@keyframes pnw-error-toast-in { from { opacity: 0; transform: translate(-50%, -20px); } to { opacity: 1; transform: translate(-50%, 0); } }`}</style>
+      <FaTriangleExclamation style={{ fontSize: 24, color: "#f87171", flexShrink: 0 }} />
+      <div style={{ flex: 1, fontSize: 14, lineHeight: 1.4 }}>
+        {errorToast}
+      </div>
+      <button
+        style={{
+          padding: "6px 10px",
+          background: "rgba(255,255,255,0.1)",
+          border: "1px solid rgba(255,255,255,0.2)",
+          borderRadius: 6,
+          color: "white",
+          cursor: "pointer",
+          fontSize: 12,
+          flexShrink: 0,
+        }}
+        onClick={() => {
+          setErrorToast(null);
+          if (errorToastTimerRef.current) { clearTimeout(errorToastTimerRef.current); errorToastTimerRef.current = null; }
+        }}
+      >
+        <FaXmark />
+      </button>
+    </div>,
+    document.body
+  );
+
   return (
     <>
     {challengeToastEl}
+    {errorToastEl}
     <div className="pnw-chat">
       {/* ====== LEFT: Channel sidebar ====== */}
       <div className="pnw-chat-sidebar">
