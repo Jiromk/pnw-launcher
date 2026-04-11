@@ -101,6 +101,7 @@ export default function BattleTowerView({
     let result: string = "draw";
     if (endReason === "opponent_forfeit") result = "win";
     else if (endReason === "opponent_crash") result = "draw";
+    else if (endReason === "forfeit" || endReason === "crash") result = "loss";
     else if (endReason === "game_end") result = st.battleResult || battleResultRef.current || "draw";
 
     const validResult = result === "win" || result === "loss" || result === "draw";
@@ -255,9 +256,11 @@ export default function BattleTowerView({
             ? "win"
             : reason === "opponent_crash"
               ? "draw"
-              : reason === "game_end"
-                ? battleResultRef.current || "unknown"
-                : "unknown";
+              : reason === "forfeit" || reason === "crash"
+                ? "loss" // Alt-F4 ou crash local = abandon = defaite
+                : reason === "game_end"
+                  ? battleResultRef.current || "unknown"
+                  : "unknown";
         saveBattleLog({
           roomCode: st.roomCode,
           myUserId: session.user.id,
@@ -554,6 +557,8 @@ export default function BattleTowerView({
                 <div className="flex items-center gap-3">
                   {stAny.endReason === "opponent_crash" ? (
                     <FaTriangleExclamation className="text-2xl text-amber-300" />
+                  ) : (stAny.endReason === "forfeit" || stAny.endReason === "crash") ? (
+                    <FaSkull className="text-2xl text-rose-300" />
                   ) : stAny.endReason === "game_end" && stAny.battleResult === "loss" ? (
                     <FaSkull className="text-2xl text-rose-300" />
                   ) : (
@@ -565,18 +570,22 @@ export default function BattleTowerView({
                         ? ui.banner.completeWin
                         : stAny.endReason === "opponent_crash"
                           ? ui.banner.completeDraw
-                          : stAny.endReason === "game_end" && stAny.battleResult === "win"
-                            ? ui.banner.completeWin
-                            : stAny.endReason === "game_end" && stAny.battleResult === "loss"
-                              ? ui.banner.completeLoss
-                              : ui.banner.completeGeneric}
+                          : (stAny.endReason === "forfeit" || stAny.endReason === "crash")
+                            ? ui.banner.completeLoss
+                            : stAny.endReason === "game_end" && stAny.battleResult === "win"
+                              ? ui.banner.completeWin
+                              : stAny.endReason === "game_end" && stAny.battleResult === "loss"
+                                ? ui.banner.completeLoss
+                                : ui.banner.completeGeneric}
                     </div>
                     <div className="text-xs text-white/65">
                       {stAny.endReason === "opponent_forfeit"
                         ? ui.banner.forfeitReason(stAny.partnerName ?? "?")
                         : stAny.endReason === "opponent_crash"
                           ? ui.banner.crashReason(stAny.partnerName ?? "?")
-                          : `vs ${stAny.partnerName ?? "?"}`}
+                          : (stAny.endReason === "forfeit" || stAny.endReason === "crash")
+                            ? `Abandon vs ${stAny.partnerName ?? "?"}`
+                            : `vs ${stAny.partnerName ?? "?"}`}
                     </div>
                   </div>
                 </div>

@@ -2739,7 +2739,15 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
           () => setBattleState((prev) => (prev as any).roomCode === code ? { ...prev, phase: "relaying" } as any : prev),
           (reason) => {
             const prev = battleStateRef.current;
-            const result = reason === "opponent_forfeit" ? "win" : reason === "opponent_crash" ? "draw" : reason === "game_end" ? (battleResultRef.current || "unknown") : "unknown";
+            // opponent_forfeit/opponent_crash = adversaire parti → win/draw
+            // forfeit/crash = nous (Alt-F4, crash local) = abandon → loss
+            // game_end = fin normale via battle_result du jeu
+            const result =
+              reason === "opponent_forfeit" ? "win"
+              : reason === "opponent_crash" ? "draw"
+              : (reason === "forfeit" || reason === "crash") ? "loss"
+              : reason === "game_end" ? (battleResultRef.current || "unknown")
+              : "unknown";
             saveBattleLog({ roomCode: code, myUserId: session?.user?.id || "", partnerId: (prev as any).partnerId || "", partnerName: (prev as any).partnerName || partnerName, result, reason: reason || "unknown", turns: battleTurnCountRef.current, startedAt: battleStartedAtRef.current, endedAt: new Date().toISOString(), turnLog: [..._currentBattleTurnLog], eventLog: [..._currentBattleEventLog] });
             setBattleState((prev2) => (prev2 as any).roomCode === code ? { phase: "complete", roomCode: code, partnerId: (prev2 as any).partnerId || "", partnerName: (prev2 as any).partnerName || "", endReason: reason, battleResult: result } : prev2);
             // Ecrire opponent_left dans l'inbox + delai pour que le jeu le lise avant cleanup
@@ -3571,7 +3579,15 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
       () => setBattleState((prev) => (prev as any).roomCode === toast.roomCode ? { ...(prev as any), phase: "relaying" } as any : prev),
       (reason) => {
         const prev = battleStateRef.current as any;
-        const result = reason === "opponent_forfeit" ? "win" : reason === "opponent_crash" ? "draw" : reason === "game_end" ? (battleResultRef.current || "unknown") : "unknown";
+        // opponent_forfeit/crash = adversaire parti → win/draw
+        // forfeit/crash = nous (Alt-F4, crash local) = abandon → loss
+        // game_end = fin normale via battle_result du jeu
+        const result =
+          reason === "opponent_forfeit" ? "win"
+          : reason === "opponent_crash" ? "draw"
+          : (reason === "forfeit" || reason === "crash") ? "loss"
+          : reason === "game_end" ? (battleResultRef.current || "unknown")
+          : "unknown";
         saveBattleLog({
           roomCode: toast.roomCode,
           myUserId: session.user.id,

@@ -407,11 +407,12 @@ export function startRelay(
   // ─── Opponent disconnected ───
   socket.on("player_left", (data: { userId?: string; reason?: string }) => {
     const rawReason = data?.reason || "unknown";
-    // crash = bug technique, game_end = fin normale, forfeit = abandon volontaire, autre = crash presume
-    const reason = rawReason === "crash" ? "opponent_crash"
-                 : rawReason === "game_end" ? "game_end"
-                 : rawReason === "forfeit" ? "opponent_forfeit"
-                 : "opponent_crash";
+    // game_end = fin normale via battle_result, forfeit = abandon (Alt-F4, bouton Abandonner, crash)
+    // Ancien "crash" garde pour compatibilite mais mappe aussi sur forfeit maintenant
+    const reason: "opponent_forfeit" | "game_end" | "opponent_crash" =
+      rawReason === "game_end" ? "game_end"
+      : rawReason === "forfeit" || rawReason === "crash" ? "opponent_forfeit"
+      : "opponent_forfeit";
     console.log("[BattleRelay] Opponent left, reason:", reason, "(raw:", rawReason, ")");
     eventLog.push({ time: new Date().toISOString(), event: "player_left", data: { reason, rawReason } });
     if (!disconnectFired) {
@@ -571,17 +572,21 @@ export function startRelay(
 
   poll();
 
-  // ─── Game process monitor (crash detection) ───
+  // ─── Game process monitor ───
+  // Si le jeu meurt pendant un combat (Alt-F4, crash, fermeture volontaire),
+  // on traite ca comme un ABANDON pour eviter que des joueurs s'echappent
+  // d'un match perdu en fermant la fenetre. Resultat : defaite pour soi,
+  // victoire pour l'adversaire.
   const gameMonitor = setInterval(async () => {
     if (!running || !battleDetected) return;
     const alive = await isGameRunning();
     if (!alive && !disconnectFired) {
-      console.log("[BattleRelay] Game process died — crash detected");
-      eventLog.push({ time: new Date().toISOString(), event: "game_crash_detected" });
+      console.log("[BattleRelay] Game process died — traite comme abandon (forfeit)");
+      eventLog.push({ time: new Date().toISOString(), event: "game_closed_during_battle", data: { treated_as: "forfeit" } });
       disconnectFired = true;
       running = false;
-      socket.emit("leave_room", { roomCode, userId: myUserId, reason: "crash" });
-      onDisconnect?.("crash");
+      socket.emit("leave_room", { roomCode, userId: myUserId, reason: "forfeit" });
+      onDisconnect?.("forfeit");
     }
   }, 3000);
 
