@@ -13,6 +13,8 @@ import type { Manifest, PlayerProfile, ChatProfile } from "./types";
 import { getSession, getChatProfile, onAuthStateChange } from "./chatAuth";
 import type { Session } from "@supabase/supabase-js";
 import { LauncherSelfUpdateDialog } from "./LauncherSelfUpdateDialog";
+import { GameUpdateDialog } from "./GameUpdateDialog";
+import { fetchPatchNotes, findVersionNotes, type PatchVersion } from "./utils/patchNotes";
 import { parseSave } from "./profile";
 import {
   FaFolderOpen,
@@ -150,6 +152,15 @@ function fmtTime(s?: number | null) {
 }
 function prependUnique(list: string[], line: string) {
   return list[0] === line ? list : [line, ...list];
+}
+
+/** Append a line to %APPDATA%\Local\PNW Launcher\logs\launcher-YYYY-MM-DD.log via the Rust backend. */
+async function logToFile(level: "INFO" | "WARN" | "ERROR", message: string) {
+  try {
+    await invoke("cmd_append_log", { level, message });
+  } catch (e) {
+    console.warn("[logToFile] failed:", e);
+  }
 }
 
 /* ===== Helpers chemins + sprites/ico ===== */
@@ -506,6 +517,13 @@ export default function App() {
     remoteVersion: string;
   } | null>(null);
   const launcherSelfUpdateCheckedRef = useRef(false);
+  // ── État de la fenêtre dédiée de mise à jour du jeu ──
+  const [showGameUpdateDialog, setShowGameUpdateDialog] = useState(false);
+  const [gameUpdatePatchNotes, setGameUpdatePatchNotes] = useState<PatchVersion | null>(null);
+  const [gameUpdatePatchNotesLoading, setGameUpdatePatchNotesLoading] = useState(false);
+  const [gameUpdatePatchNotesError, setGameUpdatePatchNotesError] = useState<string | null>(null);
+  const [downloadedBytes, setDownloadedBytes] = useState(0);
+  const [totalBytes, setTotalBytes] = useState(0);
   /** Référence vers l'objet Update du plugin (pour lancer downloadAndInstall). */
   const launcherUpdateRef = useRef<Awaited<ReturnType<typeof checkUpdater>> | null>(null);
   const [launcherInstallerDl, setLauncherInstallerDl] = useState<{
@@ -638,10 +656,14 @@ export default function App() {
       if (p.stage === "canceled") {
         setStatus("ready");
         setProgress(0);
+        setDownloadedBytes(0);
+        setTotalBytes(0);
         setEta("—");
         setSpeed("—/s");
         autoUpdateStarted.current = false;
+        setShowGameUpdateDialog(false);
         setLog((l) => prependUnique(l, ui.log.downloadCanceled));
+        void logToFile("INFO", "Game update canceled");
         return;
       }
       if (p.stage === "done") {
@@ -650,7 +672,9 @@ export default function App() {
         setEta("0:00");
         setLog((l) => prependUnique(l, ui.log.installComplete));
         setShowUpdateNotice(false);
+        setShowGameUpdateDialog(false);
         autoUpdateStarted.current = false;
+        void logToFile("INFO", "Game update completed successfully");
 
         setTimeout(async () => {
           const info = await readInstallInfo();
@@ -673,6 +697,8 @@ export default function App() {
         const tot = p.total || 0,
           dl = p.downloaded || 0;
         setProgress(tot ? (dl / tot) * 100 : 0);
+        setDownloadedBytes(dl);
+        setTotalBytes(tot);
         setEta(fmtTime(p.eta_secs ?? null));
         setSpeed(p.speed_bps ? `${fmtBytes(p.speed_bps)}/s` : "—/s");
         return;
@@ -691,6 +717,7 @@ export default function App() {
       setStatus("error");
       const msg = formatErrorForUser(e.payload?.error, uiLang);
       setLog((l) => prependUnique(l, `❌ ${msg}`));
+      void logToFile("ERROR", `Game update error: ${e.payload?.error ?? "(unknown)"}`);
     });
     return () => {
       un1.then((f) => f());
@@ -958,6 +985,7 @@ export default function App() {
   async function startInstallOrUpdate(m: Manifest) {
     if (!getZipUrl(m)) {
       setLog((l) => prependUnique(l, `❌ ${ui.log.manifestNoUrl}`));
+      void logToFile("ERROR", `Game update aborted: manifest has no zip URL (v${m.version})`);
       return;
     }
     try {
@@ -969,16 +997,26 @@ export default function App() {
         setLog((l) => prependUnique(l, `❌ ${formatErrorForUser(check.message ?? "", uiLang)}`));
         autoUpdateStarted.current = false;
         setShowUpdateNotice(true);
+        void logToFile("ERROR", `Disk space check failed: ${check.message}`);
         return;
       }
     } catch (e) {
       setStatus("ready");
       setLog((l) => prependUnique(l, `❌ ${ui.log.diskCheckFailed(String(e))}`));
       autoUpdateStarted.current = false;
+      void logToFile("ERROR", `Disk space check threw: ${String(e)}`);
       return;
     }
+    // Ouvre la fenêtre dédiée et logue le démarrage
+    setShowGameUpdateDialog(true);
+    void logToFile(
+      "INFO",
+      `Game update started: ${installedVersion ?? "?"} -> ${m.version}`,
+    );
     setStatus("downloading");
     setProgress(0);
+    setDownloadedBytes(0);
+    setTotalBytes(0);
     setEta("—");
     setSpeed("—/s");
     invoke("cmd_download_and_install", { manifest: m });
@@ -1593,11 +1631,18 @@ export default function App() {
     }
   }
 
-  const pause = () => invoke("cmd_pause_download");
-  const resume = () => invoke("cmd_resume_download");
+  const pause = () => {
+    void invoke("cmd_pause_download");
+    void logToFile("INFO", "Game update paused by user");
+  };
+  const resume = () => {
+    void invoke("cmd_resume_download");
+    void logToFile("INFO", "Game update resumed by user");
+  };
   const cancel = () => {
-    invoke("cmd_cancel_download");
+    void invoke("cmd_cancel_download");
     setShowUpdateNotice(false);
+    setShowGameUpdateDialog(false);
   };
 
   /* ====== Détection connexion (online/offline) ====== */
@@ -1654,36 +1699,60 @@ export default function App() {
   useEffect(() => {
     if (status !== "ready") return;
     if (showInitialChoice) return;
+    if (autoUpdateStarted.current) return;
     if (launcherSelfUpdateCheckedRef.current) return;
     if (!navigator.onLine) return;
-    const id = window.setTimeout(() => {
-      void (async () => {
-        if (launcherSelfUpdateCheckedRef.current) return;
-        launcherSelfUpdateCheckedRef.current = true;
-        try {
-          const cv = await getVersion();
-          const update = await checkUpdater();
-          console.debug("[LauncherSelfUpdate] plugin check:", update);
-          if (!update?.available) {
-            console.debug("[LauncherSelfUpdate] no update available");
-            return;
-          }
-          const rv = update.version ?? "";
-          launcherUpdateRef.current = update;
-          setLauncherSelfUpdatePayload({
-            currentVersion: cv.trim(),
-            remoteVersion: rv,
-          });
-          setShowLauncherSelfUpdate(true);
-          const uiSnap = getLauncherUi(uiLangFromGameLang(gameLang));
-          setLog((l) => prependUnique(l, uiSnap.log.launcherUpdateAvailable(cv, rv)));
-        } catch (err) {
-          console.error("[LauncherSelfUpdate] check failed:", err);
+    void (async () => {
+      if (launcherSelfUpdateCheckedRef.current) return;
+      launcherSelfUpdateCheckedRef.current = true;
+      try {
+        const cv = await getVersion();
+        const update = await checkUpdater();
+        console.debug("[LauncherSelfUpdate] plugin check:", update);
+        if (!update?.available) {
+          console.debug("[LauncherSelfUpdate] no update available");
+          return;
         }
-      })();
-    }, 2000);
-    return () => clearTimeout(id);
+        const rv = update.version ?? "";
+        launcherUpdateRef.current = update;
+        setLauncherSelfUpdatePayload({
+          currentVersion: cv.trim(),
+          remoteVersion: rv,
+        });
+        setShowLauncherSelfUpdate(true);
+        const uiSnap = getLauncherUi(uiLangFromGameLang(gameLang));
+        setLog((l) => prependUnique(l, uiSnap.log.launcherUpdateAvailable(cv, rv)));
+      } catch (err) {
+        console.error("[LauncherSelfUpdate] check failed:", err);
+      }
+    })();
   }, [status, gameLang, showInitialChoice]);
+
+  /* ── Récupère les patch notes quand la fenêtre de mise à jour du jeu s'ouvre ── */
+  useEffect(() => {
+    if (!showGameUpdateDialog) return;
+    const ac = new AbortController();
+    setGameUpdatePatchNotesLoading(true);
+    setGameUpdatePatchNotesError(null);
+    setGameUpdatePatchNotes(null);
+    void (async () => {
+      try {
+        const lang: "fr" | "en" = gameLang === "en" ? "en" : "fr";
+        const data = await fetchPatchNotes(PNW_SITE_URL, lang, ac.signal);
+        const target = manifest?.version ? String(manifest.version).trim() : "";
+        const found = findVersionNotes(data, target);
+        if (!ac.signal.aborted) setGameUpdatePatchNotes(found);
+      } catch (e: any) {
+        if (ac.signal.aborted) return;
+        const msg = formatErrorForUser(String(e), uiLang);
+        setGameUpdatePatchNotesError(msg);
+        void logToFile("WARN", `Patch notes fetch failed: ${String(e)}`);
+      } finally {
+        if (!ac.signal.aborted) setGameUpdatePatchNotesLoading(false);
+      }
+    })();
+    return () => ac.abort();
+  }, [showGameUpdateDialog, manifest?.version, gameLang, uiLang]);
 
   statusRef.current = status;
   checkRef.current = check;
@@ -2757,6 +2826,28 @@ export default function App() {
             }
           }}
         />
+
+        <GameUpdateDialog
+          open={showGameUpdateDialog}
+          currentVersion={installedVersion ?? ""}
+          remoteVersion={manifest?.version ? String(manifest.version) : ""}
+          status={status}
+          progress={progress}
+          eta={eta}
+          speed={speed}
+          downloadedBytes={downloadedBytes}
+          totalBytes={totalBytes}
+          patchNotes={gameUpdatePatchNotes}
+          patchNotesLoading={gameUpdatePatchNotesLoading}
+          patchNotesError={gameUpdatePatchNotesError}
+          patchNotesBaseUrl={PNW_SITE_URL.replace(/\/$/, "")}
+          siteUrl={PNW_SITE_URL}
+          labels={ui.gameUpdate}
+          onPause={pause}
+          onResume={resume}
+          onCancel={cancel}
+          fmtBytes={fmtBytes}
+        />
       </main>
 
       {/* Chat toggle button */}
@@ -2777,7 +2868,7 @@ export default function App() {
 
       {/* Chat fullscreen page — toujours monté pour garder les subscriptions Supabase actives */}
       <div className="pnw-chat-fullscreen" style={(chatOpen || activeView === "battle") ? undefined : { display: "none" }}>
-        <ChatView siteUrl={siteUrl} onBack={() => { if (activeView === "battle") setActiveView("launcher"); else setChatOpen(false); }} onUnreadChange={setChatUnread} visible={chatOpen || activeView === "battle"} battleMode={activeView === "battle"} gtsSharePending={gtsSharePending} onGtsShareDone={() => setGtsSharePending(null)} onOpenGts={(onlineId) => { setChatOpen(false); setGtsPendingOnlineId(onlineId ?? null); setActiveView("gts"); }} gameProfile={profile} installDir={installDir} lastSavePath={lastSavePath} onProfileReload={() => loadProfile(selectedSaveIdx)} />
+        <ChatView siteUrl={siteUrl} onBack={() => { if (activeView === "battle") setActiveView("launcher"); else setChatOpen(false); }} onUnreadChange={setChatUnread} visible={chatOpen || activeView === "battle"} battleMode={activeView === "battle"} gtsSharePending={gtsSharePending} onGtsShareDone={() => setGtsSharePending(null)} onOpenGts={(onlineId) => { setChatOpen(false); setGtsPendingOnlineId(onlineId ?? null); setActiveView("gts"); }} onOpenBattle={() => { setChatOpen(false); setActiveView("battle"); }} gameProfile={profile} installDir={installDir} lastSavePath={lastSavePath} onProfileReload={() => loadProfile(selectedSaveIdx)} />
       </div>
       </div>
     </div>

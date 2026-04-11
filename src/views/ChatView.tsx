@@ -31,7 +31,7 @@ import {
   togglePinMessage, fetchPinnedMessages,
 } from "../chatAuth";
 import type { ChatChannel, ChatMessage, ChatProfile, ChatMute, ChatBan, ChatFriend, PlayerProfile, GameLiveState, GameLivePlayer, GameActivityShareData, TradeState, TradeSelection, TradeSelectionPreview, TradeMessageData, BattleRoomState } from "../types";
-import { generateRoomCode, writeBattleTrigger, writeStopTrigger, startRelay, cleanupBattleFiles, fullCleanup, isGameRunning, BATTLE_INVITE_TIMEOUT, connectLobby, sendBattleInvite, sendBattleCancel, playTurnSound, saveBattleLog, _currentBattleTurnLog, _currentBattleEventLog, writeOpponentLeft } from "../battleRelay";
+import { generateRoomCode, writeBattleTrigger, writeStopTrigger, startRelay, cleanupBattleFiles, fullCleanup, isGameRunning, BATTLE_INVITE_TIMEOUT, connectLobby, sendBattleInvite, sendBattleAccept, sendBattleDecline, sendBattleCancel, playTurnSound, saveBattleLog, _currentBattleTurnLog, _currentBattleEventLog, writeOpponentLeft } from "../battleRelay";
 import BattleTowerView from "./battleTower/BattleTowerView";
 import { TRADE_PREFIX, generateTradeId, validateIncomingBytes, extractAndEncode, executeTradeLocally, buildTradeMessage, parseTradeMessage, TRADE_PENDING_TIMEOUT, TRADE_SELECTING_TIMEOUT, TRADE_CONFIRMING_TIMEOUT, TRADE_EXECUTING_TIMEOUT } from "../tradeP2P";
 import { loadSaveForEdit, extractPokemonFromBox, encodePokemonForGts } from "../saveWriter";
@@ -1488,6 +1488,8 @@ interface ChatViewProps {
   gtsSharePending?: import("../types").GtsShareData | null;
   onGtsShareDone?: () => void;
   onOpenGts?: (onlineId?: string | number) => void;
+  /** Naviguer vers la vue Tour de Combat (depuis le toast d'invitation). */
+  onOpenBattle?: () => void;
   gameProfile?: PlayerProfile | null;
   installDir: string;
   lastSavePath?: string | null;
@@ -1498,7 +1500,7 @@ interface ChatViewProps {
 
 /* ==================== Main Component ==================== */
 
-export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = true, battleMode = false, gtsSharePending, onGtsShareDone, onOpenGts, gameProfile, installDir, lastSavePath, onProfileReload }: ChatViewProps) {
+export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = true, battleMode = false, gtsSharePending, onGtsShareDone, onOpenGts, onOpenBattle, gameProfile, installDir, lastSavePath, onProfileReload }: ChatViewProps) {
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<ChatProfile | null>(null);
   const [loading, setLoading] = useState(true);
@@ -3519,6 +3521,85 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
     );
   }
 
+  // Handler pour accepter le defi depuis le toast (sans passer par BattleTowerView)
+  const acceptChallengeFromToast = async () => {
+    if (!challengeToast || !session) return;
+    const toast = challengeToast;
+    setChallengeToast(null);
+    if (challengeToastTimerRef.current) { clearTimeout(challengeToastTimerRef.current); challengeToastTimerRef.current = null; }
+
+    const running = await isGameRunning();
+    if (!running) {
+      // Refuser le defi car le jeu n'est pas lance
+      sendBattleDecline(toast.roomCode, (battleStateRef.current as any).partnerId || "", session.user.id);
+      setBattleState({ phase: "idle" });
+      // Naviguer quand meme vers la Tour pour montrer un message d'erreur
+      onOpenBattle?.();
+      return;
+    }
+
+    await fullCleanup(battleRelayCleanupRef);
+    sendBattleAccept(toast.roomCode, (battleStateRef.current as any).partnerId || "", session.user.id, profile?.display_name || profile?.username || "Joueur");
+    setBattleState((prev) => ({ ...(prev as any), phase: "waiting_game" } as any));
+
+    try {
+      await writeBattleTrigger(Number(toast.roomCode), toast.fromName, "client");
+    } catch (e) {
+      console.error("[Battle] writeBattleTrigger FAILED:", e);
+    }
+
+    battleResultRef.current = "";
+    battleTurnCountRef.current = 0;
+    battleStartedAtRef.current = new Date().toISOString();
+
+    const cleanup = startRelay(
+      toast.roomCode,
+      session.user.id,
+      () => setBattleState((prev) => (prev as any).roomCode === toast.roomCode ? { ...(prev as any), phase: "relaying" } as any : prev),
+      (reason) => {
+        const prev = battleStateRef.current as any;
+        const result = reason === "opponent_forfeit" ? "win" : reason === "opponent_crash" ? "draw" : reason === "game_end" ? (battleResultRef.current || "unknown") : "unknown";
+        saveBattleLog({
+          roomCode: toast.roomCode,
+          myUserId: session.user.id,
+          partnerId: prev.partnerId || "",
+          partnerName: prev.partnerName || toast.fromName,
+          result,
+          reason: reason || "unknown",
+          turns: battleTurnCountRef.current,
+          startedAt: battleStartedAtRef.current,
+          endedAt: new Date().toISOString(),
+          turnLog: [..._currentBattleTurnLog],
+          eventLog: [..._currentBattleEventLog],
+        });
+        setBattleState((prev2) => (prev2 as any).roomCode === toast.roomCode ? { phase: "complete", roomCode: toast.roomCode, partnerId: (prev2 as any).partnerId || "", partnerName: (prev2 as any).partnerName || toast.fromName, endReason: reason, battleResult: result } as any : prev2);
+        writeOpponentLeft(reason || "unknown")
+          .then(() => new Promise(r => setTimeout(r, 2500)))
+          .then(() => writeStopTrigger())
+          .then(() => cleanupBattleFiles())
+          .catch(() => {});
+      },
+      () => { battleTurnCountRef.current++; },
+      undefined,
+      (result) => { battleResultRef.current = result; },
+    );
+    battleRelayCleanupRef.current = cleanup;
+
+    // Naviguer vers la Tour de Combat pour suivre le combat
+    onOpenBattle?.();
+  };
+
+  // Handler pour refuser le defi depuis le toast
+  const declineChallengeFromToast = () => {
+    if (!challengeToast || !session) return;
+    const cur = battleStateRef.current as any;
+    sendBattleDecline(challengeToast.roomCode, cur.partnerId || "", session.user.id);
+    cleanupBattleFiles().catch(() => {});
+    setBattleState({ phase: "idle" });
+    setChallengeToast(null);
+    if (challengeToastTimerRef.current) { clearTimeout(challengeToastTimerRef.current); challengeToastTimerRef.current = null; }
+  };
+
   // Toast global pour les defis recus quand on n'est pas dans la Tour de Combat
   const challengeToastEl = challengeToast && createPortal(
     <div style={{
@@ -3530,43 +3611,59 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
       background: "linear-gradient(135deg, rgba(20,20,30,0.95), rgba(40,30,60,0.95))",
       border: "2px solid rgba(255, 80, 130, 0.6)",
       borderRadius: 12,
-      padding: "14px 20px",
+      padding: "14px 18px",
       display: "flex",
       alignItems: "center",
       gap: 14,
       boxShadow: "0 10px 40px rgba(0,0,0,0.6), 0 0 20px rgba(255, 80, 130, 0.3)",
       color: "white",
       fontFamily: "system-ui, sans-serif",
-      minWidth: 320,
+      minWidth: 380,
       animation: "pnw-challenge-toast-in 0.3s ease-out",
     }}>
       <style>{`@keyframes pnw-challenge-toast-in { from { opacity: 0; transform: translate(-50%, -20px); } to { opacity: 1; transform: translate(-50%, 0); } }`}</style>
       {challengeToast.fromAvatar && (
         <img src={challengeToast.fromAvatar} alt="" style={{ width: 44, height: 44, borderRadius: "50%", border: "2px solid rgba(255,80,130,0.8)" }} />
       )}
-      <div style={{ flex: 1 }}>
-        <div style={{ fontSize: 13, opacity: 0.85, marginBottom: 2 }}>Defi en combat</div>
-        <div style={{ fontSize: 16, fontWeight: 700 }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 2 }}>Defi en combat</div>
+        <div style={{ fontSize: 15, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
           <strong style={{ color: "#ff6b9d" }}>{challengeToast.fromName}</strong> te defie !
         </div>
       </div>
-      <button
-        style={{
-          padding: "8px 14px",
-          background: "rgba(255,255,255,0.1)",
-          border: "1px solid rgba(255,255,255,0.2)",
-          borderRadius: 8,
-          color: "white",
-          cursor: "pointer",
-          fontSize: 13,
-        }}
-        onClick={() => {
-          setChallengeToast(null);
-          if (challengeToastTimerRef.current) { clearTimeout(challengeToastTimerRef.current); challengeToastTimerRef.current = null; }
-        }}
-      >
-        <FaXmark />
-      </button>
+      <div style={{ display: "flex", gap: 8 }}>
+        <button
+          style={{
+            padding: "8px 14px",
+            background: "linear-gradient(135deg, #22c55e, #16a34a)",
+            border: "none",
+            borderRadius: 8,
+            color: "white",
+            cursor: "pointer",
+            fontSize: 13,
+            fontWeight: 600,
+            boxShadow: "0 2px 8px rgba(34,197,94,0.4)",
+          }}
+          onClick={acceptChallengeFromToast}
+        >
+          Accepter
+        </button>
+        <button
+          style={{
+            padding: "8px 14px",
+            background: "rgba(255,255,255,0.08)",
+            border: "1px solid rgba(255,255,255,0.2)",
+            borderRadius: 8,
+            color: "white",
+            cursor: "pointer",
+            fontSize: 13,
+            fontWeight: 500,
+          }}
+          onClick={declineChallengeFromToast}
+        >
+          Refuser
+        </button>
+      </div>
     </div>,
     document.body
   );
