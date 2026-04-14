@@ -104,8 +104,8 @@ export function LauncherSelfUpdateDialog({
         {/* Logo */}
         <img
           src="/logo.png"
-          alt="PNW Launcher"
-          className="mb-8 h-20 w-20 rounded-2xl shadow-[0_8px_40px_-8px_rgba(0,0,0,0.6)] ring-1 ring-white/10"
+          alt="Pokémon New World"
+          className="mb-6 h-auto w-64 drop-shadow-[0_4px_24px_rgba(0,0,0,0.7)] sm:w-72"
           draggable={false}
         />
 

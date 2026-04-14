@@ -1,9 +1,31 @@
-import { useState, useEffect } from "react";
-import { FaFileLines, FaSpinner } from "react-icons/fa6";
+import { useState, useEffect, type ReactNode } from "react";
+import {
+  FaScroll,
+  FaSpinner,
+  FaFileLines,
+  FaWandMagicSparkles,
+  FaWrench,
+  FaScaleBalanced,
+  FaPalette,
+  FaMusic,
+  FaStar,
+  FaList,
+  FaArrowDown,
+  FaArrowUp,
+  FaArrowsLeftRight,
+} from "react-icons/fa6";
+import PatchMarkdownText from "../components/PatchMarkdownText";
+
+/* ───── Types ───── */
+interface PatchItem {
+  text?: string;
+  kind?: string;
+}
 
 interface PatchSection {
   title: string;
-  items: string[];
+  icon?: string;
+  items: (string | PatchItem)[];
   image?: string;
 }
 
@@ -19,15 +41,80 @@ interface PatchnotesData {
   background?: string;
 }
 
-function resolveAssetUrl(base: string, value?: string) {
-  if (!value) return "";
-  try {
-    return new URL(value, `${base}/`).toString();
-  } catch {
-    return value;
+/* ───── FA class → react-icons mapping ───── */
+const FA_ICON_MAP: Record<string, ReactNode> = {
+  "fa-wand-magic-sparkles": <FaWandMagicSparkles />,
+  "fa-wrench": <FaWrench />,
+  "fa-scale-balanced": <FaScaleBalanced />,
+  "fa-palette": <FaPalette />,
+  "fa-music": <FaMusic />,
+  "fa-star": <FaStar />,
+  "fa-scroll": <FaScroll />,
+  "fa-file-lines": <FaFileLines />,
+  "fa-list": <FaList />,
+};
+
+/** Emoji en début de titre → icône FA */
+const EMOJI_TO_FA: Record<string, string> = {
+  "\u{1F195}": "fa-wand-magic-sparkles", // 🆕
+  "\u{1F527}": "fa-wrench",              // 🔧
+  "\u2696\uFE0F": "fa-scale-balanced",   // ⚖️
+  "\u{1F3A8}": "fa-palette",             // 🎨
+  "\u{1F3B5}": "fa-music",               // 🎵
+  "\u{1F31F}": "fa-star",                // 🌟
+};
+
+const EMOJI_LEAD = /^(\p{Extended_Pictographic}|\uFE0F|\u200D)+(\s+)*/u;
+
+function stripLeadingEmoji(title: string): string {
+  let t = title.trimStart();
+  for (let i = 0; i < 12; i++) {
+    const next = t.replace(EMOJI_LEAD, "").trimStart();
+    if (next === t) break;
+    t = next;
   }
+  return t.trim();
 }
 
+function getSectionIcon(section: PatchSection): ReactNode {
+  // 1. Explicit icon field (FA class string)
+  if (section.icon && typeof section.icon === "string") {
+    const key = section.icon.replace(/^fa-solid\s+/, "").trim();
+    if (FA_ICON_MAP[key]) return FA_ICON_MAP[key];
+  }
+  // 2. Infer from emoji in title
+  const first = [...(section.title?.trimStart() ?? "")][0];
+  if (first && EMOJI_TO_FA[first]) {
+    return FA_ICON_MAP[EMOJI_TO_FA[first]] ?? <FaList />;
+  }
+  return <FaList />;
+}
+
+function getSectionTitle(section: PatchSection): string {
+  return stripLeadingEmoji(section.title ?? "") || section.title?.trim() || "";
+}
+
+function getItemText(item: string | PatchItem): string {
+  return typeof item === "string" ? item : item.text ?? "";
+}
+
+function getItemKind(item: string | PatchItem): string | undefined {
+  return typeof item === "object" ? item.kind : undefined;
+}
+
+const BALANCE_CONFIG: Record<string, { label: string; icon: ReactNode; cls: string }> = {
+  nerf: { label: "Nerf", icon: <FaArrowDown />, cls: "patchnotes-balance-li--nerf" },
+  buff: { label: "Buff", icon: <FaArrowUp />, cls: "patchnotes-balance-li--buff" },
+  ajustement: { label: "Ajustement", icon: <FaArrowsLeftRight />, cls: "patchnotes-balance-li--ajustement" },
+};
+
+function resolveAssetUrl(base: string, value?: string) {
+  if (!value) return "";
+  try { return new URL(value, `${base}/`).toString(); }
+  catch { return value; }
+}
+
+/* ───── Component ───── */
 export default function PatchNotesView({ siteUrl }: { siteUrl: string }) {
   const [data, setData] = useState<PatchnotesData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -42,15 +129,9 @@ export default function PatchNotesView({ siteUrl }: { siteUrl: string }) {
       .then((res) => {
         if (!cancelled && res?.success && res?.patchnotes) setData(res.patchnotes);
       })
-      .catch((e) => {
-        console.warn("[PNW] PatchNotes:", e);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
+      .catch((e) => console.warn("[PNW] PatchNotes:", e))
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
   }, [base]);
 
   const versions = data?.versions ?? [];
@@ -82,11 +163,14 @@ export default function PatchNotesView({ siteUrl }: { siteUrl: string }) {
             ))}
           </nav>
         </aside>
+
         <div className="patchnotes-main">
           <header className="patchnotes-header">
             <h1 className="patchnotes-title">
-              <FaFileLines size={22} aria-hidden style={{ color: "var(--primary-2)", opacity: 0.95 }} />
-              Notes de patch
+              <span className="patchnotes-title-icon" aria-hidden="true">
+                <FaScroll />
+              </span>
+              <span>Notes de patch</span>
             </h1>
             <p className="patchnotes-desc">Historique des mises à jour du jeu.</p>
           </header>
@@ -94,7 +178,7 @@ export default function PatchNotesView({ siteUrl }: { siteUrl: string }) {
           {loading ? (
             <div className="patchnotes-loading">
               <FaSpinner className="animate-spin" size={20} aria-hidden />
-              <span>Chargement…</span>
+              <span>Chargement...</span>
             </div>
           ) : versions.length === 0 ? (
             <div className="patchnotes-empty card">
@@ -104,11 +188,12 @@ export default function PatchNotesView({ siteUrl }: { siteUrl: string }) {
           ) : selectedVersion ? (
             <section className="patchnotes-version card patchnotes-version--single">
               <div className="patchnotes-version-header">
-                <h2>Version {selectedVersion.version}</h2>
+                <h2 className="patchnotes-version-heading">Version {selectedVersion.version}</h2>
                 {selectedVersion.date && (
-                  <span className="patchnotes-version-date">{selectedVersion.date}</span>
+                  <span className="patchnotes-version-date-badge">{selectedVersion.date}</span>
                 )}
               </div>
+
               {selectedVersionImage && (
                 <div className="patchnotes-version-image-wrap">
                   <img
@@ -118,10 +203,17 @@ export default function PatchNotesView({ siteUrl }: { siteUrl: string }) {
                   />
                 </div>
               )}
+
               <div className="patchnotes-version-sections">
                 {(selectedVersion.sections || []).map((section, i) => (
                   <div key={i} className="patchnotes-section">
-                    <h3>{section.title}</h3>
+                    <h3 className="patchnotes-section-title">
+                      <span className="patchnotes-section-title-inner">
+                        <span className="patchnotes-section-icon">{getSectionIcon(section)}</span>
+                        <span>{getSectionTitle(section)}</span>
+                      </span>
+                    </h3>
+
                     {resolveAssetUrl(base, section.image) && (
                       <div className="patchnotes-section-image-wrap">
                         <img
@@ -131,10 +223,24 @@ export default function PatchNotesView({ siteUrl }: { siteUrl: string }) {
                         />
                       </div>
                     )}
+
                     <ul>
-                      {(section.items || []).map((item, j) => (
-                        <li key={j}>{item}</li>
-                      ))}
+                      {(section.items || []).map((item, j) => {
+                        const text = getItemText(item);
+                        const kind = getItemKind(item);
+                        const balance = kind ? BALANCE_CONFIG[kind] : undefined;
+                        return (
+                          <li key={j} className={balance ? `patchnotes-balance-li ${balance.cls}` : undefined}>
+                            {balance && (
+                              <span className={`patchnotes-balance-tag patchnotes-balance-tag--${kind}`}>
+                                {balance.icon}
+                                <span>{balance.label}</span>
+                              </span>
+                            )}
+                            <PatchMarkdownText text={text} />
+                          </li>
+                        );
+                      })}
                     </ul>
                   </div>
                 ))}
