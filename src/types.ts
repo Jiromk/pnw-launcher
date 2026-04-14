@@ -28,6 +28,12 @@ export type TeamMember = {
   ivSpd?: number;
   ivAts?: number;
   ivDfs?: number;
+  evHp?: number;
+  evAtk?: number;
+  evDfe?: number;
+  evSpd?: number;
+  evAts?: number;
+  evDfs?: number;
   nature?: number | null;
   ability?: number | null;
   itemHolding?: number | null;

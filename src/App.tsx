@@ -1949,7 +1949,7 @@ export default function App() {
             />
           </div>
           <div className="launcher-home-actions">
-            <LauncherMenu onOpenGts={() => setActiveView("gts")} onOpenBattle={() => setActiveView("battle")} uiLang={uiLang} gtsWishlistMatches={gtsWishlistMatches} />
+            <LauncherMenu onOpenGts={() => setActiveView("gts")} onOpenBattle={() => setActiveView("battle")} uiLang={uiLang} gtsWishlistMatches={gtsWishlistMatches} gameOutOfDate={needUpdate} />
             <ThemeMenu defaultBgUrl={manifest?.launcherBackgroundUrl} uiLang={uiLang} />
             <IconButton
               tone="ghost"
@@ -2668,81 +2668,141 @@ export default function App() {
         {/* Modal de choix initial */}
         <Modal
           open={showInitialChoice}
-          title={ui.welcome.title}
           hideActions
           onCancel={() => setShowInitialChoice(false)}
+          panelClassName="w-[min(580px,94vw)] overflow-hidden border-white/[0.14] bg-gradient-to-b from-[#141f38] via-[#0f172e] to-[#0a1020] p-0 shadow-[0_0_0_1px_rgba(255,255,255,0.04),0_24px_80px_-20px_rgba(0,0,0,0.85),0_0_60px_-30px_rgba(56,189,248,0.12)]"
+          childrenClassName="!text-[15px] text-white/88 leading-relaxed p-6 sm:p-7 pt-5"
         >
-          <div className="text-white/85 text-sm space-y-4">
-            <p className="text-base font-medium text-white/90">{ui.welcome.pickLang}</p>
-            <p className="text-xs text-white/55 leading-relaxed">
-              {ui.welcome.hint}
-            </p>
-            <div className="grid grid-cols-2 gap-3">
-              <button
-                type="button"
-                onClick={() => void handleWelcomePickLang("fr")}
-                className={[
-                  "flex flex-col items-center gap-2 p-4 rounded-xl transition-all ring-2",
-                  gameLang === "fr"
-                    ? "bg-gradient-to-br from-blue-500/35 to-indigo-500/30 ring-amber-400/80"
-                    : "bg-gradient-to-br from-blue-500/20 to-indigo-500/20 hover:from-blue-500/30 hover:to-indigo-500/30 ring-white/15",
-                ].join(" ")}
-              >
-                <span className="font-semibold">Français</span>
-                <span className="text-xs opacity-75">{ui.welcome.buildFr}</span>
-              </button>
-              <button
-                type="button"
-                disabled={!canUseEnglishTrack}
-                onClick={() => void handleWelcomePickLang("en")}
-                title={
-                  !canUseEnglishTrack
-                    ? enTrack === "unavailable"
-                      ? ui.welcome.enTitleUnavailable
-                      : enTrack === "loading"
-                        ? ui.welcome.enTitleLoading
-                        : ui.welcome.enTrackWarn
-                    : undefined
-                }
-                className={[
-                  "flex flex-col items-center gap-2 p-4 rounded-xl transition-all ring-2",
-                  !canUseEnglishTrack && "opacity-45 cursor-not-allowed grayscale",
-                  gameLang === "en"
-                    ? "bg-gradient-to-br from-cyan-500/35 to-teal-500/30 ring-amber-400/80"
-                    : "bg-gradient-to-br from-cyan-500/20 to-teal-500/20 hover:from-cyan-500/30 hover:to-teal-500/30 ring-white/15",
-                ]
-                  .filter(Boolean)
-                  .join(" ")}
-              >
-                <span className="font-semibold">English</span>
-                <span className="text-xs opacity-75">
-                  {enTrack === "loading" && !hasLocalEnInstall
-                    ? ui.welcome.enChecking
-                    : !canUseEnglishTrack
-                      ? ui.welcome.enUnavailable
-                      : ui.welcome.buildEn}
-                </span>
-              </button>
-            </div>
-            {enTrack === "unavailable" && !hasLocalEnInstall && (
-              <p className="text-xs text-amber-200/90 bg-amber-500/10 border border-amber-400/25 rounded-lg px-3 py-2">
-                {ui.welcome.enTrackWarn}
-              </p>
-            )}
+          <div className="pnw-welcome space-y-5">
+            <header className="flex flex-col items-center gap-4 text-center sm:flex-row sm:items-center sm:text-left sm:gap-5">
+              <div className="relative shrink-0">
+                <div
+                  className="pointer-events-none absolute -inset-3 rounded-3xl bg-gradient-to-br from-sky-500/35 via-indigo-500/20 to-transparent opacity-80 blur-xl"
+                  aria-hidden
+                />
+                <img
+                  src="/logo.png"
+                  alt=""
+                  draggable={false}
+                  className="pnw-welcome-hero-logo relative h-[76px] w-[76px] rounded-2xl object-contain ring-1 ring-white/20 shadow-[0_12px_40px_-12px_rgba(0,0,0,0.75)]"
+                />
+              </div>
+              <div className="min-w-0 flex-1 space-y-1.5">
+                <h2 className="bg-gradient-to-r from-white via-sky-100 to-indigo-200/95 bg-clip-text text-xl font-bold tracking-tight text-transparent sm:text-2xl">
+                  {ui.welcome.title}
+                </h2>
+                <p className="text-[13px] text-white/45">
+                  Pokémon New World
+                </p>
+              </div>
+            </header>
 
-            <div className="border-t border-white/10 pt-4 mt-2">
-              <p className="text-base mb-3">{ui.welcome.firstTimeQ}</p>
+            <section className="space-y-3 rounded-2xl bg-white/[0.035] p-4 ring-1 ring-white/[0.08] backdrop-blur-sm">
+              <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-sky-300/85">
+                <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-sky-500/15 ring-1 ring-sky-400/20">
+                  <FaLanguage className="text-sm" aria-hidden />
+                </span>
+                <span>1</span>
+                <span className="h-px flex-1 bg-gradient-to-r from-white/15 to-transparent" aria-hidden />
+              </div>
+              <p className="text-[15px] font-semibold text-white/92">{ui.welcome.pickLang}</p>
+              <p className="text-xs leading-relaxed text-white/50">{ui.welcome.hint}</p>
+              <div className="grid grid-cols-2 gap-3 pt-0.5">
+                <button
+                  type="button"
+                  onClick={() => void handleWelcomePickLang("fr")}
+                  className={[
+                    "group relative flex flex-col items-center gap-2.5 overflow-hidden rounded-2xl p-4 text-center transition-all duration-300 ring-2 focus-visible:outline-none focus-visible:ring-amber-300/60",
+                    gameLang === "fr"
+                      ? "bg-gradient-to-br from-blue-500/40 to-indigo-600/35 ring-amber-400/75 shadow-[0_0_28px_-10px_rgba(59,130,246,0.45)]"
+                      : "bg-gradient-to-br from-blue-500/[0.18] to-indigo-600/15 ring-white/12 hover:from-blue-500/28 hover:to-indigo-600/25 hover:ring-sky-400/25",
+                  ].join(" ")}
+                >
+                  <span
+                    className="pointer-events-none absolute inset-0 opacity-0 transition-opacity duration-300 group-hover:opacity-100"
+                    style={{
+                      background: "linear-gradient(135deg, rgba(255,255,255,0.08) 0%, transparent 55%)",
+                    }}
+                    aria-hidden
+                  />
+                  <span className="relative flex h-11 w-11 items-center justify-center rounded-full bg-white/10 text-sm font-bold tracking-wide text-white/95 ring-1 ring-white/15">
+                    FR
+                  </span>
+                  <span className="relative font-semibold">Français</span>
+                  <span className="relative text-[11px] text-white/55">{ui.welcome.buildFr}</span>
+                </button>
+                <button
+                  type="button"
+                  disabled={!canUseEnglishTrack}
+                  onClick={() => void handleWelcomePickLang("en")}
+                  title={
+                    !canUseEnglishTrack
+                      ? enTrack === "unavailable"
+                        ? ui.welcome.enTitleUnavailable
+                        : enTrack === "loading"
+                          ? ui.welcome.enTitleLoading
+                          : ui.welcome.enTrackWarn
+                      : undefined
+                  }
+                  className={[
+                    "group relative flex flex-col items-center gap-2.5 overflow-hidden rounded-2xl p-4 text-center transition-all duration-300 ring-2 focus-visible:outline-none focus-visible:ring-amber-300/60",
+                    !canUseEnglishTrack && "cursor-not-allowed opacity-45 grayscale",
+                    gameLang === "en"
+                      ? "bg-gradient-to-br from-cyan-500/40 to-teal-600/35 ring-amber-400/75 shadow-[0_0_28px_-10px_rgba(34,211,238,0.4)]"
+                      : "bg-gradient-to-br from-cyan-500/[0.18] to-teal-600/15 ring-white/12 hover:from-cyan-500/28 hover:to-teal-600/25 hover:ring-cyan-400/25",
+                  ]
+                    .filter(Boolean)
+                    .join(" ")}
+                >
+                  <span
+                    className="pointer-events-none absolute inset-0 opacity-0 transition-opacity duration-300 group-hover:opacity-100 group-disabled:opacity-0"
+                    style={{
+                      background: "linear-gradient(135deg, rgba(255,255,255,0.08) 0%, transparent 55%)",
+                    }}
+                    aria-hidden
+                  />
+                  <span className="relative flex h-11 w-11 items-center justify-center rounded-full bg-white/10 text-sm font-bold tracking-wide text-white/95 ring-1 ring-white/15">
+                    EN
+                  </span>
+                  <span className="relative font-semibold">English</span>
+                  <span className="relative text-[11px] text-white/55">
+                    {enTrack === "loading" && !hasLocalEnInstall
+                      ? ui.welcome.enChecking
+                      : !canUseEnglishTrack
+                        ? ui.welcome.enUnavailable
+                        : ui.welcome.buildEn}
+                  </span>
+                </button>
+              </div>
+              {enTrack === "unavailable" && !hasLocalEnInstall && (
+                <p className="rounded-xl border border-amber-400/25 bg-amber-500/[0.09] px-3.5 py-2.5 text-xs leading-relaxed text-amber-100/95">
+                  {ui.welcome.enTrackWarn}
+                </p>
+              )}
+            </section>
+
+            <section className="space-y-3 rounded-2xl bg-white/[0.035] p-4 ring-1 ring-white/[0.08] backdrop-blur-sm">
+              <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-emerald-300/85">
+                <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-500/15 ring-1 ring-emerald-400/20">
+                  <FaIdCard className="text-sm" aria-hidden />
+                </span>
+                <span>2</span>
+                <span className="h-px flex-1 bg-gradient-to-r from-white/15 to-transparent" aria-hidden />
+              </div>
+              <p className="text-[15px] font-semibold text-white/92">{ui.welcome.firstTimeQ}</p>
               <div className="grid grid-cols-2 gap-3">
                 <button
                   type="button"
                   disabled={gameLang !== "fr" && gameLang !== "en"}
                   onClick={handleFirstTimeUser}
-                  className="flex flex-col items-center gap-3 p-4 rounded-xl bg-gradient-to-br from-blue-500/20 to-indigo-500/20 hover:from-blue-500/30 hover:to-indigo-500/30 ring-1 ring-white/20 transition-all disabled:opacity-40 disabled:pointer-events-none disabled:grayscale"
+                  className="group flex flex-col items-center gap-3 rounded-2xl bg-gradient-to-br from-blue-500/22 to-indigo-600/18 p-4 ring-1 ring-white/15 transition-all hover:from-blue-500/32 hover:to-indigo-600/28 hover:ring-sky-400/25 hover:shadow-[0_0_24px_-12px_rgba(59,130,246,0.35)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300/50 disabled:pointer-events-none disabled:opacity-40 disabled:grayscale"
                 >
-                  <FaPlus className="text-3xl text-blue-400" />
-                  <div>
-                    <div className="font-semibold">{ui.welcome.firstTime}</div>
-                    <div className="text-xs opacity-75 mt-1">{ui.welcome.firstTimeSub}</div>
+                  <span className="flex h-12 w-12 items-center justify-center rounded-xl bg-white/10 ring-1 ring-white/10 transition-colors group-hover:bg-white/[0.14]">
+                    <FaPlus className="text-2xl text-sky-300" aria-hidden />
+                  </span>
+                  <div className="text-center">
+                    <div className="font-semibold text-white/95">{ui.welcome.firstTime}</div>
+                    <div className="mt-1 text-[11px] text-white/50">{ui.welcome.firstTimeSub}</div>
                   </div>
                 </button>
 
@@ -2750,21 +2810,23 @@ export default function App() {
                   type="button"
                   disabled={gameLang !== "fr" && gameLang !== "en"}
                   onClick={handleExistingUser}
-                  className="flex flex-col items-center gap-3 p-4 rounded-xl bg-gradient-to-br from-green-500/20 to-emerald-500/20 hover:from-green-500/30 hover:to-emerald-500/30 ring-1 ring-white/20 transition-all disabled:opacity-40 disabled:pointer-events-none disabled:grayscale"
+                  className="group flex flex-col items-center gap-3 rounded-2xl bg-gradient-to-br from-emerald-500/22 to-teal-600/18 p-4 ring-1 ring-white/15 transition-all hover:from-emerald-500/32 hover:to-teal-600/28 hover:ring-emerald-400/25 hover:shadow-[0_0_24px_-12px_rgba(16,185,129,0.32)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300/50 disabled:pointer-events-none disabled:opacity-40 disabled:grayscale"
                 >
-                  <FaGamepad className="text-3xl text-green-400" />
-                  <div>
-                    <div className="font-semibold">{ui.welcome.alreadyInstalled}</div>
-                    <div className="text-xs opacity-75 mt-1">{ui.welcome.alreadyInstalledSub}</div>
+                  <span className="flex h-12 w-12 items-center justify-center rounded-xl bg-white/10 ring-1 ring-white/10 transition-colors group-hover:bg-white/[0.14]">
+                    <FaGamepad className="text-2xl text-emerald-300" aria-hidden />
+                  </span>
+                  <div className="text-center">
+                    <div className="font-semibold text-white/95">{ui.welcome.alreadyInstalled}</div>
+                    <div className="mt-1 text-[11px] text-white/50">{ui.welcome.alreadyInstalledSub}</div>
                   </div>
                 </button>
               </div>
-              <p className="col-span-2 text-xs text-amber-200/80 bg-amber-500/10 border border-amber-400/20 rounded-lg px-3 py-2 leading-relaxed">
+              <p className="rounded-xl border border-amber-400/20 bg-amber-500/[0.08] px-3.5 py-2.5 text-xs leading-relaxed text-amber-100/85">
                 {ui.welcome.firstTimeNote}
               </p>
-            </div>
+            </section>
 
-            <p className="text-xs opacity-60 text-center">
+            <p className="border-t border-white/[0.07] pt-4 text-center text-[11px] text-white/45">
               {ui.welcome.footerHint}
             </p>
           </div>
@@ -2868,7 +2930,28 @@ export default function App() {
 
       {/* Chat fullscreen page — toujours monté pour garder les subscriptions Supabase actives */}
       <div className="pnw-chat-fullscreen" style={(chatOpen || activeView === "battle") ? undefined : { display: "none" }}>
-        <ChatView siteUrl={siteUrl} onBack={() => { if (activeView === "battle") setActiveView("launcher"); else setChatOpen(false); }} onUnreadChange={setChatUnread} visible={chatOpen || activeView === "battle"} battleMode={activeView === "battle"} gtsSharePending={gtsSharePending} onGtsShareDone={() => setGtsSharePending(null)} onOpenGts={(onlineId) => { setChatOpen(false); setGtsPendingOnlineId(onlineId ?? null); setActiveView("gts"); }} onOpenBattle={() => { setChatOpen(false); setActiveView("battle"); }} gameProfile={profile} installDir={installDir} lastSavePath={lastSavePath} onProfileReload={() => loadProfile(selectedSaveIdx)} />
+        <ChatView siteUrl={siteUrl} onBack={() => { if (activeView === "battle") setActiveView("launcher"); else setChatOpen(false); }} onUnreadChange={setChatUnread} visible={chatOpen || activeView === "battle"} battleMode={activeView === "battle"} gtsSharePending={gtsSharePending} onGtsShareDone={() => setGtsSharePending(null)} onOpenGts={(onlineId) => { setChatOpen(false); setGtsPendingOnlineId(onlineId ?? null); setActiveView("gts"); }} onOpenBattle={() => { setChatOpen(false); setActiveView("battle"); }} gameProfile={profile} installDir={installDir} lastSavePath={lastSavePath} onProfileReload={async () => {
+          // Charger automatiquement la save la plus récemment modifiée (= celle active dans le jeu)
+          // et RETOURNER le profil frais (pour usage immédiat sans attendre le state React).
+          try {
+            const saves = await invoke<{ path: string; name: string; modified: number; size: number }[]>("cmd_list_saves");
+            if (!saves.length) return null;
+            let latestIdx = 0;
+            for (let i = 1; i < saves.length; i++) {
+              if (saves[i].modified > saves[latestIdx].modified) latestIdx = i;
+            }
+            const blob = await invoke<{ path: string; modified: number; bytes_b64: string } | null>("cmd_get_save_blob", { savePath: saves[latestIdx].path });
+            if (!blob) return null;
+            setLastSavePath(blob.path);
+            const bytes = b64ToBytes(blob.bytes_b64);
+            const p = parseSave(bytes);
+            if (p) {
+              setProfile(p);
+              setSelectedSaveIdx(latestIdx);
+            }
+            return p;
+          } catch { return null; }
+        }} />
       </div>
       </div>
     </div>

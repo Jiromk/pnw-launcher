@@ -3,7 +3,7 @@
 import { load } from "@hyrious/marshal";
 import { gunzipSync, unzlibSync } from "fflate";
 import type { PlayerProfile, TeamMember, PokedexInfo, BoxPokemon, PCBox } from "./types";
-import { detectShinyFromMarshal } from "./shinyDetect";
+import { detectShinyFromMarshal, detectAltShinyFromMarshal } from "./shinyDetect";
 
 type AnyObj = Record<string | symbol, any>;
 const TD = new TextDecoder();
@@ -269,12 +269,19 @@ export function parseSave(raw: Uint8Array): PlayerProfile | null {
         return v == null ? undefined : (v === 1 ? 1 : 0);
       })(),
       isShiny: detectShinyFromMarshal(pm, speciesId),
+      isAltShiny: detectAltShinyFromMarshal(pm),
       ivHp:  asInt(getIvar(pm, ["@iv_hp"]))  ?? 0,
       ivAtk: asInt(getIvar(pm, ["@iv_atk"])) ?? 0,
       ivDfe: asInt(getIvar(pm, ["@iv_dfe"])) ?? 0,
       ivSpd: asInt(getIvar(pm, ["@iv_spd"])) ?? 0,
       ivAts: asInt(getIvar(pm, ["@iv_ats"])) ?? 0,
       ivDfs: asInt(getIvar(pm, ["@iv_dfs"])) ?? 0,
+      evHp:  asInt(getIvar(pm, ["@ev_hp"]))  ?? 0,
+      evAtk: asInt(getIvar(pm, ["@ev_atk"])) ?? 0,
+      evDfe: asInt(getIvar(pm, ["@ev_dfe"])) ?? 0,
+      evSpd: asInt(getIvar(pm, ["@ev_spd"])) ?? 0,
+      evAts: asInt(getIvar(pm, ["@ev_ats"])) ?? 0,
+      evDfs: asInt(getIvar(pm, ["@ev_dfs"])) ?? 0,
       nature: asInt(getIvar(pm, ["@nature"])) ?? null,
       ability: asInt(getIvar(pm, ["@ability", "@ability_index"])) ?? null,
       itemHolding: asInt(getIvar(pm, ["@item_holding"])) ?? null,

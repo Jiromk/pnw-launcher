@@ -4,6 +4,24 @@
 
 export type UiLang = "fr" | "en";
 
+/** Shape minimale d'un match banlist utilisée par la fonction locale `bannedInTeam`. */
+export type BannedInTeamMatch = {
+  banned: { name: string; form: number | null; reason: string };
+  teamLabel: string;
+  slotIdx: number;
+};
+
+/** Shape minimale d'une entrée invalide utilisée par la fonction locale `invalidStatsInTeam`. */
+export type InvalidStatsMatch = {
+  slotIdx: number;
+  label: string;
+  violations: Array<
+    | { kind: "iv_over"; stat: "hp" | "atk" | "dfe" | "spd" | "ats" | "dfs"; value: number }
+    | { kind: "ev_over"; stat: "hp" | "atk" | "dfe" | "spd" | "ats" | "dfs"; value: number }
+    | { kind: "ev_total_over"; total: number }
+  >;
+};
+
 export function uiLangFromGameLang(gameLang: "fr" | "en" | null): UiLang {
   return gameLang === "en" ? "en" : "fr";
 }
@@ -152,9 +170,10 @@ export function getLauncherUi(L: UiLang) {
       firstTimeQ: "Est-ce votre première fois sur Pokémon New World ?",
       firstTime: "Première fois",
       firstTimeSub: "Je n'ai jamais joué",
+      firstTimeNote: "Le launcher et le jeu seront installés dans AppData (C:\\Users\\…). Ce dossier est requis par Windows pour éviter les restrictions de permissions.",
       alreadyInstalled: "Déjà installé",
       alreadyInstalledSub: "J'ai déjà le jeu",
-      footerHint: "Vous pourrez changer le dossier d'installation plus tard via le menu Dossier",
+      footerHint: "Vous pourrez changer le dossier d'installation du jeu plus tard via le menu Dossier",
     },
     installPrompt: {
       title: "Jeu non trouvé",
@@ -175,6 +194,227 @@ export function getLauncherUi(L: UiLang) {
       hint:
         "Le fichier est enregistré puis l’installateur se lance automatiquement. Le launcher se ferme tout seul pour permettre la mise à jour (NSIS ne peut pas remplacer l’exe tant qu’il tourne). Rouvrez-le ensuite.",
       notesTitle: "Nouveautés",
+    },
+    gameUpdate: {
+      title: "Mise à jour du jeu",
+      subtitle: "Une nouvelle version du jeu est en cours d’installation.",
+      current: "Version installée",
+      newer: "Nouvelle version",
+      status: {
+        downloading: "Téléchargement en cours…",
+        paused: "En pause",
+        extracting: "Extraction…",
+        reconnecting: "Reconnexion…",
+      },
+      remaining: "restant",
+      pause: "Pause",
+      resume: "Reprendre",
+      cancel: "Annuler",
+      notesTitle: (v: string) => `Nouveautés de la v${v}`,
+      notesLoading: "Chargement des notes de mise à jour…",
+      notesError: "Impossible de charger les notes de mise à jour.",
+      notesEmpty: "Aucune note disponible pour cette version.",
+      openNotesLink: "Voir les notes",
+      hint: "Le jeu sera disponible dès la fin de l’installation. Ne fermez pas le launcher.",
+    },
+    battleTower: {
+      nav: { home: "Accueil", lead: "Combat Lead", amical: "Combat Amical", profile: "Profil" },
+      backToTower: "Retour à la tour",
+      home: {
+        title: "Tour de Combat",
+        subtitle:
+          "Affrontez les autres dresseurs dans des combats en temps réel. Deux modes, deux ambiances.",
+        modes: {
+          lead: {
+            badge: "Compétitif",
+            title: "Combat Lead",
+            description:
+              "Matchmaking classé basé sur votre elo. Affrontez des adversaires de votre niveau.",
+          },
+          amical: {
+            badge: "Amical",
+            title: "Combat Amical",
+            description:
+              "Défiez librement n'importe quel joueur en ligne. Aucun enjeu, pur fun.",
+          },
+        },
+        statsTitle: "Vos statistiques",
+        statsPlaceholder: "Statistiques à venir",
+        statsHint:
+          "Les statistiques PvP seront disponibles prochainement, avec le lancement du Combat Lead.",
+        statLabels: {
+          wins: "Victoires",
+          losses: "Défaites",
+          winrate: "Winrate",
+          elo: "Rang elo",
+        },
+        info: {
+          buttonAria: "Informations sur les règles de combat",
+          title: "Règles & Conditions",
+          subtitle: "Tout ce qu'il faut savoir avant de combattre",
+          accessTitle: "Conditions d'accès",
+          rules: {
+            version: "Jeu installé à jour",
+            iv: "IV ≤ 31 par statistique",
+            ev: "EV ≤ 252 par stat / 510 au total",
+            banlist: "Aucun Pokémon banni dans l'équipe",
+          },
+          rankedOnlyTag: "Combat Lead",
+          banlistTitle: "Pokémons bannis",
+          banlistScope: "Applicable uniquement en Combat Lead (classé)",
+          banlistEmpty: "Aucun Pokémon n'est actuellement banni.",
+          banlistLoading: "Chargement de la banlist…",
+          banlistCount: (n: number) => `${n} entrée${n > 1 ? "s" : ""}`,
+          formBase: "Forme de base",
+          formLabel: (f: number) => `Forme ${f}`,
+        },
+      },
+      lead: {
+        title: "Combat Lead",
+        subtitle: "Matchmaking classé",
+        comingSoon: "Bientôt disponible",
+        queueTitle: "Rejoindre la queue",
+        queueSubtitle: "Trouvez un adversaire de votre niveau elo.",
+        queueBtn: "Bientôt disponible",
+        myRank: "Votre rang",
+        leaderboardTitle: "Classement",
+        leaderboardEmpty: "Classement à venir",
+        footer:
+          "Le matchmaking sera ouvert prochainement. Les stats et le leaderboard seront réinitialisés lors du lancement officiel.",
+        columns: {
+          rank: "Rang",
+          player: "Joueur",
+          elo: "Elo",
+          wins: "V",
+          losses: "D",
+          winrate: "Winrate",
+        },
+      },
+      amical: {
+        title: "Combat Amical",
+        subtitle: "Versus libre",
+        sidebarTitle: "Joueurs en ligne",
+        sidebarFilter: "Filtrer…",
+        sidebarCount: (n: number) => `${n} en ligne`,
+        sidebarEmpty: "Aucun joueur en ligne",
+        emptyStateTitle: "Prêt au combat ?",
+        emptyStateBody:
+          "Sélectionnez un joueur dans la liste à droite pour afficher son profil et lancer un défi.",
+        challengeBtn: "Défier",
+        viewProfileBtn: "Voir son profil",
+        statusAvailable: "Disponible",
+        statusInGame: "En jeu",
+        statusInBattle: "En combat",
+        disabledBecauseInBattle: "Ce joueur est déjà en combat",
+        disabledBecauseOwnBattle: "Vous avez déjà un combat en cours",
+        disabledBecauseSelf: "C'est vous !",
+        profileStatsTitle: "Statistiques du joueur",
+        profileNoBio: "Aucune bio.",
+      },
+      profile: {
+        title: "Profil de Combat",
+        subtitle: "Votre parcours de dresseur PvP",
+        anonymous: "Joueur",
+        backToAmical: "Retour au Combat Amical",
+        viewingOther: (name: string) => `Profil de ${name}`,
+        stats: {
+          wins: "Victoires",
+          losses: "Défaites",
+          winrate: "Winrate",
+          elo: "Rang",
+          lp: "LP",
+          unranked: "Non classé",
+        },
+        filters: {
+          all: "Tous",
+          amical: "Amical",
+          ranked: "Classé",
+        },
+        history: {
+          title: "Historique des combats",
+          loading: "Chargement de l'historique…",
+          loadingMore: "Chargement des combats suivants…",
+          endOfHistory: "Fin de l'historique",
+          empty: "Aucun combat joué pour l'instant",
+          emptyHint: "Lancez un défi pour écrire votre première page !",
+          resultWin: "Victoire",
+          resultLoss: "Défaite",
+          resultDraw: "Match nul",
+          typeAmical: "Amical",
+          typeRanked: "Classé",
+          vs: "vs",
+          teamTitle: "Équipe utilisée",
+          youLabel: "Vous",
+          teamUnknown: "Équipe inconnue",
+          durationLabel: "Durée :",
+          lpGain: (n: number) => `+${n} LP`,
+          lpLoss: (n: number) => `-${n} LP`,
+          lpZero: "0 LP",
+          timeAgoNow: "à l'instant",
+          timeAgoMin: (n: number) => `il y a ${n} min`,
+          timeAgoHour: (n: number) => `il y a ${n} h`,
+          timeAgoDay: (n: number) => `il y a ${n} j`,
+        },
+      },
+      banner: {
+        incomingTitle: "Défi reçu !",
+        incomingDesc: (name: string) => `${name} vous défie en combat`,
+        accept: "Accepter",
+        decline: "Refuser",
+        sentTitle: "Défi envoyé",
+        sentDesc: (name: string) => `En attente de ${name}...`,
+        waitingTitle: "Lancement…",
+        waitingDesc: "Préparation du combat dans le jeu",
+        liveTitle: "EN DIRECT",
+        liveDesc: (name: string) => `Combat contre ${name}`,
+        spectators: (n: number) => `${n} spectateur${n > 1 ? "s" : ""}`,
+        cancel: "Annuler",
+        forfeit: "Abandonner",
+        close: "Fermer",
+        completeWin: "Victoire !",
+        completeLoss: "Défaite...",
+        completeDraw: "Match nul",
+        completeGeneric: "Combat terminé !",
+        forfeitReason: (name: string) => `${name} a abandonné le combat`,
+        crashReason: (name: string) => `Problème technique de ${name}`,
+        errorTitle: "Erreur",
+      },
+      errors: {
+        gameNotRunning: "Lancez le jeu avant de défier un joueur !",
+        gameNotRunningAccept: "Lancez le jeu avant d'accepter un combat !",
+        serverUnavailable:
+          "Connexion au serveur de combat non disponible. Réessayez.",
+        bannedInTeam: (matches: BannedInTeamMatch[]) => {
+          const lines = matches
+            .map((m) => {
+              const formPart = m.banned.form != null ? ` (forme ${m.banned.form})` : "";
+              const reasonPart = m.banned.reason ? ` — ${m.banned.reason}` : "";
+              return `• ${m.banned.name}${formPart}${reasonPart}`;
+            })
+            .join("\n");
+          const count = matches.length;
+          const plural = count > 1 ? "s" : "";
+          return `Combat impossible : vous avez ${count} Pokémon${plural} banni${plural} dans votre équipe :\n\n${lines}\n\nRetirez-${count > 1 ? "les" : "le"} de votre équipe pour pouvoir combattre.`;
+        },
+        invalidStatsInTeam: (matches: InvalidStatsMatch[]) => {
+          const statLabels: Record<string, string> = {
+            hp: "PV", atk: "Atq", dfe: "Déf", spd: "Vit", ats: "Atq Spé", dfs: "Déf Spé",
+          };
+          const lines = matches
+            .map((m) => {
+              const details = m.violations.map((v) => {
+                if (v.kind === "iv_over") return `  ▸ IV ${statLabels[v.stat]} : ${v.value} (max 31)`;
+                if (v.kind === "ev_over") return `  ▸ EV ${statLabels[v.stat]} : ${v.value} (max 252)`;
+                return `  ▸ EV total : ${v.total} (max 510)`;
+              });
+              return `◆ ${m.label}\n${details.join("\n")}`;
+            })
+            .join("\n\n");
+          const count = matches.length;
+          const plural = count > 1 ? "s" : "";
+          return `Statistiques invalides détectées sur ${count} Pokémon${plural} :\n\n${lines}`;
+        },
+      },
     },
     scan: {
       default: "Recherche du jeu…",
@@ -224,6 +464,10 @@ export function getLauncherUi(L: UiLang) {
       button: "Menu",
       gts: "GTS (Échanges)",
       gtsAria: "Ouvrir le Global Trade System",
+      battleOutOfDateTitle: "Jeu non à jour",
+      battleOutOfDateBody:
+        "Votre version du jeu n'est pas à jour. Mettez le jeu à jour avant d'accéder à la Tour de Combat pour garantir un combat équitable entre tous les joueurs.",
+      battleOutOfDateOk: "J'ai compris",
     },
     themeMenu: {
       button: "Thème",
@@ -348,9 +592,10 @@ export function getLauncherUi(L: UiLang) {
       firstTimeQ: "Is this your first time playing Pokémon New World?",
       firstTime: "First time",
       firstTimeSub: "I’ve never played",
+      firstTimeNote: "The launcher and game will be installed in AppData (C:\\Users\\…). This folder is required by Windows to avoid permission restrictions.",
       alreadyInstalled: "Already installed",
       alreadyInstalledSub: "I already have the game",
-      footerHint: "You can change the install folder later via the Folder menu",
+      footerHint: "You can change the game install folder later via the Folder menu",
     },
     installPrompt: {
       title: "Game not found",
@@ -371,6 +616,227 @@ export function getLauncherUi(L: UiLang) {
       hint:
         "The file is saved and the installer starts automatically. The launcher will close on its own so the setup can update the executable (it cannot be replaced while the app is running). Reopen it afterward.",
       notesTitle: "What's new",
+    },
+    gameUpdate: {
+      title: "Game update",
+      subtitle: "A new version of the game is being installed.",
+      current: "Installed version",
+      newer: "New version",
+      status: {
+        downloading: "Downloading…",
+        paused: "Paused",
+        extracting: "Extracting…",
+        reconnecting: "Reconnecting…",
+      },
+      remaining: "left",
+      pause: "Pause",
+      resume: "Resume",
+      cancel: "Cancel",
+      notesTitle: (v: string) => `What’s new in v${v}`,
+      notesLoading: "Loading patch notes…",
+      notesError: "Could not load patch notes.",
+      notesEmpty: "No notes available for this version.",
+      openNotesLink: "View notes",
+      hint: "The game will be available as soon as installation completes. Don’t close the launcher.",
+    },
+    battleTower: {
+      nav: { home: "Home", lead: "Combat Lead", amical: "Friendly Combat", profile: "Profile" },
+      backToTower: "Back to tower",
+      home: {
+        title: "Battle Tower",
+        subtitle:
+          "Face other trainers in real-time battles. Two modes, two vibes.",
+        modes: {
+          lead: {
+            badge: "Competitive",
+            title: "Combat Lead",
+            description:
+              "Ranked matchmaking based on your elo. Face opponents at your level.",
+          },
+          amical: {
+            badge: "Friendly",
+            title: "Friendly Combat",
+            description:
+              "Freely challenge any online player. No stakes, just fun.",
+          },
+        },
+        statsTitle: "Your statistics",
+        statsPlaceholder: "Stats coming soon",
+        statsHint:
+          "PvP statistics will be available soon, alongside the Combat Lead launch.",
+        statLabels: {
+          wins: "Wins",
+          losses: "Losses",
+          winrate: "Winrate",
+          elo: "Elo rank",
+        },
+        info: {
+          buttonAria: "Battle rules and conditions",
+          title: "Rules & Conditions",
+          subtitle: "Everything you need to know before battling",
+          accessTitle: "Access conditions",
+          rules: {
+            version: "Game installed and up to date",
+            iv: "IV ≤ 31 per stat",
+            ev: "EV ≤ 252 per stat / 510 total",
+            banlist: "No banned Pokémon in your team",
+          },
+          rankedOnlyTag: "Ranked only",
+          banlistTitle: "Banned Pokémon",
+          banlistScope: "Applies only to Ranked Battles (Combat Lead)",
+          banlistEmpty: "No Pokémon is currently banned.",
+          banlistLoading: "Loading banlist…",
+          banlistCount: (n: number) => `${n} entr${n > 1 ? "ies" : "y"}`,
+          formBase: "Base form",
+          formLabel: (f: number) => `Form ${f}`,
+        },
+      },
+      lead: {
+        title: "Combat Lead",
+        subtitle: "Ranked matchmaking",
+        comingSoon: "Coming soon",
+        queueTitle: "Join the queue",
+        queueSubtitle: "Find an opponent at your elo level.",
+        queueBtn: "Coming soon",
+        myRank: "Your rank",
+        leaderboardTitle: "Leaderboard",
+        leaderboardEmpty: "Leaderboard coming soon",
+        footer:
+          "Matchmaking will open shortly. Stats and leaderboard will be reset at the official launch.",
+        columns: {
+          rank: "Rank",
+          player: "Player",
+          elo: "Elo",
+          wins: "W",
+          losses: "L",
+          winrate: "Winrate",
+        },
+      },
+      amical: {
+        title: "Friendly Combat",
+        subtitle: "Free versus",
+        sidebarTitle: "Online players",
+        sidebarFilter: "Filter…",
+        sidebarCount: (n: number) => `${n} online`,
+        sidebarEmpty: "No players online",
+        emptyStateTitle: "Ready to battle?",
+        emptyStateBody:
+          "Pick a player in the list on the right to view their profile and start a challenge.",
+        challengeBtn: "Challenge",
+        viewProfileBtn: "View profile",
+        statusAvailable: "Available",
+        statusInGame: "In game",
+        statusInBattle: "In battle",
+        disabledBecauseInBattle: "This player is already in a battle",
+        disabledBecauseOwnBattle: "You already have a battle in progress",
+        disabledBecauseSelf: "That's you!",
+        profileStatsTitle: "Player statistics",
+        profileNoBio: "No bio.",
+      },
+      profile: {
+        title: "Battle Profile",
+        subtitle: "Your PvP trainer journey",
+        anonymous: "Player",
+        backToAmical: "Back to Friendly Combat",
+        viewingOther: (name: string) => `${name}'s profile`,
+        stats: {
+          wins: "Wins",
+          losses: "Losses",
+          winrate: "Winrate",
+          elo: "Rank",
+          lp: "LP",
+          unranked: "Unranked",
+        },
+        filters: {
+          all: "All",
+          amical: "Casual",
+          ranked: "Ranked",
+        },
+        history: {
+          title: "Match history",
+          loading: "Loading history…",
+          loadingMore: "Loading more matches…",
+          endOfHistory: "End of history",
+          empty: "No matches yet",
+          emptyHint: "Start a challenge to begin your journey!",
+          resultWin: "Victory",
+          resultLoss: "Defeat",
+          resultDraw: "Draw",
+          typeAmical: "Casual",
+          typeRanked: "Ranked",
+          vs: "vs",
+          teamTitle: "Team used",
+          youLabel: "You",
+          teamUnknown: "Team unknown",
+          durationLabel: "Duration:",
+          lpGain: (n: number) => `+${n} LP`,
+          lpLoss: (n: number) => `-${n} LP`,
+          lpZero: "0 LP",
+          timeAgoNow: "just now",
+          timeAgoMin: (n: number) => `${n} min ago`,
+          timeAgoHour: (n: number) => `${n} h ago`,
+          timeAgoDay: (n: number) => `${n} d ago`,
+        },
+      },
+      banner: {
+        incomingTitle: "Challenge received!",
+        incomingDesc: (name: string) => `${name} is challenging you`,
+        accept: "Accept",
+        decline: "Decline",
+        sentTitle: "Challenge sent",
+        sentDesc: (name: string) => `Waiting for ${name}...`,
+        waitingTitle: "Launching…",
+        waitingDesc: "Preparing the battle in-game",
+        liveTitle: "LIVE",
+        liveDesc: (name: string) => `Battle vs ${name}`,
+        spectators: (n: number) => `${n} spectator${n > 1 ? "s" : ""}`,
+        cancel: "Cancel",
+        forfeit: "Forfeit",
+        close: "Close",
+        completeWin: "Victory!",
+        completeLoss: "Defeat...",
+        completeDraw: "Draw",
+        completeGeneric: "Battle ended!",
+        forfeitReason: (name: string) => `${name} forfeited the battle`,
+        crashReason: (name: string) => `Technical issue with ${name}`,
+        errorTitle: "Error",
+      },
+      errors: {
+        gameNotRunning: "Launch the game before challenging a player!",
+        gameNotRunningAccept: "Launch the game before accepting a battle!",
+        serverUnavailable:
+          "Battle server connection unavailable. Try again.",
+        bannedInTeam: (matches: BannedInTeamMatch[]) => {
+          const lines = matches
+            .map((m) => {
+              const formPart = m.banned.form != null ? ` (form ${m.banned.form})` : "";
+              const reasonPart = m.banned.reason ? ` — ${m.banned.reason}` : "";
+              return `• ${m.banned.name}${formPart}${reasonPart}`;
+            })
+            .join("\n");
+          const count = matches.length;
+          const plural = count > 1 ? "s" : "";
+          return `Battle blocked: your team contains ${count} banned Pokémon${plural}:\n\n${lines}\n\nRemove ${count > 1 ? "them" : "it"} from your team to battle.`;
+        },
+        invalidStatsInTeam: (matches: InvalidStatsMatch[]) => {
+          const statLabels: Record<string, string> = {
+            hp: "HP", atk: "Atk", dfe: "Def", spd: "Spe", ats: "SpA", dfs: "SpD",
+          };
+          const lines = matches
+            .map((m) => {
+              const details = m.violations.map((v) => {
+                if (v.kind === "iv_over") return `  ▸ IV ${statLabels[v.stat]}: ${v.value} (max 31)`;
+                if (v.kind === "ev_over") return `  ▸ EV ${statLabels[v.stat]}: ${v.value} (max 252)`;
+                return `  ▸ Total EV: ${v.total} (max 510)`;
+              });
+              return `◆ ${m.label}\n${details.join("\n")}`;
+            })
+            .join("\n\n");
+          const count = matches.length;
+          const plural = count > 1 ? "s" : "";
+          return `Invalid stats detected on ${count} Pokémon${plural}:\n\n${lines}`;
+        },
+      },
     },
     scan: {
       default: "Searching for the game…",
@@ -420,6 +886,10 @@ export function getLauncherUi(L: UiLang) {
       button: "Menu",
       gts: "GTS (Trades)",
       gtsAria: "Open Global Trade System",
+      battleOutOfDateTitle: "Game out of date",
+      battleOutOfDateBody:
+        "Your game version is out of date. Please update the game before entering the Battle Tower to ensure fair matches between all players.",
+      battleOutOfDateOk: "Got it",
     },
     themeMenu: {
       button: "Theme",
