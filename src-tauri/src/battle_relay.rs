@@ -98,6 +98,42 @@ pub fn cmd_battle_save_log(data: String) -> Result<String, String> {
     Ok(path.to_string_lossy().into_owned())
 }
 
+/// Crée `vms_party_request` pour demander au jeu d'écrire la party live.
+/// Le jeu le détecte dans Graphics.update, écrit `vms_live_party.json`,
+/// puis supprime la requête.
+#[tauri::command]
+pub fn cmd_battle_request_live_party() -> Result<(), String> {
+    let dir = battle_dir()?;
+    // Supprimer l'ancienne réponse pour détecter la nouvelle
+    let response = dir.join("vms_live_party.json");
+    let _ = fs::remove_file(&response);
+    // Créer le fichier de requête (contenu vide, seule l'existence compte)
+    let request = dir.join("vms_party_request");
+    fs::write(&request, "").map_err(|e| e.to_string())
+}
+
+/// Lit `vms_live_party.json` (réponse du jeu à la requête ci-dessus).
+/// Retourne `None` si le fichier n'existe pas encore (le jeu n'a pas encore répondu).
+#[tauri::command]
+pub fn cmd_battle_read_live_party() -> Result<Option<String>, String> {
+    let dir = battle_dir()?;
+    let path = dir.join("vms_live_party.json");
+    let tmp_path = dir.join("vms_live_party.json.tmp");
+
+    // Nettoyer les .tmp orphelins
+    if tmp_path.exists() && !path.exists() {
+        let _ = fs::rename(&tmp_path, &path);
+    }
+
+    if !path.exists() {
+        return Ok(None);
+    }
+    match fs::read_to_string(&path) {
+        Ok(content) => Ok(Some(content)),
+        Err(_) => Ok(None),
+    }
+}
+
 /// Supprime UNIQUEMENT les fichiers IPC du dossier battle/ (cleanup).
 /// Preserve vms_debug.log et le sous-dossier logs/ pour garder l'historique de debug.
 #[tauri::command]

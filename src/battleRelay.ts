@@ -392,11 +392,30 @@ export function startRelay(
     onSpectatorCount?.(data.count);
   });
 
+  /**
+   * Helper : si un battle_result était bloqué dans pendingOutbox (parce que waitingForServer),
+   * le traiter AVANT de fire onDisconnect — sinon le résultat est perdu.
+   */
+  const flushPendingBattleResult = () => {
+    if (!pendingOutbox) return;
+    try {
+      const pd = JSON.parse(pendingOutbox);
+      if (Array.isArray(pd) && pd[0] === "battle_result") {
+        const result = pd[1]?.result;
+        console.log("[BattleRelay] Flushing pending battle_result before disconnect:", result);
+        eventLog.push({ time: new Date().toISOString(), event: "flush_pending_battle_result", data: { result } });
+        onBattleResult?.(result || "unknown");
+      }
+    } catch { /* ignore */ }
+    pendingOutbox = null;
+  };
+
   // ─── Battle ended by opponent (result from their game) ───
   socket.on("battle_ended", (data: { roomCode?: string; result?: string; reason?: string }) => {
     console.log("[BattleRelay] Battle ended by opponent, our result:", data.result);
     eventLog.push({ time: new Date().toISOString(), event: "battle_ended", data });
     if (!disconnectFired) {
+      flushPendingBattleResult();
       disconnectFired = true;
       running = false;
       onBattleResult?.(data.result || "unknown");
@@ -418,6 +437,7 @@ export function startRelay(
     console.log("[BattleRelay] Opponent left, reason:", reason, "(raw:", rawReason, ")");
     eventLog.push({ time: new Date().toISOString(), event: "player_left", data: { reason, rawReason } });
     if (!disconnectFired) {
+      flushPendingBattleResult();
       disconnectFired = true;
       running = false;
       onDisconnect?.(reason);
@@ -444,14 +464,17 @@ export function startRelay(
             continue;
           }
 
-          if (!socket.connected || waitingForServer) {
+          const messageType = Array.isArray(data) ? data[0] : null;
+          const playerData = Array.isArray(data) && data.length > 1 ? data[1] : null;
+
+          // Si on attend la réponse du serveur (turn en cours), mettre en attente SAUF
+          // les messages prioritaires (battle_result / disconnect) qui doivent être traités
+          // immédiatement — sinon le résultat est perdu si l'adversaire quitte via socket.
+          if ((!socket.connected || waitingForServer) && messageType !== "battle_result" && messageType !== "disconnect") {
             pendingOutbox = raw;
             await sleep(POLL_INTERVAL);
             continue;
           }
-
-          const messageType = Array.isArray(data) ? data[0] : null;
-          const playerData = Array.isArray(data) && data.length > 1 ? data[1] : null;
 
           if (!playerData) {
             pendingOutbox = null;
@@ -560,9 +583,24 @@ export function startRelay(
           }
 
           // Detect battle started
-          if (!battleDetected && stateType === "battle" || stateType === ":battle") {
+          if (!battleDetected && (stateType === "battle" || stateType === ":battle")) {
             battleDetected = true;
             onBattleStarted?.();
+          }
+
+          // Detect battle ended via state transition (couvre le cas "Fuir" en jeu où le VMS
+          // ne renvoie pas de message "disconnect" mais le jeu retourne à l'overworld).
+          const isBattleState =
+            stateType === "battle" || stateType === ":battle" ||
+            stateType === "battle_command" || stateType === ":battle_command" ||
+            stateType === "battle_switch" || stateType === ":battle_switch";
+          if (battleDetected && !disconnectFired && stateType != null && !isBattleState) {
+            console.log("[BattleRelay] State transitioned from battle to", stateType, "— treating as game_end");
+            eventLog.push({ time: new Date().toISOString(), event: "battle_state_transition_end", data: { newState: stateType } });
+            disconnectFired = true;
+            running = false;
+            socket.emit("leave_room", { roomCode, userId: myUserId, reason: "game_end" });
+            onDisconnect?.("game_end");
           }
         }
       } catch (pollErr) {
