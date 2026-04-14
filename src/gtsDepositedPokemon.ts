@@ -6,6 +6,7 @@ import {
   PNW_SHINY_RATE,
   pnwShinyFromCode,
   detectShinyFromMarshal,
+  detectAltShinyFromMarshal,
 } from "./shinyDetect";
 
 type AnyObj = Record<string | symbol, unknown>;
@@ -82,6 +83,7 @@ export type GtsDepositedParsed = {
   nickname: string | null;
   exp: number;
   isShiny: boolean;
+  isAltShiny: boolean;
   ivHp: number;
   ivAtk: number;
   ivDfe: number;
@@ -169,6 +171,7 @@ export function parseGtsDepositedPokemon(rawResponse: string): GtsDepositedParse
 
   /* Détection chromatique (logique partagée dans shinyDetect.ts) */
   const isShiny = detectShinyFromMarshal(root, speciesInternalId);
+  const isAltShiny = detectAltShinyFromMarshal(root);
 
   const rare = getIvar(root, ["@rareness"]);
   const shinyRate = getIvar(root, ["@shiny_rate"]);
@@ -229,6 +232,7 @@ export function parseGtsDepositedPokemon(rawResponse: string): GtsDepositedParse
     nickname,
     exp,
     isShiny,
+    isAltShiny,
     ivHp,
     ivAtk,
     ivDfe,

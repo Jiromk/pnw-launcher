@@ -8,6 +8,7 @@ interface GtsTransferAnimProps {
   spriteUrl: string | null;
   pokemonName: string;
   isShiny?: boolean;
+  isAltShiny?: boolean;
   /** For withdraw: the box name where the Pokémon was placed */
   boxName?: string | null;
   /** Called when the full animation sequence is done and user dismisses */
@@ -29,6 +30,7 @@ export default function GtsTransferAnim({
   spriteUrl,
   pokemonName,
   isShiny = false,
+  isAltShiny = false,
   boxName,
   onComplete,
 }: GtsTransferAnimProps) {
@@ -40,7 +42,7 @@ export default function GtsTransferAnim({
     return () => clearTimeout(t);
   }, [mode]);
 
-  const gold = isShiny;
+  const gold = isShiny && !isAltShiny;
   const particleClass = gold ? " gts-anim-particle--gold" : "";
 
   const particles = Array.from({ length: 8 }, (_, i) => (

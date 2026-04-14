@@ -6,9 +6,11 @@ interface GtsSwapAnimProps {
   mySpriteUrl: string | null;
   myName: string;
   myShiny?: boolean;
+  myAltShiny?: boolean;
   theirSpriteUrl: string | null;
   theirName: string;
   theirShiny?: boolean;
+  theirAltShiny?: boolean;
   boxName?: string | null;
   onComplete: () => void;
 }
@@ -23,9 +25,11 @@ export default function GtsSwapAnim({
   mySpriteUrl,
   myName,
   myShiny = false,
+  myAltShiny = false,
   theirSpriteUrl,
   theirName,
   theirShiny = false,
+  theirAltShiny = false,
   boxName,
   onComplete,
 }: GtsSwapAnimProps) {
@@ -37,9 +41,10 @@ export default function GtsSwapAnim({
   }, []);
 
   const hasShiny = myShiny || theirShiny;
+  const hasAltShiny = myAltShiny || theirAltShiny;
 
   const overlay = (
-    <div className={`gts-swap-overlay${hasShiny ? " gts-swap-shiny" : ""}`}>
+    <div className={`gts-swap-overlay${hasAltShiny ? " gts-swap-alt-shiny" : hasShiny ? " gts-swap-shiny" : ""}`}>
       {phase === "anim" ? (
         <div className="gts-swap-scene">
           <div className="gts-swap-sprite gts-swap-sprite--left">
@@ -63,13 +68,14 @@ export default function GtsSwapAnim({
 
           {/* Two cards side by side */}
           <div className="gts-swap-success-cards">
-            <div className={`gts-swap-success-card gts-swap-success-card--sent${myShiny ? " gts-swap-success-card--shiny" : ""}`}>
+            <div className={`gts-swap-success-card gts-swap-success-card--sent${myAltShiny ? " gts-swap-success-card--alt-shiny" : myShiny ? " gts-swap-success-card--shiny" : ""}`}>
               <div className="gts-swap-success-card-label gts-swap-success-card-label--sent">Envoyé</div>
               <div className="gts-swap-success-card-sprite">
                 {mySpriteUrl ? <img src={mySpriteUrl} alt="" /> : <span className="gts-swap-success-placeholder">?</span>}
               </div>
               <div className="gts-swap-success-card-name">
-                {myShiny && <FaStar style={{ color: "#facc15", fontSize: ".7em", marginRight: 3 }} />}
+                {myAltShiny && <FaStar style={{ color: "#c084fc", fontSize: ".7em", marginRight: 3 }} />}
+                {myShiny && !myAltShiny && <FaStar style={{ color: "#facc15", fontSize: ".7em", marginRight: 3 }} />}
                 {myName}
               </div>
             </div>
@@ -78,13 +84,14 @@ export default function GtsSwapAnim({
               <FaArrowRightArrowLeft />
             </div>
 
-            <div className={`gts-swap-success-card gts-swap-success-card--received${theirShiny ? " gts-swap-success-card--shiny" : ""}`}>
+            <div className={`gts-swap-success-card gts-swap-success-card--received${theirAltShiny ? " gts-swap-success-card--alt-shiny" : theirShiny ? " gts-swap-success-card--shiny" : ""}`}>
               <div className="gts-swap-success-card-label gts-swap-success-card-label--received">Reçu</div>
               <div className="gts-swap-success-card-sprite">
                 {theirSpriteUrl ? <img src={theirSpriteUrl} alt="" /> : <span className="gts-swap-success-placeholder">?</span>}
               </div>
               <div className="gts-swap-success-card-name">
-                {theirShiny && <FaStar style={{ color: "#facc15", fontSize: ".7em", marginRight: 3 }} />}
+                {theirAltShiny && <FaStar style={{ color: "#c084fc", fontSize: ".7em", marginRight: 3 }} />}
+                {theirShiny && !theirAltShiny && <FaStar style={{ color: "#facc15", fontSize: ".7em", marginRight: 3 }} />}
                 {theirName}
               </div>
             </div>
