@@ -24,6 +24,7 @@ import {
   FaBurst,
 } from "react-icons/fa6";
 import { getTypeStyle, getTypeLabel } from "../utils/typeStyles";
+import { normalizeName } from "../utils/pokedexLookup";
 import type { PlayerProfile } from "../types";
 
 const SECRET_HASH = "53f7981a8813ea030341e0e6fb3c146a2977a230cc0ef43070f5579228bf898c";
@@ -162,26 +163,13 @@ interface PokeEntry {
   location?: string;
 }
 
-function normalize(str: string) {
-  return str.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
-}
+const normalize = normalizeName;
 
-/** Alias manuels : nom Data/2.dat → nom(s) utilisé(s) sur le site. */
+/** Alias manuels : nom Data/2.dat → nom(s) utilisé(s) sur le site.
+ *  Ne garder que les vrais alias (noms différents entre la save et le site). */
 const NAME_ALIASES: Record<string, string[]> = {
   "scovillain": ["scovilain"],
   "scorrompu": ["scorruption"],
-  "medhyena": ["medhyena"],
-  "grahyena": ["grahyena"],
-  "chamallot": ["chamallot"],
-  "camerupt": ["camerupt"],
-  "grelacon": ["grelacon"],
-  "seracrawl": ["seracrawl"],
-  "kungfouine": ["kungfouine"],
-  "farigiraf": ["farigiraf"],
-  "galvaptor": ["galvaptor"],
-  "gigagla": ["gigagla"],
-  "ixon": ["ixon"],
-  "dogrino": ["dogrino"],
 };
 
 function TypeDropdown({
@@ -258,6 +246,8 @@ export default function PokedexView({ siteUrl, profile }: { siteUrl: string; pro
   const [statusFilter, setStatusFilter] = useState<"all" | "seen" | "caught" | "unseen">("all");
   const [selected, setSelected] = useState<PokeEntry | null>(null);
   const [showEasterEgg, setShowEasterEgg] = useState(false);
+  // Noms normalisés des Pokémon provenant du BST (fakemons, mégas, spéciaux)
+  const [bstNames, setBstNames] = useState<Set<string>>(new Set());
 
   const base = siteUrl.replace(/\/$/, "");
 
@@ -306,8 +296,24 @@ export default function PokedexView({ siteUrl, profile }: { siteUrl: string; pro
   const hasSaveData = nameStatusMap.size > 0;
 
   // Lookup pour une entrée du Pokédex
+  // Essaie le nom exact, puis le nom de base (sans suffixe de forme)
+  // pour matcher "Shifours PF" → "Shifours", "Tauros C" → "Tauros", etc.
   const getStatus = useCallback((entry: PokeEntry) => {
-    return nameStatusMap.get(normalize(entry.name)) ?? null;
+    const norm = normalize(entry.name);
+    const exact = nameStatusMap.get(norm);
+    if (exact) return exact;
+    // Essayer le nom de base (tout avant le dernier mot court = suffixe de forme)
+    const lastSpace = norm.lastIndexOf(" ");
+    if (lastSpace > 0) {
+      const baseName = norm.slice(0, lastSpace);
+      const suffix = norm.slice(lastSpace + 1);
+      // Suffixe court (1-3 chars) = probablement une forme (PF, MP, C, E, F, etc.)
+      if (suffix.length <= 3) {
+        const base = nameStatusMap.get(baseName);
+        if (base) return base;
+      }
+    }
+    return null;
   }, [nameStatusMap]);
 
   // Compteurs filtrés par les entrées existantes dans le Pokédex du site
@@ -315,18 +321,54 @@ export default function PokedexView({ siteUrl, profile }: { siteUrl: string; pro
     let caught = 0;
     let seenOnly = 0;
     entries.forEach((e) => {
-      const s = nameStatusMap.get(normalize(e.name));
+      const s = getStatus(e);
       if (s?.caught) caught++;
       else if (s?.seen) seenOnly++;
     });
     return { matchedCaught: caught, matchedSeenOnly: seenOnly };
-  }, [entries, nameStatusMap]);
+  }, [entries, getStatus]);
 
-  // Debug: diagnostic matching (console uniquement)
+  // Debug: diagnostic matching détaillé (console uniquement)
   useEffect(() => {
     if (speciesNames.length === 0 || entries.length === 0) return;
     console.log(`[PNW Pokédex] Sauvegarde: ${seenIds.length} vus, ${capturedIds.length} capturés | Matchés sur le site: ${matchedCaught} capturés, ${matchedSeenOnly} vus seulement`);
-  }, [speciesNames, entries, seenIds, capturedIds, matchedCaught, matchedSeenOnly]);
+
+    // Entrées du site sans match dans la save
+    const unmatchedSite = entries
+      .filter((e) => !nameStatusMap.has(normalize(e.name)))
+      .map((e) => `${e.num ?? e.number ?? "?"} ${e.name}`);
+    if (unmatchedSite.length > 0) {
+      console.warn(`[PNW Pokédex] ${unmatchedSite.length} entrées du site NON matchées dans la save:`, unmatchedSite);
+    }
+
+    // Espèces de la save qui n'apparaissent pas sur le site (pokedex + extradex + BST)
+    const siteNormNames = new Set([
+      ...entries.map((e) => normalize(e.name)),
+      ...extradexEntries.map((e) => normalize(e.name)),
+      ...bstNames,
+    ]);
+    const saveOnly: string[] = [];
+    for (let i = 0; i < speciesNames.length; i++) {
+      const name = speciesNames[i];
+      if (!name) continue;
+      const id1 = i + 1;
+      const seenOrCaught = seenIds.includes(id1) || capturedIds.includes(id1);
+      if (!seenOrCaught) continue;
+      const norm = normalize(name);
+      if (!siteNormNames.has(norm)) {
+        const aliasHit = NAME_ALIASES[norm]?.some((a) => siteNormNames.has(a));
+        if (!aliasHit) saveOnly.push(`#${id1} ${name}`);
+      }
+    }
+    if (saveOnly.length > 0) {
+      console.warn(`[PNW Pokédex] ${saveOnly.length} espèces vues/capturées dans la save ABSENTES du site (pokedex+extradex+bst):`, saveOnly);
+    }
+
+    // Diff compteurs
+    if (capturedIds.length !== matchedCaught || seenIds.length !== (matchedCaught + matchedSeenOnly)) {
+      console.warn(`[PNW Pokédex] Diff compteurs — Save: ${capturedIds.length} capturés, ${seenIds.length} vus | Matchés: ${matchedCaught} capturés, ${matchedCaught + matchedSeenOnly} vus`);
+    }
+  }, [speciesNames, entries, extradexEntries, bstNames, seenIds, capturedIds, matchedCaught, matchedSeenOnly, nameStatusMap]);
 
   const handleSearchChange = useCallback(async (value: string) => {
     setSearch(value);
@@ -345,17 +387,30 @@ export default function PokedexView({ siteUrl, profile }: { siteUrl: string; pro
     Promise.all([
       fetch(`${base}/api/pokedex?t=${Date.now()}`).then((r) => r.json()),
       fetch(`${base}/api/extradex?t=${Date.now()}`).then((r) => r.json()),
+      fetch(`${base}/api/bst?t=${Date.now()}`).then((r) => r.json()).catch(() => null),
     ])
-      .then(([pokedexRes, extradexRes]) => {
+      .then(([pokedexRes, extradexRes, bstRes]) => {
         if (pokedexRes?.success && Array.isArray(pokedexRes.pokedex?.entries)) {
           setEntries(pokedexRes.pokedex.entries);
         }
         if (extradexRes?.success && Array.isArray(extradexRes.extradex?.entries)) {
           setExtradexEntries(extradexRes.extradex.entries);
         }
+        // Collecter les noms du BST pour le matching
+        if (bstRes?.success && bstRes?.bst) {
+          const names = new Set<string>();
+          for (const cat of [bstRes.bst.fakemon, bstRes.bst.megas, bstRes.bst.speciaux]) {
+            if (Array.isArray(cat)) {
+              for (const row of cat) {
+                if (row?.name) names.add(normalize(row.name));
+              }
+            }
+          }
+          setBstNames(names);
+        }
       })
       .catch((e) => {
-        console.warn("[PNW] Pokedex/Extradex:", e);
+        console.warn("[PNW] Pokedex/Extradex/BST:", e);
       })
       .finally(() => setLoading(false));
   }, [base]);
@@ -382,7 +437,7 @@ export default function PokedexView({ siteUrl, profile }: { siteUrl: string; pro
         if (!types.every((t) => et.includes(t))) return false;
       }
       if (hasSaveData && statusFilter !== "all") {
-        const s = nameStatusMap.get(normalize(e.name));
+        const s = getStatus(e);
         const seen = s?.seen ?? false;
         const caught = s?.caught ?? false;
         if (statusFilter === "caught" && !caught) return false;
@@ -392,7 +447,7 @@ export default function PokedexView({ siteUrl, profile }: { siteUrl: string; pro
       return true;
     });
     return [...list].sort(sortByNum);
-  }, [currentEntries, search, type1, type2, statusFilter, hasSaveData, nameStatusMap]);
+  }, [currentEntries, search, type1, type2, statusFilter, hasSaveData, getStatus]);
 
   const fullImageUrl = (url: string | undefined) => {
     if (!url) return "";
@@ -421,10 +476,10 @@ export default function PokedexView({ siteUrl, profile }: { siteUrl: string; pro
             {hasSaveData && activeDex === "pokedex" && (
               <div className="dex-panel-progress">
                 <span className="dex-progress-item dex-progress-item--seen">
-                  <FaEye size={11} /> {seenIds.length} vus
+                  <FaEye size={11} /> {matchedCaught + matchedSeenOnly} vus
                 </span>
                 <span className="dex-progress-item dex-progress-item--caught">
-                  <FaCircleCheck size={11} /> {capturedIds.length} capturés
+                  <FaCircleCheck size={11} /> {matchedCaught} capturés
                 </span>
               </div>
             )}
@@ -691,8 +746,8 @@ export default function PokedexView({ siteUrl, profile }: { siteUrl: string; pro
                 const isSeen = st?.seen ?? false;
                 const isCaught = st?.caught ?? false;
                 const internalId = st?.internalId ?? 0;
-                const fought = foughtCounts && internalId > 0 ? (foughtCounts[internalId] ?? 0) : 0;
-                const caught = capturedCounts && internalId > 0 ? (capturedCounts[internalId] ?? 0) : 0;
+                const fought = foughtCounts && internalId > 0 ? (foughtCounts[internalId - 1] ?? 0) : 0;
+                const caught = capturedCounts && internalId > 0 ? (capturedCounts[internalId - 1] ?? 0) : 0;
                 if (!isSeen && !isCaught) return null;
                 return (
                   <div className="pokedex-modal-save-stats">

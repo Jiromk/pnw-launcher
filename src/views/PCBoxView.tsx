@@ -30,6 +30,7 @@ import {
 } from "react-icons/fa6";
 import type { PlayerProfile, PCBox, BoxPokemon } from "../types";
 import { NATURE_FR } from "../gtsDepositedPokemon";
+import { normalizeName } from "../utils/pokedexLookup";
 import GtsTransferAnim from "../components/GtsTransferAnim";
 import { dump } from "@hyrious/marshal";
 import {
@@ -65,6 +66,8 @@ export type TradeFilter = {
   wantedGender: number; // 0=indifférent, 1=mâle, 2=femelle
 };
 
+export type DexRow = { id: number; name: string; imageUrl?: string; isExtradex?: boolean; extradexNum?: number };
+
 export default function PCBoxView({
   profile,
   onBack,
@@ -73,6 +76,10 @@ export default function PCBoxView({
   onProfileReload,
   tradeFilter,
   onTradeSelect,
+  p2pTradeMode,
+  dexRows,
+  siteUrl,
+  onDepositDone,
 }: {
   profile: PlayerProfile | null;
   onBack?: () => void;
@@ -81,13 +88,23 @@ export default function PCBoxView({
   onProfileReload?: () => void;
   tradeFilter?: TradeFilter | null;
   onTradeSelect?: (poke: BoxPokemon, boxIdx: number) => void;
+  /** Mode échange P2P : tous les Pokémon sont sélectionnables, click direct. */
+  p2pTradeMode?: boolean;
+  /** Liste Pokédex pour le dropdown de dépôt (si fourni, remplace speciesNames). */
+  dexRows?: DexRow[];
+  /** URL de base du site (pour résoudre les imageUrl du Pokédex). */
+  siteUrl?: string;
+  /** Appelé après un dépôt GTS réussi (pour rafraîchir la liste browse). */
+  onDepositDone?: () => void;
 }) {
   const [activeBox, setActiveBox] = useState(0);
   const [speciesNames, setSpeciesNames] = useState<string[] | null>(null);
   const [skillNames, setSkillNames] = useState<string[] | null>(null);
   const [spriteCache, setSpriteCache] = useState<Record<string, string | null>>({});
   const [selectedPoke, setSelectedPoke] = useState<BoxPokemon | null>(null);
+  const [selectedPokeBoxIdx, setSelectedPokeBoxIdx] = useState<number>(0);
   const [searchQuery, setSearchQuery] = useState("");
+  const [shinyFilter, setShinyFilter] = useState(false);
 
   /* ─── Dépôt GTS ─── */
   const [depositStep, setDepositStep] = useState<DepositStep>("idle");
@@ -99,6 +116,7 @@ export default function PCBoxView({
   const [wantedGender, setWantedGender] = useState(0);
   const [wantedSpeciesQuery, setWantedSpeciesQuery] = useState("");
   const [wantedSuggestOpen, setWantedSuggestOpen] = useState(false);
+  const isEditingSpeciesRef = useRef(false);
   const [wantedIvs, setWantedIvs] = useState({ hp: 0, atk: 0, def: 0, spd: 0, spa: 0, spd2: 0 });
   const [wantedShiny, setWantedShiny] = useState<"any" | "yes" | "no">("any");
   const [wantedNature, setWantedNature] = useState<number | null>(null);
@@ -110,16 +128,9 @@ export default function PCBoxView({
   /** Vérifie si un Pokémon correspond aux critères d'échange */
   const isTradeMatch = useCallback((pm: BoxPokemon | null): boolean => {
     if (!pm || !tradeFilter) return false;
+    // Ne filtre que par espèce — niveau et genre sont vérifiés au moment de la confirmation
     const speciesId = typeof pm.code === "string" ? parseInt(pm.code, 10) : (pm.code ?? 0);
-    if (speciesId !== tradeFilter.wantedSpecies) return false;
-    const lvl = pm.level ?? 1;
-    if (lvl < tradeFilter.wantedLevelMin || lvl > tradeFilter.wantedLevelMax) return false;
-    if (tradeFilter.wantedGender > 0) {
-      // GTS: 1=mâle, 2=femelle ; save: 0=♂, 1=♀, 2=sans genre
-      const gtsToSave = tradeFilter.wantedGender === 1 ? 0 : 1;
-      if (pm.gender !== gtsToSave) return false;
-    }
-    return true;
+    return speciesId === tradeFilter.wantedSpecies;
   }, [tradeFilter]);
 
   /** En trade mode : liste plate de tous les Pokémon compatibles à travers toutes les boîtes */
@@ -183,6 +194,15 @@ export default function PCBoxView({
           .then((url) => { if (!cancelled) setSpriteCache((p) => ({ ...p, [keyS]: url ?? null })); })
           .catch(() => { if (!cancelled) setSpriteCache((p) => ({ ...p, [keyS]: null })); });
       }
+      if (pm.isAltShiny) {
+        const keyA = `${speciesId}_${form}_a`;
+        if (spriteCache[keyA] === undefined) {
+          setSpriteCache((p) => ({ ...p, [keyA]: "" }));
+          invoke<string | null>("cmd_get_alt_shiny_sprite", { speciesId, form: form > 0 ? form : null })
+            .then((url) => { if (!cancelled) setSpriteCache((p) => ({ ...p, [keyA]: url ?? null })); })
+            .catch(() => { if (!cancelled) setSpriteCache((p) => ({ ...p, [keyA]: null })); });
+        }
+      }
     }
     return () => { cancelled = true; };
   }, [box, activeBox]);
@@ -208,6 +228,15 @@ export default function PCBoxView({
         invoke<string | null>("cmd_get_shiny_sprite", { speciesId, form: form > 0 ? form : null })
           .then((url) => { if (!cancelled) setSpriteCache((p) => ({ ...p, [keyS]: url ?? null })); })
           .catch(() => { if (!cancelled) setSpriteCache((p) => ({ ...p, [keyS]: null })); });
+      }
+      if (pm.isAltShiny) {
+        const keyA = `${speciesId}_${form}_a`;
+        if (!requestedSprites.current.has(keyA)) {
+          requestedSprites.current.add(keyA);
+          invoke<string | null>("cmd_get_alt_shiny_sprite", { speciesId, form: form > 0 ? form : null })
+            .then((url) => { if (!cancelled) setSpriteCache((p) => ({ ...p, [keyA]: url ?? null })); })
+            .catch(() => { if (!cancelled) setSpriteCache((p) => ({ ...p, [keyA]: null })); });
+        }
       }
     }
     return () => { cancelled = true; };
@@ -235,19 +264,88 @@ export default function PCBoxView({
     return count;
   }, [boxes]);
 
+  const altShinyCount = useMemo(() => {
+    let count = 0;
+    for (const b of boxes) for (const p of b.pokemon) if (p?.isAltShiny) count++;
+    return count;
+  }, [boxes]);
+
   // Filtered species for deposit dropdown
+  const fullImageUrl = useCallback((url: string | undefined) => {
+    if (!url) return "";
+    if (url.startsWith("http")) return url;
+    const base = (siteUrl ?? "").replace(/\/$/, "");
+    return `${base}${url.startsWith("/") ? "" : "/"}${url}`;
+  }, [siteUrl]);
+
+  /** dexRows dédupliqué par id (une seule entrée par espèce). */
+  const uniqueDexRows = useMemo(() => {
+    if (!dexRows?.length) return [];
+    const seen = new Set<number>();
+    const out: typeof dexRows = [];
+    for (const r of dexRows) {
+      if (seen.has(r.id)) continue;
+      seen.add(r.id);
+      out.push(r);
+    }
+    return out;
+  }, [dexRows]);
+
   const filteredSpecies = useMemo(() => {
+    if (uniqueDexRows.length > 0) {
+      const q = wantedSpeciesQuery.trim().toLowerCase();
+      if (!q) return uniqueDexRows.map((r) => ({ id: r.id, name: r.name, imageUrl: r.imageUrl, isExtradex: r.isExtradex, extradexNum: r.extradexNum }));
+      const digits = q.replace(/\D/g, "");
+      return uniqueDexRows
+        .filter((r) => {
+          if (r.name.toLowerCase().includes(q)) return true;
+          if (digits.length > 0 && String(r.isExtradex ? r.extradexNum : r.id).startsWith(digits)) return true;
+          return false;
+        })
+        .map((r) => ({ id: r.id, name: r.name, imageUrl: r.imageUrl, isExtradex: r.isExtradex, extradexNum: r.extradexNum }));
+    }
     if (!speciesNames) return [];
     const q = wantedSpeciesQuery.trim().toLowerCase();
-    const list: { id: number; name: string }[] = [];
+    const digits = q.replace(/\D/g, "");
+    const list: { id: number; name: string; imageUrl?: string; isExtradex?: boolean; extradexNum?: number }[] = [];
     for (let i = 1; i < speciesNames.length; i++) {
       const name = speciesNames[i];
       if (!name) continue;
-      if (q && !name.toLowerCase().includes(q) && !String(i).includes(q)) continue;
+      if (name.startsWith("Méga-") || name.startsWith("Méga ")) continue;
+      if (q) {
+        if (!name.toLowerCase().includes(q) && !(digits.length > 0 && String(i).startsWith(digits))) continue;
+      }
       list.push({ id: i, name });
     }
     return list;
-  }, [speciesNames, wantedSpeciesQuery]);
+  }, [uniqueDexRows, speciesNames, wantedSpeciesQuery]);
+
+  /** Mapping ID Pokédex site → ID PSDK interne (pour l'envoi au GTS). */
+  const nationalToPsdk = useMemo(() => {
+    if (!speciesNames || !uniqueDexRows.length) return null;
+    const m = new Map<number, number>();
+    const psdkByName = new Map<string, number>();
+    speciesNames.forEach((name, idx) => {
+      if (name) {
+        const k = normalizeName(name);
+        if (!psdkByName.has(k)) psdkByName.set(k, idx);
+      }
+    });
+    for (const r of uniqueDexRows) {
+      const psdkId = psdkByName.get(normalizeName(r.name));
+      if (psdkId != null) m.set(r.id, psdkId);
+    }
+    return m;
+  }, [speciesNames, uniqueDexRows]);
+
+  /** Résout le nom d'affichage pour l'espèce souhaitée (dropdown). */
+  const resolveWantedName = useCallback((id: number): string => {
+    if (uniqueDexRows.length) {
+      const row = uniqueDexRows.find((r) => r.id === id);
+      if (row) return `${row.name} (#${row.id})`;
+    }
+    return speciesNames?.[id] ? `${speciesNames[id]} (#${id})` : String(id);
+  }, [uniqueDexRows, speciesNames]);
 
   // Close suggest on outside click
   useEffect(() => {
@@ -272,6 +370,10 @@ export default function PCBoxView({
   function getSpriteUrl(pm: BoxPokemon): string | null {
     const speciesId = typeof pm.code === "string" ? parseInt(String(pm.code), 10) : (pm.code ?? 0);
     const form = typeof pm.form === "string" ? parseInt(String(pm.form), 10) : (pm.form ?? 0);
+    if (pm.isAltShiny) {
+      const aUrl = spriteCache[`${speciesId}_${form}_a`];
+      if (aUrl) return aUrl;
+    }
     if (pm.isShiny) {
       const sUrl = spriteCache[`${speciesId}_${form}_s`];
       if (sUrl) return sUrl;
@@ -296,20 +398,22 @@ export default function PCBoxView({
   // Search filter: find pokemon across all boxes
   const searchResults = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    if (!q) return null;
+    if (!q && !shinyFilter) return null;
     const results: { boxIdx: number; boxName: string; pm: BoxPokemon }[] = [];
     for (let b = 0; b < boxes.length; b++) {
       for (const pm of boxes[b].pokemon) {
         if (!pm) continue;
-        const name = getSpeciesName(pm).toLowerCase();
-        const nick = (pm.nickname ?? "").toLowerCase();
-        if (name.includes(q) || nick.includes(q)) {
-          results.push({ boxIdx: b, boxName: boxes[b].name, pm });
+        if (shinyFilter && !pm.isShiny && !pm.isAltShiny) continue;
+        if (q) {
+          const name = getSpeciesName(pm).toLowerCase();
+          const nick = (pm.nickname ?? "").toLowerCase();
+          if (!name.includes(q) && !nick.includes(q)) continue;
         }
+        results.push({ boxIdx: b, boxName: boxes[b].name, pm });
       }
     }
     return results;
-  }, [searchQuery, boxes, speciesNames]);
+  }, [searchQuery, shinyFilter, boxes, speciesNames]);
 
   // Load sprites for search results (cross-box)
   useEffect(() => {
@@ -373,7 +477,7 @@ export default function PCBoxView({
       const ctx = loadSaveForEdit(rawBytes);
 
       // 4. Trouver le box/slot du Pokémon sélectionné
-      const boxIdx = activeBox;
+      const boxIdx = selectedPokeBoxIdx;
       const slotIdx = selectedPoke.slot;
 
       // 5. Extraire le Pokémon Marshal
@@ -414,7 +518,7 @@ export default function PCBoxView({
         species: speciesId,
         level: selectedPoke.level ?? 1,
         gender: selectedPoke.gender ?? 0,
-        wantedSpecies: wantedSpecies,
+        wantedSpecies: nationalToPsdk?.get(wantedSpecies) ?? wantedSpecies,
         wantedLevelMin: wantedLevelMin,
         wantedLevelMax: wantedLevelMax,
         wantedGender: gtsGender,
@@ -453,6 +557,7 @@ export default function PCBoxView({
         originalSpecies: typeof selectedPoke.code === "string" ? parseInt(selectedPoke.code, 10) : (selectedPoke.code ?? 0),
         originalLevel: selectedPoke.level ?? 0,
         originalShiny: selectedPoke.isShiny ?? false,
+        originalAltShiny: selectedPoke.isAltShiny ?? false,
       };
       await invoke("cmd_gts_save_extras", {
         onlineId,
@@ -462,14 +567,17 @@ export default function PCBoxView({
       // 12. Lancer l'animation de dépôt
       setShowDepositAnim(true);
 
-      // Recharger le profil en arrière-plan
-      setTimeout(() => { onProfileReload?.(); }, 500);
+      // Recharger le profil + actualiser la liste GTS
+      setTimeout(() => {
+        onProfileReload?.();
+        onDepositDone?.();
+      }, 500);
     } catch (e: any) {
       console.error("[GTS] Erreur dépôt:", e);
       setDepositError(String(e?.message || e));
       setDepositStep("error");
     }
-  }, [selectedPoke, savePath, activeBox, wantedSpecies, wantedLevelMin, wantedLevelMax, wantedGender, wantedShiny, wantedNature, wantedIvs, onProfileReload]);
+  }, [selectedPoke, savePath, activeBox, wantedSpecies, wantedLevelMin, wantedLevelMax, wantedGender, wantedShiny, wantedNature, wantedIvs, onProfileReload, onDepositDone]);
 
   const ivRows = selectedPoke ? [
     { Icon: FaHeart, label: "PV", value: selectedPoke.ivHp ?? 0, cls: "hp" },
@@ -510,13 +618,14 @@ export default function PCBoxView({
 
         {/* Header */}
         <div className="pcbox-modal-header">
-          <div className={`pcbox-modal-sprite ${selectedPoke.isShiny ? "pcbox-modal-sprite--shiny" : ""}`}>
+          <div className={`pcbox-modal-sprite ${selectedPoke.isAltShiny ? "pcbox-modal-sprite--alt-shiny" : selectedPoke.isShiny ? "pcbox-modal-sprite--shiny" : ""}`}>
             {getSpriteUrl(selectedPoke) ? (
               <img src={getSpriteUrl(selectedPoke)!} alt="" />
             ) : (
               <div className="pcbox-slot-placeholder pcbox-slot-placeholder--lg">?</div>
             )}
-            {selectedPoke.isShiny && <FaStar className="pcbox-modal-shiny-badge" />}
+            {selectedPoke.isAltShiny && <FaStar className="pcbox-modal-shiny-badge-alt" />}
+            {selectedPoke.isShiny && !selectedPoke.isAltShiny && <FaStar className="pcbox-modal-shiny-badge" />}
           </div>
           <div className="pcbox-modal-title-wrap">
             <h2 className="pcbox-modal-name">
@@ -527,7 +636,12 @@ export default function PCBoxView({
             )}
             <div className="pcbox-modal-tags">
               <span className="pcbox-modal-tag pcbox-modal-tag--level">Nv. {selectedPoke.level ?? "?"}</span>
-              {selectedPoke.isShiny && (
+              {selectedPoke.isAltShiny && (
+                <span className="pcbox-modal-tag pcbox-modal-tag--alt-shiny">
+                  <FaStar size={9} /> Shiny Alt
+                </span>
+              )}
+              {selectedPoke.isShiny && !selectedPoke.isAltShiny && (
                 <span className="pcbox-modal-tag pcbox-modal-tag--shiny">
                   <FaStar size={9} /> Shiny
                 </span>
@@ -636,16 +750,20 @@ export default function PCBoxView({
                   <input
                     type="text"
                     className="pcbox-deposit-input pcbox-deposit-input--ac"
-                    placeholder="Nom ou numéro…"
+                    placeholder={resolveWantedName(wantedSpecies)}
                     autoComplete="off"
-                    value={wantedSpeciesQuery || (speciesNames?.[wantedSpecies] ? `${speciesNames[wantedSpecies]} (#${wantedSpecies})` : String(wantedSpecies))}
+                    value={wantedSpeciesQuery}
                     onChange={(e) => {
                       setWantedSpeciesQuery(e.target.value);
-                      setWantedSuggestOpen(true);
+                      if (!wantedSuggestOpen) setWantedSuggestOpen(true);
                     }}
                     onFocus={() => {
-                      if (!wantedSpeciesQuery) setWantedSpeciesQuery("");
+                      isEditingSpeciesRef.current = true;
+                      setWantedSpeciesQuery("");
                       setWantedSuggestOpen(true);
+                    }}
+                    onBlur={() => {
+                      isEditingSpeciesRef.current = false;
                     }}
                     onKeyDown={(e) => {
                       if (e.key === "Escape") setWantedSuggestOpen(false);
@@ -660,46 +778,78 @@ export default function PCBoxView({
                     </button>
                   )}
                 </div>
-                {wantedSuggestOpen && filteredSpecies.length > 0 && (
-                  <ul className="pcbox-deposit-suggest pnw-scrollbar">
-                    {filteredSpecies.slice(0, 80).map((sp) => {
+                {wantedSuggestOpen && filteredSpecies.length > 0 && (() => {
+                  const pokedexSp = filteredSpecies.filter((s) => !s.isExtradex);
+                  const extradexSp = filteredSpecies.filter((s) => s.isExtradex);
+                  const renderItem = (sp: typeof filteredSpecies[number]) => {
+                    const apiThumb = sp.imageUrl ? fullImageUrl(sp.imageUrl) : "";
+                    let sprUrl = apiThumb;
+                    if (!sprUrl) {
                       const sprKey = `${sp.id}_0_n`;
-                      const sprUrl = spriteCache[sprKey] ?? null;
-                      // Load sprite if not cached
+                      sprUrl = spriteCache[sprKey] ?? "";
                       if (spriteCache[sprKey] === undefined) {
                         invoke<string | null>("cmd_get_normal_sprite", { speciesId: sp.id, form: null })
                           .then((url) => setSpriteCache((p) => ({ ...p, [sprKey]: url ?? null })))
                           .catch(() => setSpriteCache((p) => ({ ...p, [sprKey]: null })));
                         setSpriteCache((p) => ({ ...p, [sprKey]: "" }));
                       }
-                      return (
-                        <li key={sp.id}>
-                          <button
-                            type="button"
-                            className={`pcbox-deposit-suggest-item ${sp.id === wantedSpecies ? "pcbox-deposit-suggest-item--active" : ""}`}
-                            onClick={() => {
-                              setWantedSpecies(sp.id);
-                              setWantedSpeciesQuery("");
-                              setWantedSuggestOpen(false);
-                            }}
-                          >
-                            <span className="pcbox-deposit-suggest-thumb">
-                              {sprUrl ? (
-                                <img src={sprUrl} alt="" loading="lazy" />
-                              ) : (
-                                <span className="pcbox-deposit-suggest-thumb--empty" />
-                              )}
-                            </span>
-                            <span className="pcbox-deposit-suggest-num">
-                              <FaHashtag size={8} />{sp.id}
-                            </span>
-                            <span className="pcbox-deposit-suggest-name">{sp.name}</span>
-                          </button>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                )}
+                    }
+                    return (
+                      <li key={sp.id}>
+                        <button
+                          type="button"
+                          className={`pcbox-deposit-suggest-item ${sp.id === wantedSpecies ? "pcbox-deposit-suggest-item--active" : ""}`}
+                          onClick={() => {
+                            setWantedSpecies(sp.id);
+                            setWantedSpeciesQuery("");
+                            setWantedSuggestOpen(false);
+                          }}
+                        >
+                          <span className="pcbox-deposit-suggest-thumb">
+                            {sprUrl ? (
+                              <img src={sprUrl} alt="" loading="lazy" />
+                            ) : (
+                              <span className="pcbox-deposit-suggest-thumb--empty" />
+                            )}
+                          </span>
+                          <span className="pcbox-deposit-suggest-num">
+                            {sp.isExtradex ? (
+                              <span className="gts-suggest-extradex-badge">EX</span>
+                            ) : (
+                              <FaHashtag size={8} />
+                            )}
+                            {sp.isExtradex ? sp.extradexNum : sp.id}
+                          </span>
+                          <span className="pcbox-deposit-suggest-name">{sp.name}</span>
+                        </button>
+                      </li>
+                    );
+                  };
+                  return extradexSp.length > 0 ? (
+                    <div className="pcbox-deposit-suggest-columns">
+                      <div className="pcbox-deposit-suggest-col pnw-scrollbar">
+                        <div className="gts-suggest-col-header">Pokédex</div>
+                        <ul className="pcbox-deposit-suggest-col-list">
+                          {pokedexSp.length === 0 ? (
+                            <li className="pcbox-deposit-suggest-empty">Aucun résultat</li>
+                          ) : pokedexSp.map(renderItem)}
+                        </ul>
+                      </div>
+                      <div className="pcbox-deposit-suggest-col pcbox-deposit-suggest-col--extradex pnw-scrollbar">
+                        <div className="gts-suggest-col-header gts-suggest-col-header--extradex">Extradex</div>
+                        <ul className="pcbox-deposit-suggest-col-list">
+                          {extradexSp.length === 0 ? (
+                            <li className="pcbox-deposit-suggest-empty">Aucun résultat</li>
+                          ) : extradexSp.map(renderItem)}
+                        </ul>
+                      </div>
+                    </div>
+                  ) : (
+                    <ul className="pcbox-deposit-suggest pnw-scrollbar">
+                      {pokedexSp.map(renderItem)}
+                    </ul>
+                  );
+                })()}
               </div>
 
               {/* Level range */}
@@ -843,7 +993,7 @@ export default function PCBoxView({
                   et déposé sur le GTS. Un backup sera créé automatiquement.
                 </p>
                 <p className="pcbox-deposit-wanted-summary">
-                  En échange : {speciesNames?.[wantedSpecies] ?? `#${wantedSpecies}`}, Nv.{wantedLevelMin}–{wantedLevelMax}
+                  En échange : {resolveWantedName(wantedSpecies)}, Nv.{wantedLevelMin}–{wantedLevelMax}
                   {wantedGender === 1 ? " (Mâle)" : wantedGender === 2 ? " (Femelle)" : ""}
                 </p>
                 {(wantedShiny !== "any" || wantedNature !== null || Object.values(wantedIvs).some(v => v > 0)) && (
@@ -969,10 +1119,17 @@ export default function PCBoxView({
           <span>{boxCount}/{BOX_SIZE} dans cette boîte</span>
           <span className="pcbox-stats-sep">·</span>
           <span>{totalPokemon} total</span>
-          {shinyCount > 0 && (
+          {(shinyCount > 0 || altShinyCount > 0) && (
             <>
               <span className="pcbox-stats-sep">·</span>
-              <span className="pcbox-stats-shiny"><FaStar size={9} /> {shinyCount} shiny</span>
+              <button
+                type="button"
+                className={`pcbox-stats-shiny-btn${shinyFilter ? " pcbox-stats-shiny-btn--active" : ""}`}
+                onClick={() => setShinyFilter((p) => !p)}
+                title={shinyFilter ? "Afficher tous les Pokémon" : "Afficher uniquement les shinys"}
+              >
+                <FaStar size={9} /> {shinyCount + altShinyCount} shiny
+              </button>
             </>
           )}
         </div>
@@ -981,7 +1138,9 @@ export default function PCBoxView({
         {searchResults ? (
           <div className="pcbox-search-results">
             <div className="pcbox-search-results-header">
-              {searchResults.length} résultat{searchResults.length !== 1 ? "s" : ""} pour "{searchQuery}"
+              {searchResults.length} résultat{searchResults.length !== 1 ? "s" : ""}
+              {searchQuery ? ` pour "${searchQuery}"` : ""}
+              {shinyFilter ? " (shinys uniquement)" : ""}
             </div>
             {searchResults.length === 0 ? (
               <div className="pcbox-search-empty">Aucun Pokémon trouvé</div>
@@ -992,12 +1151,20 @@ export default function PCBoxView({
                     key={`sr_${i}`}
                     className={[
                       "pcbox-slot pcbox-slot--filled",
-                      pm.isShiny ? "pcbox-slot--shiny" : "",
+                      pm.isAltShiny ? "pcbox-slot--alt-shiny" : pm.isShiny ? "pcbox-slot--shiny" : "",
                     ].filter(Boolean).join(" ")}
-                    onClick={() => setSelectedPoke(pm)}
+                    onClick={() => {
+                      if (p2pTradeMode && onTradeSelect) {
+                        onTradeSelect(pm, boxIdx);
+                      } else {
+                        setSelectedPoke(pm);
+                        setSelectedPokeBoxIdx(boxIdx);
+                      }
+                    }}
                     title={`${boxName}`}
                   >
-                    {pm.isShiny && <FaStar className="pcbox-slot-star" />}
+                    {pm.isAltShiny && <FaStar className="pcbox-slot-star-alt" />}
+                    {pm.isShiny && !pm.isAltShiny && <FaStar className="pcbox-slot-star" />}
                     <div className="pcbox-slot-sprite">
                       {getSpriteUrl(pm) ? (
                         <img src={getSpriteUrl(pm)!} alt="" />
@@ -1032,12 +1199,13 @@ export default function PCBoxView({
                     key={`tm_${boxIdx}_${pm.slot}`}
                     className={[
                       "pcbox-slot pcbox-slot--filled pcbox-slot--trade-match",
-                      pm.isShiny ? "pcbox-slot--shiny" : "",
+                      pm.isAltShiny ? "pcbox-slot--alt-shiny" : pm.isShiny ? "pcbox-slot--shiny" : "",
                     ].filter(Boolean).join(" ")}
                     onClick={() => onTradeSelect?.(pm, boxIdx)}
                     title={boxName}
                   >
-                    {pm.isShiny && <FaStar className="pcbox-slot-star" />}
+                    {pm.isAltShiny && <FaStar className="pcbox-slot-star-alt" />}
+                    {pm.isShiny && !pm.isAltShiny && <FaStar className="pcbox-slot-star" />}
                     <div className="pcbox-slot-sprite">
                       {getSpriteUrl(pm) ? (
                         <img src={getSpriteUrl(pm)!} alt="" />
@@ -1065,13 +1233,22 @@ export default function PCBoxView({
                 className={[
                   "pcbox-slot",
                   pm ? "pcbox-slot--filled" : "pcbox-slot--empty",
-                  pm?.isShiny ? "pcbox-slot--shiny" : "",
+                  pm?.isAltShiny ? "pcbox-slot--alt-shiny" : pm?.isShiny ? "pcbox-slot--shiny" : "",
                 ].filter(Boolean).join(" ")}
-                onClick={() => pm && setSelectedPoke(pm)}
+                onClick={() => {
+                  if (!pm) return;
+                  if (p2pTradeMode && onTradeSelect) {
+                    onTradeSelect(pm, activeBox);
+                  } else {
+                    setSelectedPoke(pm);
+                    setSelectedPokeBoxIdx(activeBox);
+                  }
+                }}
               >
                 {pm ? (
                   <>
-                    {pm.isShiny && <FaStar className="pcbox-slot-star" />}
+                    {pm.isAltShiny && <FaStar className="pcbox-slot-star-alt" />}
+                    {pm.isShiny && !pm.isAltShiny && <FaStar className="pcbox-slot-star" />}
                     <div className="pcbox-slot-sprite">
                       {getSpriteUrl(pm) ? (
                         <img src={getSpriteUrl(pm)!} alt="" />
@@ -1104,6 +1281,7 @@ export default function PCBoxView({
           spriteUrl={getSpriteUrl(selectedPoke)}
           pokemonName={selectedPoke.nickname || getSpeciesName(selectedPoke)}
           isShiny={selectedPoke.isShiny ?? false}
+          isAltShiny={selectedPoke.isAltShiny ?? false}
           onComplete={() => {
             setShowDepositAnim(false);
             setDepositStep("idle");

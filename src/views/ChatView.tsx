@@ -34,6 +34,8 @@ import {
 import type { ChatChannel, ChatMessage, ChatProfile, ChatMute, ChatBan, ChatFriend, PlayerProfile, GameLiveState, GameLivePlayer, GameActivityShareData, TradeState, TradeSelection, TradeSelectionPreview, TradeMessageData, BattleRoomState } from "../types";
 import { generateRoomCode, writeBattleTrigger, writeStopTrigger, startRelay, cleanupBattleFiles, fullCleanup, isGameRunning, BATTLE_INVITE_TIMEOUT, connectLobby, sendBattleInvite, sendBattleAccept, sendBattleDecline, sendBattleCancel, playTurnSound, saveBattleLog, _currentBattleTurnLog, _currentBattleEventLog, writeOpponentLeft } from "../battleRelay";
 import BattleTowerView from "./battleTower/BattleTowerView";
+import { validateTeamForBattle } from "../banlist";
+import { validateTeamStats, reportCheatToServer } from "../statsValidator";
 import { TRADE_PREFIX, generateTradeId, validateIncomingBytes, extractAndEncode, executeTradeLocally, buildTradeMessage, parseTradeMessage, TRADE_PENDING_TIMEOUT, TRADE_SELECTING_TIMEOUT, TRADE_CONFIRMING_TIMEOUT, TRADE_EXECUTING_TIMEOUT } from "../tradeP2P";
 import { loadSaveForEdit, extractPokemonFromBox, encodePokemonForGts } from "../saveWriter";
 import { upsertLeaderboardScore, fetchLeaderboard, type LeaderboardEntry } from "../leaderboard";
@@ -1494,7 +1496,7 @@ interface ChatViewProps {
   gameProfile?: PlayerProfile | null;
   installDir: string;
   lastSavePath?: string | null;
-  onProfileReload?: () => void;
+  onProfileReload?: () => Promise<PlayerProfile | null>;
   /** Quand true, affiche la vue Tour de Combat au lieu du chat. */
   battleMode?: boolean;
 }
@@ -3528,6 +3530,10 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
       <BattleTowerView
         session={session}
         profile={profile}
+        gameProfile={gameProfile}
+        siteUrl={siteUrl}
+        speciesNames={psdkNames.species}
+        onProfileReload={onProfileReload}
         allMembers={allMembers}
         onlineUserIds={onlineUserIds}
         gameLivePlayers={gameLivePlayers}
@@ -3556,6 +3562,67 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
       if (challengeToastTimerRef.current) { clearTimeout(challengeToastTimerRef.current); challengeToastTimerRef.current = null; }
       showErrorToast("Le jeu n'est pas lancé. Le défi de " + toast.fromName + " a été refusé automatiquement.");
       return;
+    }
+
+    // Récupérer l'équipe live depuis le jeu (même pattern que BattleTowerView.getFreshTeam)
+    let team: import("../types").TeamMember[] | null = gameProfile?.team ?? null;
+    try {
+      await invoke("cmd_battle_request_live_party");
+      const maxWait = 2000;
+      let elapsed = 0;
+      while (elapsed < maxWait) {
+        await new Promise((r) => setTimeout(r, 100));
+        elapsed += 100;
+        const raw = await invoke<string | null>("cmd_battle_read_live_party");
+        if (raw) {
+          const data = JSON.parse(raw);
+          if (Array.isArray(data) && data.length > 0) {
+            team = data.map((p: any) => ({
+              code: p.id ?? 0, form: p.form ?? null, level: p.level ?? null,
+              nickname: p.given_name ?? null, speciesName: p.name ?? null, isShiny: p.shiny ?? null,
+              ivHp: p.iv_hp ?? 0, ivAtk: p.iv_atk ?? 0, ivDfe: p.iv_dfe ?? 0,
+              ivSpd: p.iv_spd ?? 0, ivAts: p.iv_ats ?? 0, ivDfs: p.iv_dfs ?? 0,
+              evHp: p.ev_hp ?? 0, evAtk: p.ev_atk ?? 0, evDfe: p.ev_dfe ?? 0,
+              evSpd: p.ev_spd ?? 0, evAts: p.ev_ats ?? 0, evDfs: p.ev_dfs ?? 0,
+            }));
+            break;
+          }
+        }
+      }
+    } catch { /* fallback sur gameProfile?.team */ }
+
+    // Vérif banlist : refuser automatiquement si l'équipe contient des Pokémons interdits
+    if (team && team.length > 0) {
+      const matches = await validateTeamForBattle(siteUrl, team, psdkNames.species);
+      if (matches.length > 0) {
+        sendBattleDecline(toast.roomCode, (battleStateRef.current as any).partnerId || "", session.user.id);
+        cleanupBattleFiles().catch(() => {});
+        setBattleState({ phase: "idle" });
+        setChallengeToast(null);
+        if (challengeToastTimerRef.current) { clearTimeout(challengeToastTimerRef.current); challengeToastTimerRef.current = null; }
+        const names = matches
+          .map((m) => m.banned.name + (m.banned.form != null ? ` (forme ${m.banned.form})` : ""))
+          .join(", ");
+        showErrorToast(`Défi refusé — Pokémon banni(s) dans votre équipe : ${names}`);
+        return;
+      }
+    }
+
+    // Vérif IV/EV (anti-triche) : refuser automatiquement si l'équipe a des stats invalides
+    if (team && team.length > 0) {
+      const invalid = validateTeamStats(team, psdkNames.species);
+      if (invalid.length > 0) {
+        sendBattleDecline(toast.roomCode, (battleStateRef.current as any).partnerId || "", session.user.id);
+        cleanupBattleFiles().catch(() => {});
+        setBattleState({ phase: "idle" });
+        setChallengeToast(null);
+        if (challengeToastTimerRef.current) { clearTimeout(challengeToastTimerRef.current); challengeToastTimerRef.current = null; }
+        const names = invalid.map((m) => m.label).join(", ");
+        showErrorToast(`Défi refusé — statistiques invalides (IV/EV) sur : ${names}`);
+        // Rapport Discord — fire-and-forget
+        if (profile) reportCheatToServer(siteUrl, profile, invalid);
+        return;
+      }
     }
 
     // Le jeu est lance : on peut accepter
