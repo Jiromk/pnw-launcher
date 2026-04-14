@@ -12,6 +12,7 @@ import {
   FaBars,
   FaArrowRightArrowLeft,
   FaShieldHalved,
+  FaTriangleExclamation,
 } from "react-icons/fa6";
 import { getLauncherUi, type UiLang } from "./launcherUiLocale";
 
@@ -21,15 +22,19 @@ export function LauncherMenu({
   onOpenBattle,
   uiLang,
   gtsWishlistMatches = 0,
+  gameOutOfDate = false,
 }: {
   onOpenGts: () => void;
   onOpenBattle?: () => void;
   uiLang: UiLang;
   gtsWishlistMatches?: number;
+  /** Si true, bloque l'accès à la Tour de Combat et affiche un popup. */
+  gameOutOfDate?: boolean;
 }) {
   const t = getLauncherUi(uiLang).launcherMenu;
   const [openMenu, setOpenMenu] = useState(false);
   const [showCodeModal, setShowCodeModal] = useState(false);
+  const [showOutOfDateModal, setShowOutOfDateModal] = useState(false);
   const [codeInput, setCodeInput] = useState("");
   const [codeError, setCodeError] = useState(false);
   const codeInputRef = useRef<HTMLInputElement>(null);
@@ -99,6 +104,12 @@ export function LauncherMenu({
               role="menuitem"
               className="w-full text-left px-3 py-2.5 hover:bg-white/8 rounded-lg flex items-center gap-2.5 transition-colors duration-200"
               onClick={() => {
+                // Bloquer l'accès si le jeu n'est pas à jour (combat équitable)
+                if (gameOutOfDate) {
+                  setOpenMenu(false);
+                  setShowOutOfDateModal(true);
+                  return;
+                }
                 if (sessionStorage.getItem("pnw_battle_unlocked") === "1") { onOpenBattle(); setOpenMenu(false); return; }
                 setOpenMenu(false);
                 setCodeInput("");
@@ -189,6 +200,49 @@ export function LauncherMenu({
                 boxShadow: "0 2px 10px rgba(220,50,80,.3)",
               }}>Entrer</button>
             </div>
+          </div>
+        </div>,
+        document.body,
+      )}
+
+      {/* Modal bloquant : jeu non à jour */}
+      {showOutOfDateModal && createPortal(
+        <div style={{
+          position: "fixed", inset: 0, zIndex: 99999,
+          background: "rgba(0,0,0,.75)", backdropFilter: "blur(8px)",
+          display: "grid", placeItems: "center",
+        }} onClick={() => setShowOutOfDateModal(false)}>
+          <div onClick={(e) => e.stopPropagation()} style={{
+            background: "linear-gradient(145deg, rgba(26,18,38,.98), rgba(13,9,24,.99))",
+            border: "1px solid rgba(251,191,36,.25)",
+            borderRadius: 18, padding: "1.75rem 2rem", maxWidth: 400, margin: "0 1.5rem",
+            boxShadow: "0 20px 60px -20px rgba(245,158,11,.35), 0 12px 48px rgba(0,0,0,.6)",
+            display: "flex", flexDirection: "column", alignItems: "center", gap: "1rem",
+            textAlign: "center",
+          }}>
+            <FaTriangleExclamation style={{ fontSize: "2rem", color: "rgba(252,211,77,.95)" }} aria-hidden />
+            <div>
+              <div style={{ fontSize: "1.1rem", fontWeight: 700, color: "#fff", marginBottom: 8 }}>
+                {t.battleOutOfDateTitle}
+              </div>
+              <div style={{ fontSize: ".85rem", color: "rgba(255,255,255,.75)", lineHeight: 1.5 }}>
+                {t.battleOutOfDateBody}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowOutOfDateModal(false)}
+              style={{
+                padding: ".55rem 1.5rem", borderRadius: 10, fontSize: ".85rem", fontWeight: 600,
+                background: "rgba(251,191,36,.15)",
+                border: "1px solid rgba(251,191,36,.35)",
+                color: "rgba(252,211,77,.95)", cursor: "pointer", transition: "all .15s",
+              }}
+              onMouseOver={(e) => { e.currentTarget.style.background = "rgba(251,191,36,.25)"; }}
+              onMouseOut={(e) => { e.currentTarget.style.background = "rgba(251,191,36,.15)"; }}
+            >
+              {t.battleOutOfDateOk}
+            </button>
           </div>
         </div>,
         document.body,

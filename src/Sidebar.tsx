@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import {
   FaHouse, FaScroll, FaBook, FaBookOpen, FaFileLines,
   FaLocationDot, FaTable, FaScaleBalanced, FaUsers,
-  FaBars, FaXmark, FaGamepad, FaEnvelope, FaCrown,
+  FaBars, FaXmark, FaGamepad, FaEnvelope, FaCrown, FaShieldHalved,
 } from "react-icons/fa6";
 
 const ICON_MAP: Record<string, React.ReactNode> = {
@@ -17,6 +17,7 @@ const ICON_MAP: Record<string, React.ReactNode> = {
   "fa-scale-balanced": <FaScaleBalanced />,
   "fa-users": <FaUsers />,
   "fa-crown": <FaCrown />,
+  "fa-shield-halved": <FaShieldHalved />,
 };
 
 const VIEW_MAP: Record<string, string> = {
@@ -31,6 +32,7 @@ const VIEW_MAP: Record<string, string> = {
   bst: "bst",
   nerfs: "nerfs",
   equipe: "team",
+  combat: "battle",
 };
 
 interface SidebarItem {
@@ -65,6 +67,7 @@ const DEFAULT_ITEMS: SidebarItem[] = [
   { id: "bst", label: "All BST + Abilities", icon: "fa-table", to: "/bst" },
   { id: "nerfs", label: "Nerfs and buffs", icon: "fa-scale-balanced", to: "/nerfs-and-buffs" },
   { id: "equipe", label: "L'équipe", icon: "fa-users", to: "/equipe" },
+  { id: "combat", label: "Tour de Combat", icon: "fa-shield-halved", to: "/combat", highlight: true },
 ];
 
 /** Retire les entrées gérées ailleurs (ex. GTS via le menu du launcher). */

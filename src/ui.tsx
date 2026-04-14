@@ -66,6 +66,30 @@ export function Progress({ value = 0 }: { value?: number }) {
   );
 }
 
+/* Écran de chargement réutilisable */
+export function LoadingScreen({ label = "Chargement" }: { label?: string }) {
+  return (
+    <div className="pnw-loading-screen">
+      {/* Animated background orbs */}
+      <div className="pnw-loading-bg">
+        <div className="pnw-loading-orb pnw-loading-orb--1" />
+        <div className="pnw-loading-orb pnw-loading-orb--2" />
+        <div className="pnw-loading-orb pnw-loading-orb--3" />
+        <div className="pnw-loading-grid" />
+      </div>
+
+      <img src="/logo.png" alt="" className="pnw-loading-logo" draggable={false} />
+      <div className="pnw-loading-bar-track">
+        <div className="pnw-loading-bar-fill" />
+      </div>
+      <div className="pnw-loading-label">
+        <span>{label}</span>
+        <span className="pnw-loading-dots"><i /><i /><i /></span>
+      </div>
+    </div>
+  );
+}
+
 /* Modal stylisé (React, pas le plugin) */
 export function Modal({
   open,
@@ -76,6 +100,9 @@ export function Modal({
   confirmLabel = "OK",
   cancelLabel = "Annuler",
   hideActions = false,
+  panelClassName = "",
+  titleClassName = "",
+  childrenClassName = "",
 }: {
   open: boolean;
   title?: React.ReactNode;
@@ -86,16 +113,32 @@ export function Modal({
   cancelLabel?: string;
   /** Masque les boutons Annuler / Confirmer (contenu entièrement custom dans children). */
   hideActions?: boolean;
+  /** Classes additionnelles sur le panneau (largeur, padding, dégradé…). */
+  panelClassName?: string;
+  titleClassName?: string;
+  /** Classes additionnelles sur le conteneur du corps (taille de texte, couleur…). */
+  childrenClassName?: string;
 }) {
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-[9999] flex items-center justify-center">
       <div className="pnw-modal-overlay absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onCancel} />
-      <div className="pnw-modal-content relative w-[min(520px,92vw)] rounded-2xl border border-white/12 bg-gradient-to-b from-[#0f1629] to-[#0c1222] shadow-2xl p-5">
+      <div
+        className={[
+          "pnw-modal-content relative w-[min(520px,92vw)] rounded-2xl border border-white/12 bg-gradient-to-b from-[#0f1629] to-[#0c1222] shadow-2xl p-5",
+          panelClassName,
+        ]
+          .filter(Boolean)
+          .join(" ")}
+      >
         {title ? (
-          <div className="text-lg font-semibold mb-4 text-white/95 tracking-tight">{title}</div>
+          <div
+            className={["text-lg font-semibold mb-4 text-white/95 tracking-tight", titleClassName].filter(Boolean).join(" ")}
+          >
+            {title}
+          </div>
         ) : null}
-        <div className="text-sm">{children}</div>
+        <div className={["text-sm", childrenClassName].filter(Boolean).join(" ")}>{children}</div>
         {!hideActions ? (
           <div className="mt-5 flex items-center justify-end gap-2">
             <button

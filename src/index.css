@@ -353,6 +353,20 @@ body::after{
   background:var(--pnw-light-panel);
   border-color:var(--pnw-light-border);
 }
+
+/* Modal bienvenue — léger mouvement du logo (respecte prefers-reduced-motion) */
+.pnw-welcome-hero-logo{
+  animation: pnw-welcome-logo-float 5s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce){
+  .pnw-welcome-hero-logo{
+    animation: none;
+  }
+}
+@keyframes pnw-welcome-logo-float{
+  0%, 100%{ transform: translateY(0); }
+  50%{ transform: translateY(-4px); }
+}
 [data-theme="light"] .pnw-folder-menu{
   background:var(--pnw-light-panel);
   border-color:var(--pnw-light-border);
