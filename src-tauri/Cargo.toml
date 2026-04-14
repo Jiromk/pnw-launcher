@@ -1,6 +1,6 @@
 [package]
 name = "pnw-launcher"
-version = "1.0.4"
+version = "1.7.5"
 edition = "2021"
 
 [dependencies]
@@ -36,6 +36,7 @@ discord-presence = "3.2"
 
 # Ouvrir URL (navigateur / installateur)
 open = "5"
+urlencoding = "2"
 tauri-plugin-updater = "2"
 
 [build-dependencies]
