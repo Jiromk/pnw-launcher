@@ -1,60 +1,71 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/schema.json",
-  "productName": "PNW Launcher",
-  "version": "1.0.4",
-  "identifier": "com.pnw.launcher",
-
-  "build": {
-    "beforeDevCommand": "vite",
-    "beforeBuildCommand": "vite build",
-    "devUrl": "http://localhost:5174",
-    "frontendDist": "../dist"  
-  },
-
   "app": {
+    "security": {
+      "assetProtocol": {
+        "enable": true,
+        "scope": [
+          "**"
+        ]
+      },
+      "capabilities": [
+        "default"
+      ],
+      "csp": null
+    },
     "windows": [
       {
-        "title": "Pokémon New World — Launcher",
-        "width": 1280,
+        "center": true,
+        "decorations": false,
         "height": 950,
-        "minWidth": 1100,
         "minHeight": 700,
+        "minWidth": 1100,
         "resizable": true,
-        "center": true
+        "title": "Pokémon New World — Launcher",
+        "width": 1280
       }
-    ],
-    "security": {
-      "csp": null,
-      "assetProtocol": { "enable": true, "scope": ["**"] },
-      "capabilities": ["default"]
-    }
+    ]
   },
-
-  "plugins": {
-    "updater": {
-      "endpoints": [
-        "https://pokemonnewworld.com/api/downloads/launcher-update?target={{target}}&arch={{arch}}&current_version={{current_version}}"
-      ],
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEM1NTgwNzZENTE3MzVCNEIKUldSTFczTlJiUWRZeGFyVkFXUHQ2R3NnRHYzMnZtMDAxVlQrcFdwQlpQN0R4b1pacngrZlVMZGoK"
-    }
+  "build": {
+    "beforeBuildCommand": "vite build",
+    "beforeDevCommand": "vite",
+    "devUrl": "http://localhost:5174",
+    "frontendDist": "../dist"
   },
-
   "bundle": {
     "active": true,
     "createUpdaterArtifacts": true,
-    "targets": ["nsis"],
-    "icon": ["icons/icon.ico"],
+    "icon": [
+      "icons/icon.ico"
+    ],
+    "targets": [
+      "nsis"
+    ],
     "windows": {
       "nsis": {
         "displayLanguageSelector": false,
-        "installerIcon": "icons/icon.ico",
         "headerImage": null,
-        "sidebarImage": null,
         "installMode": "currentUser",
-        "languages": ["French", "English"],
-        "startMenuFolder": "Pokemon New World",
-        "installerHooks": "bundler/nsis/hooks.nsh"
+        "installerHooks": "bundler/nsis/hooks.nsh",
+        "installerIcon": "icons/icon.ico",
+        "languages": [
+          "French",
+          "English"
+        ],
+        "sidebarImage": null,
+        "startMenuFolder": "Pokemon New World"
       }
     }
-  }
+  },
+  "identifier": "com.pnw.launcher",
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://www.pokemonnewworld.fr/api/downloads/launcher-update?target={{target}}&arch={{arch}}&current_version={{current_version}}"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDMxQ0VERTg1MkY0MUVDMDkKUldRSjdFRXZoZDdPTWRMT0doV0ZFNHRyN0lIN3BVcXM3Wm5OUmd3VmljNzFsZ1hpUVE3dmpUcUsK"
+    }
+  },
+  "productName": "PNW Launcher",
+  "version": "1.7.5"
 }

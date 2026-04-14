@@ -194,6 +194,17 @@ fn default_install_dir_for_lang(lang: &str) -> Result<PathBuf> {
     }
 }
 
+/// Returns the absolute path of today's log file under the launcher data dir.
+/// Creates the `logs` subdirectory if missing.
+fn log_file_path() -> Result<PathBuf> {
+    let dir = app_local_dir()?.join("logs");
+    if !dir.exists() {
+        fs::create_dir_all(&dir)?;
+    }
+    let date = Local::now().format("%Y-%m-%d");
+    Ok(dir.join(format!("launcher-{}.log", date)))
+}
+
 /// Comparaison de chemins Windows (casse + slashs).
 fn windows_paths_equivalent(a: &Path, b: &Path) -> bool {
     let sa = a.to_string_lossy().to_lowercase().replace('/', "\\");
@@ -1989,6 +2000,20 @@ fn cmd_cancel_download(state: State<AppState>) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+fn cmd_append_log(level: String, message: String) -> Result<(), String> {
+    let path = log_file_path().map_err(errs)?;
+    let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S");
+    let line = format!("[{}] [{}] {}\n", timestamp, level, message);
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .map_err(errs)?;
+    file.write_all(line.as_bytes()).map_err(errs)?;
+    Ok(())
+}
+
 /* ============== Discord Rich Presence ============== */
 /// kind: "menu" | "game" | "map" | "battle"
 /// start_timestamp_secs: optionnel, pour afficher "Jouer depuis X" (temps de jeu)
@@ -3418,6 +3443,7 @@ fn main() {
             cmd_pause_download,
             cmd_resume_download,
             cmd_cancel_download,
+            cmd_append_log,
             cmd_discord_set_presence,
             cmd_launch_game,
             cmd_insert_save,
@@ -3447,6 +3473,8 @@ fn main() {
             cmd_read_trade_evolutions,
             cmd_read_game_state,
             battle_relay::cmd_battle_read_outbox,
+            battle_relay::cmd_battle_request_live_party,
+            battle_relay::cmd_battle_read_live_party,
             battle_relay::cmd_battle_write_inbox,
             battle_relay::cmd_battle_write_trigger,
             battle_relay::cmd_battle_cleanup,
