@@ -72,6 +72,19 @@ export function ivarTruthyShinyByName(obj: unknown): boolean {
 }
 
 /**
+ * Détecte si un objet Marshal Pokémon PSDK est un shiny alternatif (@alt_shiny).
+ * Le script 00300 shinyalt.rb ajoute un ivar @alt_shiny booléen sur PFM::Pokemon.
+ */
+export function detectAltShinyFromMarshal(root: unknown): boolean {
+  if (!root || typeof root !== "object") return false;
+  const v = getIvar(root, ["@alt_shiny"]);
+  if (import.meta.env.DEV && (v === true || v === 1)) {
+    console.debug("[AltShiny] détecté @alt_shiny = true");
+  }
+  return v === true || v === 1 || (typeof v === "bigint" && v === 1n);
+}
+
+/**
  * Détecte si un objet Marshal Pokémon PSDK est chromatique.
  *
  * Ordre de détection :

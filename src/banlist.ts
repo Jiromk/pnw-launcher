@@ -86,15 +86,42 @@ function normalizeForm(f: unknown): number | null {
 }
 
 /**
+ * Normalise un nom d'espèce pour la comparaison (lower, sans accents, sans espaces doubles).
+ * Ex : "Phasmidàlle" → "phasmidalle"
+ */
+function normalizeName(s: string): string {
+  return s
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
  * Compare l'équipe à la banlist. Retourne la liste ordonnée (par slotIdx) des matches.
- * Matching : speciesId identique ET form identique (après normalisation form=0/null).
+ *
+ * Matching : on compare par **nom d'espèce** (normalisé, insensible aux accents/casse).
+ * Le pokedex.json du site utilise des numéros régionaux (ex: 068) qui ne correspondent PAS
+ * aux IDs internes du jeu PSDK (ex: 957). Le matching par nom via `speciesNames[code]`
+ * résout ce décalage.
+ *
+ * @param speciesNames — tableau PSDK (index = ID interne, valeur = nom FR), chargé via
+ *   `cmd_psdk_french_species_names`. Si null, fallback sur le matching par speciesId (peu fiable).
  */
 export function checkTeamAgainstBanlist(
   team: TeamMember[] | undefined | null,
   banlist: BannedPokemon[],
+  speciesNames: string[] | null = null,
 ): BannedMatch[] {
   if (!team || team.length === 0 || banlist.length === 0) return [];
   const matches: BannedMatch[] = [];
+
+  // Pré-normaliser les noms de la banlist une fois
+  const banlistNormalized = banlist.map((b) => ({
+    ...b,
+    _normalizedName: normalizeName(b.name),
+  }));
 
   for (let i = 0; i < team.length; i++) {
     const tm = team[i];
@@ -104,14 +131,28 @@ export function checkTeamAgainstBanlist(
     if (!Number.isFinite(tmSpeciesId) || tmSpeciesId <= 0) continue;
     const tmForm = normalizeForm(tm.form);
 
-    for (const ban of banlist) {
-      if (ban.speciesId !== tmSpeciesId) continue;
-      if (ban.form !== tmForm) continue; // form=null côté ban + null côté team → match
+    // Résoudre le nom d'espèce via le tableau PSDK (priorité) ou fallback sur le TeamMember
+    const resolvedName =
+      (speciesNames && tmSpeciesId < speciesNames.length ? speciesNames[tmSpeciesId] : null) ??
+      tm.speciesName ??
+      null;
+    const tmNormalizedName = resolvedName ? normalizeName(resolvedName) : "";
+
+    for (const ban of banlistNormalized) {
+      // Matching primaire : par NOM normalisé (résout le décalage pokedex num ≠ ID interne)
+      const nameMatch = tmNormalizedName !== "" && ban._normalizedName !== "" && ban._normalizedName === tmNormalizedName;
+      // Matching fallback : par speciesId (si les noms ne sont pas disponibles)
+      const idMatch = !nameMatch && ban.speciesId === tmSpeciesId;
+
+      if (!nameMatch && !idMatch) continue;
+      // Vérif form : null côté ban + null côté team → match
+      if (ban.form !== tmForm) continue;
+
       matches.push({
         banned: ban,
         teamLabel:
           tm.nickname?.trim() ||
-          tm.speciesName?.trim() ||
+          resolvedName ||
           ban.name ||
           `#${tmSpeciesId}`,
         slotIdx: i,
@@ -126,12 +167,15 @@ export function checkTeamAgainstBanlist(
 /**
  * Helper tout-en-un : fetch + check. Utilisé directement par BattleTowerView / ChatView.
  * Retourne [] si la banlist n'est pas accessible (fail-open).
+ *
+ * @param speciesNames — tableau PSDK (index = ID interne, valeur = nom FR).
  */
 export async function validateTeamForBattle(
   siteUrl: string,
   team: TeamMember[] | undefined | null,
+  speciesNames: string[] | null = null,
 ): Promise<BannedMatch[]> {
   if (!team || team.length === 0) return [];
   const banlist = await fetchBanlist(siteUrl);
-  return checkTeamAgainstBanlist(team, banlist);
+  return checkTeamAgainstBanlist(team, banlist, speciesNames);
 }

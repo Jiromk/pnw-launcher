@@ -3,6 +3,7 @@
 // + bannière d'état de combat active (invitation / waiting / relaying / complete / error)
 // qui persiste quelle que soit la sous-page.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { Session } from "@supabase/supabase-js";
 import {
   FaArrowLeft,
@@ -22,7 +23,11 @@ import type {
   ChatChannel,
   ChatProfile,
   GameLivePlayer,
+  PlayerProfile,
+  TeamMember,
 } from "../../types";
+import { validateTeamForBattle } from "../../banlist";
+import { validateTeamStats, reportCheatToServer } from "../../statsValidator";
 import {
   BATTLE_INVITE_TIMEOUT,
   cleanupBattleFiles,
@@ -41,18 +46,26 @@ import {
   _currentBattleEventLog,
   _currentBattleTurnLog,
 } from "../../battleRelay";
+import { invoke } from "@tauri-apps/api/core";
 import { supabase } from "../../supabaseClient";
-import { recordBattleResult } from "../../leaderboard";
+import { recordBattleResult, snapshotTeam } from "../../leaderboard";
 import { getLauncherUi, uiLangFromGameLang, type UiLang } from "../../launcherUiLocale";
 import { BattleTowerHome } from "./BattleTowerHome";
 import { CombatLeadView } from "./CombatLeadView";
 import { CombatAmicalView } from "./CombatAmicalView";
+import { BattleTowerProfile } from "./BattleTowerProfile";
 
-type Page = "home" | "lead" | "amical";
+type Page = "home" | "lead" | "amical" | "profile";
 
 interface Props {
   session: Session;
   profile: ChatProfile;
+  gameProfile?: PlayerProfile | null;
+  siteUrl: string;
+  /** Tableau PSDK (index = ID interne, valeur = nom FR espèce). Utilisé pour le matching banlist par nom. */
+  speciesNames?: string[] | null;
+  /** Recharge la save la plus récente du jeu et retourne le profil frais. */
+  onProfileReload?: () => Promise<PlayerProfile | null>;
   allMembers: ChatProfile[];
   onlineUserIds: Set<string>;
   gameLivePlayers: Map<string, GameLivePlayer>;
@@ -68,6 +81,10 @@ interface Props {
 export default function BattleTowerView({
   session,
   profile,
+  gameProfile,
+  siteUrl,
+  speciesNames,
+  onProfileReload,
   allMembers,
   onlineUserIds,
   gameLivePlayers,
@@ -88,10 +105,20 @@ export default function BattleTowerView({
   const [errorPopup, setErrorPopup] = useState<string | null>(null);
   const [spectatorCount, setSpectatorCount] = useState(0);
   const [inviteTimer, setInviteTimer] = useState(0);
+  /** Profil actuellement consulté sur la page "profile". null = profil du joueur courant. */
+  const [viewedProfile, setViewedProfile] = useState<ChatProfile | null>(null);
   const battleStartedAtRef = useRef<string>("");
   const turnCountRef = useRef(0);
   const battleResultRef = useRef<string>("");
   const lastRecordedRoomRef = useRef<string>("");
+  /** Snapshot de l'équipe capturée au moment du défi/acceptation (= la vraie team utilisée en combat). */
+  const battleTeamSnapshotRef = useRef<TeamMember[] | null>(null);
+
+  // Recharger la save du jeu dès l'ouverture de la Tour de Combat
+  // pour avoir l'équipe actuelle (pas celle d'une ancienne session).
+  useEffect(() => {
+    onProfileReload?.();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Record battle result when a match completes (stats fetch/display is out of scope; we still persist to Supabase).
   useEffect(() => {
@@ -120,9 +147,16 @@ export default function BattleTowerView({
         st.partnerName,
         result as "win" | "loss" | "draw",
         endReason,
-      ).catch(() => {});
+        {
+          startedAt: battleStartedAtRef.current || null,
+          endedAt: new Date().toISOString(),
+          matchType: "amical", // Combat Lead pas encore lancé → tous les matchs sont amical pour l'instant
+          lpDelta: null,
+          myTeam: snapshotTeam(battleTeamSnapshotRef.current),
+        },
+      ).catch((err) => console.warn("[Battle] recordBattleResult failed:", err));
     }
-  }, [battleState, session.user.id]);
+  }, [battleState, session.user.id, gameProfile?.team]);
 
   // Countdown timer for sent invite
   useEffect(() => {
@@ -144,6 +178,86 @@ export default function BattleTowerView({
 
   // ── Actions ──
 
+  /**
+   * Demande au jeu d'écrire sa party live ($actors) puis la lit.
+   * Pattern request/response via fichiers :
+   *   1. Launcher crée vms_party_request (supprime l'ancienne réponse)
+   *   2. Jeu détecte la requête (~160ms max) → écrit vms_live_party.json → supprime la requête
+   *   3. Launcher poll le fichier réponse (toutes les 100ms, timeout 2s)
+   * Si le jeu n'est pas lancé → timeout → fallback sur gameProfile?.team (save sur disque).
+   */
+  const getFreshTeam = useCallback(async (): Promise<TeamMember[] | null> => {
+    try {
+      // 1. Envoyer la requête (supprime aussi l'ancienne réponse)
+      await invoke("cmd_battle_request_live_party");
+
+      // 2. Attendre la réponse du jeu (poll toutes les 100ms, max 2s)
+      const maxWait = 2000;
+      const interval = 100;
+      let elapsed = 0;
+      while (elapsed < maxWait) {
+        await new Promise((r) => setTimeout(r, interval));
+        elapsed += interval;
+        const raw = await invoke<string | null>("cmd_battle_read_live_party");
+        if (raw) {
+          const data = JSON.parse(raw);
+          if (Array.isArray(data) && data.length > 0) {
+            const team: TeamMember[] = data.map((p: any): TeamMember => ({
+              code: p.id ?? 0,
+              form: p.form ?? null,
+              level: p.level ?? null,
+              nickname: p.given_name ?? null,
+              speciesName: p.name ?? null,
+              isShiny: p.shiny ?? null,
+              ivHp: p.iv_hp ?? 0, ivAtk: p.iv_atk ?? 0, ivDfe: p.iv_dfe ?? 0,
+              ivSpd: p.iv_spd ?? 0, ivAts: p.iv_ats ?? 0, ivDfs: p.iv_dfs ?? 0,
+              evHp: p.ev_hp ?? 0, evAtk: p.ev_atk ?? 0, evDfe: p.ev_dfe ?? 0,
+              evSpd: p.ev_spd ?? 0, evAts: p.ev_ats ?? 0, evDfs: p.ev_dfs ?? 0,
+            }));
+            console.log("[BattleCheck] Live party from game memory:", team.length, "Pokémon (response in", elapsed, "ms)");
+            return team;
+          }
+        }
+      }
+      console.log("[BattleCheck] Game did not respond in 2s — using save fallback");
+    } catch (err) {
+      console.warn("[BattleCheck] Failed to request live party:", err);
+    }
+    // Fallback : profil chargé depuis la save (si le jeu n'est pas lancé)
+    return gameProfile?.team ?? null;
+  }, [gameProfile?.team]);
+
+  /**
+   * Récupère la team live et la stocke dans battleTeamSnapshotRef.
+   * Appelé une seule fois au début du flow (avant banlist + stats checks).
+   * Les checks suivants réutilisent cette même team.
+   */
+  const refreshBattleTeam = useCallback(async (): Promise<TeamMember[] | null> => {
+    const team = await getFreshTeam();
+    battleTeamSnapshotRef.current = team;
+    return team;
+  }, [getFreshTeam]);
+
+  /** Vérifie l'équipe contre la banlist. Retourne true si OK, false si bloqué (popup affiché). */
+  const checkBanlistOrShowError = useCallback(async (team: TeamMember[] | null): Promise<boolean> => {
+    if (!team || team.length === 0) return true; // pas de team lue → fail-open
+    const matches = await validateTeamForBattle(siteUrl, team, speciesNames ?? null);
+    if (matches.length === 0) return true;
+    setErrorPopup(ui.errors.bannedInTeam(matches));
+    return false;
+  }, [siteUrl, speciesNames, ui.errors]);
+
+  /** Vérifie les IV/EV de l'équipe (anti-triche). Retourne true si OK, false si bloqué (popup affiché). */
+  const checkStatsOrShowError = useCallback(async (team: TeamMember[] | null): Promise<boolean> => {
+    if (!team || team.length === 0) return true; // pas de team lue → fail-open
+    const invalid = validateTeamStats(team, speciesNames ?? null);
+    if (invalid.length === 0) return true;
+    setErrorPopup(ui.errors.invalidStatsInTeam(invalid));
+    // Envoyer un rapport au serveur (Discord webhook) — fire-and-forget
+    reportCheatToServer(siteUrl, profile, invalid);
+    return false;
+  }, [siteUrl, speciesNames, profile, ui.errors]);
+
   const challengePlayer = useCallback(
     async (target: ChatProfile) => {
       // Autoriser le defi si idle OU complete (la banniere de fin sera ecrasee par le nouveau defi)
@@ -154,6 +268,10 @@ export default function BattleTowerView({
         setErrorPopup(ui.errors.gameNotRunning);
         return;
       }
+      // Capturer l'équipe live + vérifs banlist + stats
+      const freshTeam = await refreshBattleTeam();
+      if (!(await checkBanlistOrShowError(freshTeam))) return;
+      if (!(await checkStatsOrShowError(freshTeam))) return;
       // Reset l'etat avant de lancer le nouveau defi (efface la banniere de fin)
       if (battleState.phase === "complete" || battleState.phase === "error") {
         setBattleState({ phase: "idle" });
@@ -219,6 +337,9 @@ export default function BattleTowerView({
       battleRelayCleanupRef,
       ui.errors.gameNotRunning,
       ui.errors.serverUnavailable,
+      refreshBattleTeam,
+      checkBanlistOrShowError,
+      checkStatsOrShowError,
     ],
   );
 
@@ -227,6 +348,18 @@ export default function BattleTowerView({
     const running = await isGameRunning();
     if (!running) {
       setErrorPopup(ui.errors.gameNotRunningAccept);
+      sendBattleDecline(st.roomCode, st.partnerId, session.user.id);
+      setBattleState({ phase: "idle" });
+      return;
+    }
+    // Capturer l'équipe live + vérifs banlist + stats
+    const freshTeam = await refreshBattleTeam();
+    if (!(await checkBanlistOrShowError(freshTeam))) {
+      sendBattleDecline(st.roomCode, st.partnerId, session.user.id);
+      setBattleState({ phase: "idle" });
+      return;
+    }
+    if (!(await checkStatsOrShowError(freshTeam))) {
       sendBattleDecline(st.roomCode, st.partnerId, session.user.id);
       setBattleState({ phase: "idle" });
       return;
@@ -303,7 +436,7 @@ export default function BattleTowerView({
       },
     );
     battleRelayCleanupRef.current = cleanup;
-  }, [battleState, session, profile, setBattleState, battleRelayCleanupRef, ui.errors.gameNotRunningAccept]);
+  }, [battleState, session, profile, setBattleState, battleRelayCleanupRef, ui.errors.gameNotRunningAccept, refreshBattleTeam, checkBanlistOrShowError, checkStatsOrShowError]);
 
   const cancelBattle = useCallback(async () => {
     const st = battleState as any;
@@ -314,9 +447,33 @@ export default function BattleTowerView({
     if (st.phase !== "idle" && st.phase !== "complete" && st.phase !== "error") {
       sendBattleCancel(st.roomCode, st.partnerId || "", session.user.id);
     }
+    // Enregistrer le résultat si le combat était en cours (relaying = battle active)
+    if (
+      st.phase === "relaying" &&
+      st.partnerId &&
+      st.roomCode &&
+      st.roomCode !== lastRecordedRoomRef.current
+    ) {
+      lastRecordedRoomRef.current = st.roomCode;
+      recordBattleResult(
+        session.user.id,
+        st.partnerId,
+        st.roomCode,
+        st.partnerName || "",
+        "loss",
+        "forfeit",
+        {
+          startedAt: battleStartedAtRef.current || null,
+          endedAt: new Date().toISOString(),
+          matchType: "amical",
+          lpDelta: null,
+          myTeam: snapshotTeam(battleTeamSnapshotRef.current),
+        },
+      ).catch((err) => console.warn("[Battle] recordBattleResult (forfeit) failed:", err));
+    }
     await fullCleanup(battleRelayCleanupRef);
     setBattleState({ phase: "idle" });
-  }, [battleState, session, setBattleState, battleRelayCleanupRef, battleTimeoutRef]);
+  }, [battleState, session, setBattleState, battleRelayCleanupRef, battleTimeoutRef, gameProfile?.team]);
 
   const closeBattle = useCallback(async () => {
     await cleanupBattleFiles();
@@ -340,7 +497,14 @@ export default function BattleTowerView({
   const stAny = battleState as any;
 
   return (
-    <div className="relative min-h-full overflow-y-auto bg-gradient-to-b from-[#0a1020] via-[#0d1224] to-[#080c18]">
+    <div
+      className="relative h-full overflow-y-auto overscroll-contain bg-gradient-to-b from-[#0a1020] via-[#0d1224] to-[#080c18]"
+      style={{
+        scrollbarWidth: "thin",
+        scrollbarColor: "rgba(245,158,11,0.35) transparent",
+        scrollbarGutter: "stable",
+      }}
+    >
       {/* Animated background orbs (pointer-events none) */}
       <div className="pointer-events-none absolute inset-0 overflow-hidden">
         <div
@@ -357,30 +521,161 @@ export default function BattleTowerView({
         />
       </div>
 
-      {/* Error popup */}
-      {errorPopup && (
+      {/* Error popup — rendu via portal dans document.body pour couvrir toute la fenêtre */}
+      {errorPopup && createPortal(
         <div
-          className="fixed inset-0 z-[30000] flex items-center justify-center bg-black/80 backdrop-blur-md"
+          className="fixed inset-0 z-[30000] flex items-center justify-center"
           onClick={() => setErrorPopup(null)}
+          style={{
+            background: "radial-gradient(ellipse at center, rgba(180,60,30,0.12) 0%, rgba(0,0,0,0.85) 70%)",
+            backdropFilter: "blur(12px) saturate(0.6)",
+            WebkitBackdropFilter: "blur(12px) saturate(0.6)",
+            animation: "bt-popup-overlay-in 0.25s ease-out both",
+          }}
         >
           <div
-            className="mx-6 flex max-w-sm flex-col items-center gap-4 rounded-2xl border border-amber-400/25 bg-gradient-to-b from-[#1a1226] to-[#0d0918] p-6 text-center ring-1 ring-inset ring-amber-400/10 shadow-[0_20px_60px_-20px_rgba(245,158,11,0.35)]"
             onClick={(e) => e.stopPropagation()}
+            style={{
+              maxWidth: 440,
+              margin: "0 1.5rem",
+              padding: 0,
+              borderRadius: 24,
+              overflow: "hidden",
+              border: "1px solid rgba(220,50,80,0.3)",
+              boxShadow: "0 0 0 1px rgba(220,50,80,0.08) inset, 0 32px 80px -24px rgba(220,50,80,0.45), 0 12px 40px rgba(0,0,0,0.65)",
+              animation: "bt-popup-card-in 0.35s cubic-bezier(0.16,1,0.3,1) both",
+            }}
           >
-            <FaTriangleExclamation className="text-3xl text-amber-300" />
-            <p className="text-sm text-white/85">{errorPopup}</p>
-            <button
-              type="button"
-              onClick={() => setErrorPopup(null)}
-              className="rounded-xl bg-amber-500/20 px-5 py-2 text-sm font-semibold text-amber-100 ring-1 ring-amber-400/30 transition hover:bg-amber-500/30"
-            >
-              OK
-            </button>
+            {/* Top accent bar */}
+            <div style={{
+              height: 4,
+              background: "linear-gradient(90deg, rgba(220,50,80,0.7), rgba(245,158,11,0.7), rgba(220,50,80,0.7))",
+            }} />
+
+            <div style={{
+              background: "linear-gradient(165deg, rgba(35,15,30,0.98), rgba(18,10,28,0.99))",
+              padding: "2rem 2.25rem 1.75rem",
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              gap: "1.25rem",
+              position: "relative",
+            }}>
+              {/* Corner glows */}
+              <div style={{
+                position: "absolute", top: -40, right: -40,
+                width: 200, height: 200, borderRadius: "50%",
+                background: "rgba(220,50,80,0.12)", filter: "blur(60px)",
+                pointerEvents: "none",
+              }} />
+              <div style={{
+                position: "absolute", bottom: -30, left: -30,
+                width: 160, height: 160, borderRadius: "50%",
+                background: "rgba(245,158,11,0.08)", filter: "blur(50px)",
+                pointerEvents: "none",
+              }} />
+
+              {/* Icon */}
+              <div style={{
+                position: "relative",
+                width: 64, height: 64, borderRadius: 18,
+                display: "grid", placeItems: "center",
+                background: "linear-gradient(135deg, rgba(220,50,80,0.2), rgba(245,158,11,0.12))",
+                border: "1px solid rgba(220,50,80,0.25)",
+                boxShadow: "0 0 32px rgba(220,50,80,0.3), 0 0 0 1px rgba(220,50,80,0.1) inset",
+              }}>
+                <FaTriangleExclamation style={{ fontSize: "1.7rem", color: "rgba(252,211,77,0.95)", filter: "drop-shadow(0 0 12px rgba(252,211,77,0.5))" }} />
+              </div>
+
+              {/* Title + subtitle */}
+              <div style={{ position: "relative", textAlign: "center" }}>
+                <div style={{
+                  fontSize: "1.15rem", fontWeight: 800, letterSpacing: "-0.02em",
+                  color: "#fff",
+                }}>
+                  Combat impossible
+                </div>
+                <div style={{
+                  fontSize: "0.75rem", color: "rgba(255,255,255,0.45)", marginTop: 4,
+                }}>
+                  Vérification pré-combat échouée
+                </div>
+              </div>
+
+              {/* Body text — alignement gauche pour les violations multi-lignes */}
+              <div style={{
+                position: "relative",
+                width: "100%",
+                padding: "1rem 1.25rem",
+                borderRadius: 14,
+                background: "rgba(255,255,255,0.025)",
+                border: "1px solid rgba(255,255,255,0.06)",
+                maxHeight: 280,
+                overflowY: "auto",
+              }}>
+                <p style={{
+                  whiteSpace: "pre-line",
+                  fontSize: "0.82rem",
+                  lineHeight: 1.7,
+                  color: "rgba(255,255,255,0.8)",
+                  textAlign: "left",
+                  margin: 0,
+                }}>
+                  {errorPopup}
+                </p>
+              </div>
+
+              {/* Button */}
+              <button
+                type="button"
+                onClick={() => setErrorPopup(null)}
+                style={{
+                  position: "relative",
+                  width: "100%",
+                  padding: "0.75rem 1.5rem",
+                  borderRadius: 14,
+                  fontSize: "0.9rem",
+                  fontWeight: 700,
+                  letterSpacing: "0.02em",
+                  color: "#fff",
+                  cursor: "pointer",
+                  border: "none",
+                  background: "linear-gradient(135deg, rgba(220,50,80,0.5), rgba(180,30,60,0.4))",
+                  boxShadow: "0 0 0 1px rgba(220,50,80,0.4) inset, 0 6px 20px -6px rgba(220,50,80,0.5)",
+                  transition: "all 0.15s ease",
+                }}
+                onMouseOver={(e) => {
+                  e.currentTarget.style.background = "linear-gradient(135deg, rgba(220,50,80,0.65), rgba(180,30,60,0.55))";
+                  e.currentTarget.style.boxShadow = "0 0 0 1px rgba(220,50,80,0.5) inset, 0 8px 28px -6px rgba(220,50,80,0.65)";
+                  e.currentTarget.style.transform = "translateY(-1px)";
+                }}
+                onMouseOut={(e) => {
+                  e.currentTarget.style.background = "linear-gradient(135deg, rgba(220,50,80,0.5), rgba(180,30,60,0.4))";
+                  e.currentTarget.style.boxShadow = "0 0 0 1px rgba(220,50,80,0.4) inset, 0 6px 20px -6px rgba(220,50,80,0.5)";
+                  e.currentTarget.style.transform = "translateY(0)";
+                }}
+              >
+                {ui.banner.close}
+              </button>
+            </div>
           </div>
-        </div>
+
+          {/* Animations CSS injectées */}
+          <style>{`
+            @keyframes bt-popup-overlay-in {
+              from { opacity: 0; }
+              to { opacity: 1; }
+            }
+            @keyframes bt-popup-card-in {
+              from { opacity: 0; transform: scale(0.92) translateY(16px); }
+              to { opacity: 1; transform: scale(1) translateY(0); }
+            }
+          `}</style>
+        </div>,
+        document.body,
       )}
 
-      {/* Topbar : Back + Nav pills */}
+      {/* Topbar : Back + Nav pills (gauche) + Profil avec avatar (droite) */}
       <div className="sticky top-0 z-20 border-b border-white/[0.06] bg-[#0a1020]/75 px-4 py-3 backdrop-blur-md sm:px-6">
         <div className="mx-auto flex max-w-7xl items-center gap-3">
           <button
@@ -412,6 +707,52 @@ export default function BattleTowerView({
               icon={<FaUsers className="text-xs" />}
             />
           </div>
+
+          {/* Spacer pour pousser Profil à droite */}
+          <div className="flex-1" />
+
+          {/* Bouton Profil avec avatar circulaire */}
+          <button
+            type="button"
+            onClick={() => {
+              setViewedProfile(null); // Toujours revenir à son propre profil depuis la nav
+              setPage("profile");
+            }}
+            aria-label={ui.nav.profile}
+            className={`group flex shrink-0 items-center gap-2.5 rounded-2xl border py-1.5 pl-1.5 pr-4 backdrop-blur-sm transition duration-300 ${
+              page === "profile"
+                ? "border-amber-400/40 bg-amber-500/[0.12] shadow-[0_6px_20px_-8px_rgba(245,158,11,0.4)]"
+                : "border-white/[0.08] bg-white/[0.03] hover:border-amber-400/25 hover:bg-white/[0.06]"
+            }`}
+          >
+            <span
+              className={`relative flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full ring-2 transition ${
+                page === "profile" ? "ring-amber-300/60" : "ring-white/15 group-hover:ring-amber-300/30"
+              }`}
+            >
+              {profile.avatar_url ? (
+                <img
+                  src={profile.avatar_url}
+                  alt=""
+                  className="h-full w-full object-cover"
+                  onError={(e) => {
+                    (e.currentTarget as HTMLImageElement).style.display = "none";
+                  }}
+                />
+              ) : (
+                <span className="flex h-full w-full items-center justify-center bg-gradient-to-br from-slate-700 to-slate-900 text-xs font-bold uppercase text-amber-200">
+                  {(profile.display_name || profile.username || "?").charAt(0)}
+                </span>
+              )}
+            </span>
+            <span
+              className={`text-sm font-semibold tracking-tight transition ${
+                page === "profile" ? "text-amber-100" : "text-white/75 group-hover:text-white"
+              }`}
+            >
+              {ui.nav.profile}
+            </span>
+          </button>
         </div>
       </div>
 
@@ -637,6 +978,7 @@ export default function BattleTowerView({
           <BattleTowerHome
             labels={ui.home}
             onNavigate={(p) => setPage(p)}
+            siteUrl={siteUrl}
           />
         )}
         {page === "lead" && <CombatLeadView labels={ui.lead} />}
@@ -652,7 +994,39 @@ export default function BattleTowerView({
             gameLivePlayers={gameLivePlayers}
             currentUserId={session.user.id}
             onChallenge={challengePlayer}
+            onViewProfile={(p) => {
+              setViewedProfile(p);
+              setPage("profile");
+            }}
             battleStateIsIdle={battleState.phase === "idle"}
+          />
+        )}
+        {page === "profile" && (
+          <BattleTowerProfile
+            labels={ui.profile}
+            profile={viewedProfile ?? profile}
+            isSelf={!viewedProfile || viewedProfile.id === session.user.id}
+            onBack={() => {
+              setViewedProfile(null);
+              setPage("amical");
+            }}
+            onViewOpponent={(opponentId) => {
+              // Chercher le profil dans les membres connus
+              const found = allMembers.find((m) => m.id === opponentId);
+              if (found) {
+                setViewedProfile(found);
+              } else {
+                // Fallback : créer un profil minimal depuis l'ID (le composant fetche les stats de toute façon)
+                supabase
+                  .from("profiles")
+                  .select("id, discord_id, username, display_name, avatar_url, banner_url, bio, roles, created_at")
+                  .eq("id", opponentId)
+                  .single()
+                  .then(({ data }) => {
+                    if (data) setViewedProfile(data as ChatProfile);
+                  });
+              }
+            }}
           />
         )}
       </div>
