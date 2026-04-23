@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <linearGradient id="di-outer" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#DBEAFE"/>
+      <stop offset="0.45" stop-color="#60A5FA"/>
+      <stop offset="1" stop-color="#1E3A8A"/>
+    </linearGradient>
+    <linearGradient id="di-inner" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1E40AF"/>
+      <stop offset="1" stop-color="#0A132A"/>
+    </linearGradient>
+    <linearGradient id="di-emblem" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#EFF6FF"/>
+      <stop offset="0.4" stop-color="#93C5FD"/>
+      <stop offset="1" stop-color="#1E40AF"/>
+    </linearGradient>
+    <radialGradient id="di-shine" cx="50%" cy="25%" r="55%">
+      <stop offset="0" stop-color="#EFF6FF" stop-opacity="0.6"/>
+      <stop offset="1" stop-color="#000" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="di-halo" cx="50%" cy="50%" r="50%">
+      <stop offset="0.7" stop-color="#60A5FA" stop-opacity="0"/>
+      <stop offset="1" stop-color="#60A5FA" stop-opacity="0.45"/>
+    </radialGradient>
+  </defs>
+  <circle cx="64" cy="64" r="62" fill="url(#di-halo)"/>
+  <circle cx="64" cy="64" r="60" fill="url(#di-outer)" stroke="#0A132A" stroke-width="2"/>
+  <circle cx="64" cy="64" r="60" fill="url(#di-shine)"/>
+  <circle cx="64" cy="64" r="48" fill="url(#di-inner)" stroke="#0A132A" stroke-width="1.5"/>
+  <!-- Brilliant-cut diamond (8 facets) -->
+  <g transform="translate(64 64)">
+    <!-- Outer envelope : rounded-diamond shape -->
+    <path d="M 0 -32 L 22 -16 L 28 0 L 22 16 L 0 32 L -22 16 L -28 0 L -22 -16 Z"
+          fill="url(#di-emblem)" stroke="#0A132A" stroke-width="2" stroke-linejoin="round"/>
+    <!-- Upper facets -->
+    <path d="M 0 -32 L 22 -16 L 0 -8 Z" fill="#EFF6FF" opacity="0.6"/>
+    <path d="M 0 -32 L -22 -16 L 0 -8 Z" fill="#DBEAFE" opacity="0.5"/>
+    <path d="M 22 -16 L 28 0 L 0 -8 Z" fill="#BFDBFE" opacity="0.45"/>
+    <path d="M -22 -16 L -28 0 L 0 -8 Z" fill="#93C5FD" opacity="0.4"/>
+    <!-- Lower facets -->
+    <path d="M 0 32 L 22 16 L 0 8 Z" fill="#1D4ED8" opacity="0.4"/>
+    <path d="M 0 32 L -22 16 L 0 8 Z" fill="#1E40AF" opacity="0.45"/>
+    <path d="M 22 16 L 28 0 L 0 8 Z" fill="#1E3A8A" opacity="0.5"/>
+    <path d="M -22 16 L -28 0 L 0 8 Z" fill="#172554" opacity="0.55"/>
+    <!-- Central horizontal girdle -->
+    <line x1="-28" y1="0" x2="28" y2="0" stroke="#0A132A" stroke-width="1" opacity="0.4"/>
+    <!-- Central sparkle -->
+    <circle cx="0" cy="-6" r="3" fill="#FFFFFF" opacity="0.9"/>
+  </g>
+</svg>

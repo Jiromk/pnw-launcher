@@ -5,13 +5,20 @@ import React from "react";
 import { Button } from "../../ui";
 import {
   FaBullseye,
-  FaChartLine,
   FaCrown,
   FaLock,
   FaMagnifyingGlass,
-  FaSkull,
   FaTrophy,
 } from "react-icons/fa6";
+import {
+  isApex,
+  tierIconUrl,
+  tierLabel,
+  tierTheme,
+  type RankTier,
+} from "../../ranked";
+import type { RankedQueueLabels } from "./RankedQueueModal";
+import type { MatchFoundLabels } from "./MatchFoundPopup";
 
 export type CombatLeadLabels = {
   title: string;
@@ -20,6 +27,9 @@ export type CombatLeadLabels = {
   queueTitle: string;
   queueSubtitle: string;
   queueBtn: string;
+  queueBtnLoading: string;
+  queueBtnInBattle: string;
+  queueBtnNeedGame: string;
   myRank: string;
   leaderboardTitle: string;
   leaderboardEmpty: string;
@@ -32,13 +42,37 @@ export type CombatLeadLabels = {
     losses: string;
     winrate: string;
   };
+  searching: RankedQueueLabels;
+  matchFound: MatchFoundLabels;
 };
 
 type Props = {
   labels: CombatLeadLabels;
+  /** Infos du joueur pour afficher son rang sur le bouton. */
+  myRank?: {
+    tier: RankTier;
+    lp: number;
+    mmr: number;
+    placementPlayed: number;
+  };
+  /** true si on cherche déjà un match — disable le bouton + change label. */
+  isSearching?: boolean;
+  /** true si on est en combat — disable le bouton. */
+  isInBattle?: boolean;
+  /** Callback déclenché quand l'utilisateur clique "Chercher un match". */
+  onStartSearch?: () => void;
 };
 
-export function CombatLeadView({ labels }: Props) {
+export function CombatLeadView({ labels, myRank, isSearching, isInBattle, onStartSearch }: Props) {
+  const tier = myRank?.tier ?? "unranked";
+  const theme = tierTheme(tier);
+  const placementPhase = (myRank?.placementPlayed ?? 0) < 5;
+  const canSearch = !!onStartSearch && !isSearching && !isInBattle;
+  const btnLabel = isSearching
+    ? labels.queueBtnLoading
+    : isInBattle
+      ? labels.queueBtnInBattle
+      : labels.queueBtn;
   return (
     <div className="relative mx-auto flex w-full max-w-5xl flex-col gap-8 px-6 py-10 sm:px-10 sm:py-12">
       {/* Header */}
@@ -46,10 +80,6 @@ export function CombatLeadView({ labels }: Props) {
         className="flex flex-col items-center text-center"
         style={{ animation: "update-page-in 0.45s ease-out both" }}
       >
-        <div className="mb-4 inline-flex items-center gap-1.5 rounded-full border border-amber-400/30 bg-amber-500/10 px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-amber-200">
-          <FaLock className="text-[9px]" />
-          {labels.comingSoon}
-        </div>
         <div className="mb-4 flex h-20 w-20 items-center justify-center rounded-full bg-gradient-to-br from-amber-500/20 to-orange-500/10 ring-1 ring-amber-300/25">
           <FaCrown className="text-4xl text-amber-200 drop-shadow-[0_0_18px_rgba(245,158,11,0.5)]" />
         </div>
@@ -84,23 +114,65 @@ export function CombatLeadView({ labels }: Props) {
             {labels.queueSubtitle}
           </p>
 
-          {/* Disabled button */}
+          {/* Chercher un match — actif si possible */}
           <Button
             type="button"
-            disabled
-            className="!cursor-not-allowed !bg-white/[0.04] !ring-white/10 !opacity-50 sm:min-w-[16rem]"
+            disabled={!canSearch}
+            onClick={canSearch ? onStartSearch : undefined}
+            className={`sm:min-w-[16rem] ${
+              canSearch
+                ? ""
+                : "!cursor-not-allowed !bg-white/[0.04] !ring-white/10 !opacity-50"
+            }`}
+            style={
+              canSearch
+                ? {
+                    background: `linear-gradient(135deg, ${theme.glow}, ${theme.accent}25)`,
+                    boxShadow: `0 10px 28px -10px ${theme.glowStrong}`,
+                    color: theme.accent,
+                    borderColor: theme.accent + "50",
+                  }
+                : undefined
+            }
           >
             <FaMagnifyingGlass className="mr-2 text-sm" />
-            {labels.queueBtn}
+            {btnLabel}
           </Button>
 
-          {/* Player elo badge (placeholder) */}
-          <div className="mt-6 flex items-center gap-3 rounded-xl border border-white/[0.06] bg-white/[0.03] px-4 py-2.5 backdrop-blur-sm">
-            <span className="text-xs font-medium uppercase tracking-wider text-white/40">
-              {labels.myRank}
-            </span>
-            <div className="h-5 w-16 animate-pulse rounded-md bg-white/[0.08]" />
-          </div>
+          {/* Player rank badge — si on connait le rang */}
+          {myRank ? (
+            <div className="mt-6 flex items-center gap-3 rounded-xl border border-white/[0.06] bg-white/[0.03] px-4 py-2.5 backdrop-blur-sm">
+              <img
+                src={tierIconUrl(placementPhase ? "unranked" : tier)}
+                alt={tierLabel(tier)}
+                className="h-8 w-8"
+              />
+              <div className="flex flex-col text-left">
+                <span
+                  className="text-[11px] font-bold uppercase tracking-wider"
+                  style={{ color: theme.accent }}
+                >
+                  {placementPhase
+                    ? `${labels.myRank} · ${myRank.placementPlayed}/5`
+                    : tierLabel(tier)}
+                </span>
+                <span className="text-[10px] text-white/45">
+                  {placementPhase
+                    ? `${myRank.mmr} MMR`
+                    : isApex(tier)
+                      ? `${myRank.lp} LP · ${myRank.mmr} MMR`
+                      : `${myRank.lp}/100 LP · ${myRank.mmr} MMR`}
+                </span>
+              </div>
+            </div>
+          ) : (
+            <div className="mt-6 flex items-center gap-3 rounded-xl border border-white/[0.06] bg-white/[0.03] px-4 py-2.5 backdrop-blur-sm">
+              <span className="text-xs font-medium uppercase tracking-wider text-white/40">
+                {labels.myRank}
+              </span>
+              <div className="h-5 w-16 animate-pulse rounded-md bg-white/[0.08]" />
+            </div>
+          )}
         </div>
       </div>
 

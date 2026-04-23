@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <linearGradient id="gold-outer" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FEF3C7"/>
+      <stop offset="0.35" stop-color="#F59E0B"/>
+      <stop offset="1" stop-color="#78350F"/>
+    </linearGradient>
+    <linearGradient id="gold-inner" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#78350F"/>
+      <stop offset="1" stop-color="#1A0A01"/>
+    </linearGradient>
+    <linearGradient id="gold-emblem" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FEF9C3"/>
+      <stop offset="0.4" stop-color="#FBBF24"/>
+      <stop offset="1" stop-color="#B45309"/>
+    </linearGradient>
+    <radialGradient id="gold-shine" cx="50%" cy="25%" r="55%">
+      <stop offset="0" stop-color="#FEF9C3" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#000" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="gold-halo" cx="50%" cy="50%" r="50%">
+      <stop offset="0.7" stop-color="#F59E0B" stop-opacity="0"/>
+      <stop offset="1" stop-color="#F59E0B" stop-opacity="0.35"/>
+    </radialGradient>
+  </defs>
+  <!-- Subtle outer glow -->
+  <circle cx="64" cy="64" r="62" fill="url(#gold-halo)"/>
+  <!-- Outer plate -->
+  <circle cx="64" cy="64" r="60" fill="url(#gold-outer)" stroke="#1A0A01" stroke-width="2"/>
+  <circle cx="64" cy="64" r="60" fill="url(#gold-shine)"/>
+  <!-- Inner ring -->
+  <circle cx="64" cy="64" r="48" fill="url(#gold-inner)" stroke="#1A0A01" stroke-width="1.5"/>
+  <!-- 5-pointed star -->
+  <path d="M 64 28 L 74 56 L 104 56 L 80 74 L 90 102 L 64 84 L 38 102 L 48 74 L 24 56 L 54 56 Z"
+        fill="url(#gold-emblem)" stroke="#451A03" stroke-width="1.8" stroke-linejoin="round"
+        transform="scale(0.78) translate(18 18)"/>
+  <!-- Star inner highlight (top half) -->
+  <path d="M 64 28 L 74 56 L 104 56 L 80 74 Z"
+        fill="#FEF9C3" opacity="0.4"
+        transform="scale(0.78) translate(18 18)"/>
+  <!-- Central gem -->
+  <circle cx="64" cy="64" r="5" fill="#FEF9C3" opacity="0.85"/>
+</svg>

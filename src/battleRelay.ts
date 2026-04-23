@@ -49,16 +49,62 @@ export async function writeStopTrigger(): Promise<void> {
   } catch {}
 }
 
-/** Ecrire un signal dans l'inbox pour que le jeu sache que l'adversaire est parti */
+/** Ecrire un signal dans l'inbox pour que le jeu sache que l'adversaire est parti.
+ *
+ * Flow robuste (évite les races de file IPC sur Windows) :
+ *   1. Écrire le signal → le jeu (PSDK) le lit dans `read_inbox` et SUPPRIME le fichier.
+ *   2. Poller la disparition du fichier jusqu'à 5s max → confirme la consommation.
+ *   3. Si le fichier existe toujours après chaque tranche de 500ms, RÉ-ÉCRIRE (le jeu
+ *      peut être bloqué dans une animation longue ou avoir loupé une frame).
+ *   4. Si 5s s'écoulent sans lecture, on renvoie quand même — le jeu a peut-être planté.
+ *
+ * Cette fonction NE SUPPRIME PAS le fichier — c'est au jeu de le faire après lecture.
+ * Ne pas appeler cleanupBattleFiles avant que cette fonction ait résolu.
+ */
 export async function writeOpponentLeft(reason: string): Promise<void> {
-  try {
-    await invoke("cmd_battle_write_inbox", {
-      data: JSON.stringify([{ id: 0, state: ["opponent_left", reason], party: [] }]),
-    });
-    console.log("[Battle] Wrote opponent_left signal to inbox, reason:", reason);
-  } catch (e) {
-    console.warn("[Battle] Failed to write opponent_left:", e);
+  const payload = JSON.stringify([{ id: 0, state: ["opponent_left", reason], party: [] }]);
+  const writeOnce = async () => {
+    try {
+      await invoke("cmd_battle_write_inbox", { data: payload });
+      return true;
+    } catch (e) {
+      console.warn("[Battle] writeOpponentLeft invoke error:", e);
+      return false;
+    }
+  };
+
+  // Écriture initiale
+  const initialOk = await writeOnce();
+  if (!initialOk) {
+    // Retry immédiat une fois en cas d'échec Tauri
+    await writeOnce();
   }
+  console.log("[Battle] opponent_left written to inbox, reason:", reason);
+
+  // Attendre que le jeu lise (= inbox supprimée) OU 5s max.
+  // Ré-écrit toutes les 500ms si toujours présent (robustesse).
+  const deadline = Date.now() + 5000;
+  let lastRewrite = Date.now();
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 100));
+    let exists = true;
+    try {
+      exists = await invoke<boolean>("cmd_battle_inbox_exists");
+    } catch {
+      // Si la commande échoue, on continue à attendre.
+    }
+    if (!exists) {
+      console.log("[Battle] opponent_left consumed by game after", Date.now() - (deadline - 5000), "ms");
+      return;
+    }
+    // Ré-écrire toutes les 500ms tant que le jeu n'a pas lu — couvre les cas où
+    // le jeu a loupé la frame exacte de l'écriture (race read-during-write).
+    if (Date.now() - lastRewrite >= 500) {
+      await writeOnce();
+      lastRewrite = Date.now();
+    }
+  }
+  console.warn("[Battle] opponent_left never consumed (5s timeout) — game may be stuck or closed");
 }
 
 /* ==================== Cleanup ==================== */
@@ -103,12 +149,25 @@ export async function fullCleanup(relayCleanupRef: React.MutableRefObject<(() =>
 let lobbySocket: Socket | null = null;
 let lobbyUserId: string | null = null;
 
+import type { TradeSelectionPreview } from "./types";
+
+export interface BattleInvitePayload {
+  roomCode: string; fromId: string; fromName: string; fromAvatar: string | null;
+  toId: string; dmChannelId: number;
+  betMode?: boolean;
+  betPreview?: TradeSelectionPreview;
+  betPokemonB64?: string;
+}
+
+export interface BattleAcceptPayload {
+  roomCode: string; fromId: string; acceptedBy: string; partnerName: string;
+  betPreview?: TradeSelectionPreview;
+  betPokemonB64?: string;
+}
+
 export interface LobbyCallbacks {
-  onInvite: (payload: {
-    roomCode: string; fromId: string; fromName: string; fromAvatar: string | null;
-    toId: string; dmChannelId: number;
-  }) => void;
-  onAccepted: (payload: { roomCode: string; acceptedBy: string; partnerName: string }) => void;
+  onInvite: (payload: BattleInvitePayload) => void;
+  onAccepted: (payload: BattleAcceptPayload) => void;
   onDeclined: (payload: { roomCode: string; userId: string }) => void;
   onCancelled: (payload: { roomCode: string; userId: string }) => void;
 }
@@ -187,18 +246,15 @@ export function disconnectLobby(): void {
   if (lobbySocket) { lobbySocket.disconnect(); lobbySocket = null; lobbyUserId = null; }
 }
 
-export function sendBattleInvite(payload: {
-  roomCode: string; fromId: string; fromName: string; fromAvatar: string | null;
-  toId: string; dmChannelId: number;
-}): boolean {
+export function sendBattleInvite(payload: BattleInvitePayload): boolean {
   if (!lobbySocket?.connected) { console.warn("[BattleLobby] Not connected, cannot send invite"); return false; }
   lobbySocket.emit("battle_invite", payload);
   return true;
 }
 
-export function sendBattleAccept(roomCode: string, fromId: string, acceptedBy: string, partnerName: string): void {
+export function sendBattleAccept(payload: BattleAcceptPayload): void {
   if (!lobbySocket?.connected) { console.warn("[BattleLobby] Not connected, cannot send accept"); return; }
-  lobbySocket.emit("battle_accept", { roomCode, fromId, acceptedBy, partnerName });
+  lobbySocket.emit("battle_accept", payload);
 }
 
 export function sendBattleDecline(roomCode: string, fromId: string, userId: string): void {
@@ -209,6 +265,106 @@ export function sendBattleDecline(roomCode: string, fromId: string, userId: stri
 export function sendBattleCancel(roomCode: string, toId: string, userId: string): void {
   if (!lobbySocket?.connected) { console.warn("[BattleLobby] Not connected, cannot send cancel"); return; }
   lobbySocket.emit("battle_cancel", { roomCode, toId, userId });
+}
+
+/* ==================== Ranked Queue (matchmaking) ==================== */
+
+import type { RankTier } from "./ranked";
+
+export type RankedOpponentPreview = {
+  id: string;
+  name: string;
+  mmr: number;
+  tier: RankTier;
+};
+
+export type RankedMatchFoundPayload = {
+  roomCode: string;
+  opponent: RankedOpponentPreview;
+  acceptTimeoutMs: number;
+};
+
+export type RankedMatchStartPayload = {
+  roomCode: string;
+  opponent: RankedOpponentPreview;
+};
+
+export type RankedQueueJoinedPayload = {
+  mmr: number;
+  tier: RankTier;
+  placementPlayed: number;
+};
+
+export type RankedMatchCancelReason =
+  | "timeout"
+  | "declined"
+  | "opponent_disconnected"
+  | "unknown";
+
+export interface RankedQueueCallbacks {
+  onJoined: (payload: RankedQueueJoinedPayload) => void;
+  onStatus: (payload: { waitMs: number; mmrWindow: number | null }) => void;
+  onMatchFound: (payload: RankedMatchFoundPayload) => void;
+  onMatchStart: (payload: RankedMatchStartPayload) => void;
+  onMatchCancelled: (payload: { roomCode: string; reason: RankedMatchCancelReason }) => void;
+  onLeft: () => void;
+  onError: (message: string) => void;
+}
+
+/** Installe les listeners ranked queue sur le socket lobby existant. Retourne un cleanup. */
+export function attachRankedQueueListeners(callbacks: RankedQueueCallbacks): () => void {
+  if (!lobbySocket) {
+    console.warn("[RankedQueue] lobby socket not connected — attach ignored");
+    return () => {};
+  }
+  const socket = lobbySocket;
+  const onJoined = (p: RankedQueueJoinedPayload) => callbacks.onJoined(p);
+  const onStatus = (p: { waitMs: number; mmrWindow: number | null }) => callbacks.onStatus(p);
+  const onFound = (p: RankedMatchFoundPayload) => callbacks.onMatchFound(p);
+  const onStart = (p: RankedMatchStartPayload) => callbacks.onMatchStart(p);
+  const onCancelled = (p: { roomCode: string; reason: RankedMatchCancelReason }) =>
+    callbacks.onMatchCancelled(p);
+  const onLeft = () => callbacks.onLeft();
+  const onError = (p: { message: string }) => callbacks.onError(p?.message ?? "unknown");
+
+  socket.on("ranked_queue_joined", onJoined);
+  socket.on("ranked_queue_status", onStatus);
+  socket.on("ranked_match_found", onFound);
+  socket.on("ranked_match_start", onStart);
+  socket.on("ranked_match_cancelled", onCancelled);
+  socket.on("ranked_queue_left", onLeft);
+  socket.on("ranked_queue_error", onError);
+
+  return () => {
+    socket.off("ranked_queue_joined", onJoined);
+    socket.off("ranked_queue_status", onStatus);
+    socket.off("ranked_match_found", onFound);
+    socket.off("ranked_match_start", onStart);
+    socket.off("ranked_match_cancelled", onCancelled);
+    socket.off("ranked_queue_left", onLeft);
+    socket.off("ranked_queue_error", onError);
+  };
+}
+
+export function sendRankedQueueJoin(userId: string, displayName: string): boolean {
+  if (!lobbySocket?.connected) { console.warn("[RankedQueue] Not connected"); return false; }
+  lobbySocket.emit("ranked_queue_join", { userId, displayName });
+  return true;
+}
+
+export function sendRankedQueueLeave(userId: string): void {
+  if (!lobbySocket?.connected) return;
+  lobbySocket.emit("ranked_queue_leave", { userId });
+}
+
+export function sendRankedAccept(roomCode: string, userId: string): void {
+  if (!lobbySocket?.connected) return;
+  lobbySocket.emit("ranked_accept", { roomCode, userId });
+}
+
+export function sendRankedDecline(roomCode: string, userId: string): void {
+  if (!lobbySocket?.connected) return;
+  lobbySocket.emit("ranked_decline", { roomCode, userId });
 }
 
 /* ==================== Socket.io Relay ==================== */
@@ -261,7 +417,7 @@ export function startRelay(
   roomCode: string,
   myUserId: string,
   onBattleStarted?: () => void,
-  onDisconnect?: (reason?: "forfeit" | "crash" | "opponent_forfeit" | "opponent_crash" | "game_end") => void,
+  onDisconnect?: (reason?: "forfeit" | "crash" | "opponent_forfeit" | "opponent_crash" | "game_end" | "opponent_game_end") => void,
   onTurnReady?: () => void,
   onSpectatorCount?: (count: number) => void,
   onBattleResult?: (result: string) => void,
@@ -269,6 +425,7 @@ export function startRelay(
   let running = true;
   let battleDetected = false;
   let disconnectFired = false;
+  let selfBattleResultSent = false; // true quand NOTRE jeu a ecrit battle_result dans l'outbox
   let pendingOutbox: string | null = null;
   let lastSentHash = "";
   let waitingForServer = false;
@@ -314,6 +471,12 @@ export function startRelay(
 
   // ─── Receive opponent initial data ───
   socket.on("opponent_data", async (msg: { fullPlayerData: any }) => {
+    // Guard : ignorer les events stale après déconnexion. Sinon un event en vol
+    // peut écraser `vms_inbox.json` juste après qu'on y ait écrit opponent_left.
+    if (disconnectFired) {
+      eventLog.push({ time: new Date().toISOString(), event: "opponent_data_dropped_after_disconnect" });
+      return;
+    }
     console.log("[BattleRelay] Received opponent initial data");
     // Log les donnees d'equipe adverses
     const opParty = msg.fullPlayerData?.party;
@@ -335,6 +498,12 @@ export function startRelay(
 
   // ─── Receive turn resolution (actions + RNG) ───
   socket.on("turn_resolved", async (msg: { turn: number; opponentData: any; rng: number[] }) => {
+    // Guard : ignorer les events stale après déconnexion. Sinon un turn_resolved
+    // en vol peut écraser l'opponent_left qu'on vient d'écrire dans l'inbox.
+    if (disconnectFired) {
+      eventLog.push({ time: new Date().toISOString(), event: "turn_resolved_dropped_after_disconnect", data: { turn: msg.turn } });
+      return;
+    }
     console.log("[BattleRelay] Turn", msg.turn, "resolved —", msg.rng.length, "RNG values");
     waitingForServer = false;
     lastResolvedTurn = msg.turn;
@@ -371,6 +540,11 @@ export function startRelay(
 
   // ─── Receive switch resolution ───
   socket.on("switch_resolved", async (msg: { opponentData: any; opponentSwitchInfo: any }) => {
+    // Guard : ignorer les events stale après déconnexion.
+    if (disconnectFired) {
+      eventLog.push({ time: new Date().toISOString(), event: "switch_resolved_dropped_after_disconnect" });
+      return;
+    }
     console.log("[BattleRelay] Switch resolved");
     waitingForServer = false;
     eventLog.push({ time: new Date().toISOString(), event: "switch_resolved", data: { opponentSwitchInfo: msg.opponentSwitchInfo, hasOpponentData: !!msg.opponentData } });
@@ -412,25 +586,28 @@ export function startRelay(
 
   // ─── Battle ended by opponent (result from their game) ───
   socket.on("battle_ended", (data: { roomCode?: string; result?: string; reason?: string }) => {
-    console.log("[BattleRelay] Battle ended by opponent, our result:", data.result);
-    eventLog.push({ time: new Date().toISOString(), event: "battle_ended", data });
+    console.log("[BattleRelay] Battle ended by opponent, our result:", data.result, "selfEnded:", selfBattleResultSent);
+    eventLog.push({ time: new Date().toISOString(), event: "battle_ended", data: { ...data, selfBattleResultSent } });
     if (!disconnectFired) {
       flushPendingBattleResult();
       disconnectFired = true;
       running = false;
       onBattleResult?.(data.result || "unknown");
-      onDisconnect?.("game_end");
+      // Si NOTRE jeu a deja ecrit battle_result, le combat s'est termine normalement
+      // des deux cotes → pas besoin de signal opponent_left. Sinon, l'adversaire a
+      // quitte PENDANT qu'on jouait encore → on doit signaler au jeu.
+      onDisconnect?.(selfBattleResultSent ? "game_end" : "opponent_game_end");
     }
   });
 
   // ─── Opponent disconnected ───
   socket.on("player_left", (data: { userId?: string; reason?: string }) => {
     const rawReason = data?.reason || "unknown";
-    // game_end = fin normale via battle_result (Alt-F4 volontaire = loss)
     // forfeit = abandon via bouton in-game → victoire pour nous
     // crash = vrai crash technique du jeu adverse → match nul
-    const reason: "opponent_forfeit" | "game_end" | "opponent_crash" =
-      rawReason === "game_end" ? "game_end"
+    // game_end = fin normale via battle_result → opponent_game_end si on joue encore
+    const reason: "opponent_forfeit" | "opponent_game_end" | "opponent_crash" =
+      rawReason === "game_end" ? "opponent_game_end"
       : rawReason === "forfeit" ? "opponent_forfeit"
       : rawReason === "crash" ? "opponent_crash"
       : "opponent_crash";
@@ -569,6 +746,7 @@ export function startRelay(
           } else if (messageType === "battle_result") {
             // Le jeu envoie le resultat (win/loss) apres le combat
             const result = playerData?.result;
+            selfBattleResultSent = true; // NOTRE jeu a termine — pas besoin d'opponent_left
             console.log("[BattleRelay] Battle result from game:", result);
             eventLog.push({ time: new Date().toISOString(), event: "battle_result_from_game", data: { result } });
             socket.emit("battle_end", { roomCode, userId: myUserId, result });
@@ -705,4 +883,34 @@ function simpleHash(str: string): string {
     h = ((h << 5) - h + str.charCodeAt(i)) | 0;
   }
   return String(h);
+}
+
+/* ==================== Bet Transfer Trigger ==================== */
+
+/**
+ * Écrit un trigger IPC `vms_trigger.json` pour que le jeu applique
+ * le transfert de pari Pokémon en mémoire (via $storage).
+ */
+export async function writeBetTransferTrigger(opts: {
+  result: "win" | "loss" | "draw";
+  receivePokemonB64?: string;
+  removeBoxIdx?: number;
+  removeSlotIdx?: number;
+}): Promise<void> {
+  const trigger: Record<string, unknown> = {
+    action: "bet_transfer",
+    result: opts.result,
+  };
+  if (opts.result === "win" && opts.receivePokemonB64) {
+    trigger.receive_pokemon_b64 = opts.receivePokemonB64;
+  } else if (opts.result === "loss" && opts.removeBoxIdx != null && opts.removeSlotIdx != null) {
+    trigger.remove_box_idx = opts.removeBoxIdx;
+    trigger.remove_slot_idx = opts.removeSlotIdx;
+  }
+  try {
+    await invoke("cmd_battle_write_trigger", { data: JSON.stringify(trigger) });
+    console.log("[BetTransfer] Trigger written:", opts.result);
+  } catch (e) {
+    console.error("[BetTransfer] Failed to write trigger:", e);
+  }
 }

@@ -12,6 +12,7 @@
 
 const http = require("http");
 const { Server } = require("socket.io");
+const rankedQueue = require("./rankedQueue");
 
 const PORT = process.env.PORT || 3001;
 const RNG_VALUES_PER_TURN = 300; // doit couvrir TOUS les rand() d'un tour (multi-hit, abilities, weather, etc.)
@@ -118,7 +119,15 @@ const server = http.createServer((req, res) => {
   // Health check endpoint
   if (req.url === "/health") {
     res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ status: "ok", rooms: rooms.size, version: "1.2.0", rngPerTurn: RNG_VALUES_PER_TURN, switchTimeoutMs: SWITCH_TIMEOUT_MS }));
+    res.end(JSON.stringify({
+      status: "ok",
+      rooms: rooms.size,
+      version: "1.2.0",
+      rngPerTurn: RNG_VALUES_PER_TURN,
+      switchTimeoutMs: SWITCH_TIMEOUT_MS,
+      rankedQueueSize: rankedQueue.getQueueSize(),
+      rankedPendingMatches: rankedQueue.getPendingMatchCount(),
+    }));
     return;
   }
   res.writeHead(404);
@@ -133,6 +142,9 @@ const io = new Server(server, {
 
 io.on("connection", (socket) => {
   console.log(`[Connect] ${socket.id}`);
+
+  // ─── Ranked matchmaking handlers (queue + pairing + accept) ───
+  rankedQueue.attachRankedHandlers(socket, io);
 
   // ─── Lobby: register user for invite system ───
   socket.on("register_user", ({ userId }) => {
@@ -352,6 +364,10 @@ io.on("connection", (socket) => {
 });
 
 // ==================== Start ====================
+
+// Ranked matchmaking background loops (pairing + accept timeout)
+rankedQueue.startPairingLoop(io);
+rankedQueue.startAcceptTimeoutLoop(io);
 
 server.listen(PORT, () => {
   console.log(`[PNW Battle Server] Port ${PORT} — pret`);

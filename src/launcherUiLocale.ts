@@ -30,6 +30,20 @@ export function uiLangFromGameLang(gameLang: "fr" | "en" | null): UiLang {
 export function formatErrorForUser(err: string | undefined, lang: UiLang): string {
   if (!err) return lang === "en" ? "Something went wrong." : "Une erreur est survenue.";
   const e = err.toLowerCase();
+  // Windows ERROR_ACCESS_DENIED (os error 5) : typiquement Windows Search, Explorer, Defender
+  // ou des ACL cassées qui verrouillent le dossier du jeu. Message actionnable.
+  if (
+    e.includes("accès refusé") ||
+    e.includes("acces refuse") ||
+    e.includes("os error 5") ||
+    e.includes("access is denied") ||
+    e.includes("access denied") ||
+    e.includes("permission denied")
+  ) {
+    return lang === "en"
+      ? "Access denied on the game folder. Close any Explorer window showing it, quit the game if it is still running, then retry. If it keeps failing: right-click the launcher → Run as administrator, or move the game to a simpler path like C:\\Games\\PNW."
+      : "Accès refusé au dossier du jeu. Fermez toute fenêtre Explorer qui l'affiche, quittez le jeu s'il tourne encore, puis réessayez. Si ça persiste : clic droit sur le launcher → Exécuter en tant qu'administrateur, ou déplacez le jeu dans un chemin plus simple comme C:\\Jeux\\PNW.";
+  }
   if (e.includes("404") || e.includes("not found")) {
     return lang === "en"
       ? "File or page not found (404). Try again later."
@@ -167,14 +181,32 @@ export function getLauncherUi(L: UiLang) {
       enTitleLoading: "Vérification du serveur…",
       enTrackWarn:
         "La piste anglaise n’est pas utilisable (manifest absent, fichier trop léger, ou archive invalide côté serveur). Utilisez le français jusqu’à ce qu’un ZIP valide soit publié.",
-      firstTimeQ: "Est-ce votre première fois sur Pokémon New World ?",
-      firstTime: "Première fois",
-      firstTimeSub: "Je n'ai jamais joué",
-      firstTimeNote: "Le launcher et le jeu seront installés dans AppData (C:\\Users\\…). Ce dossier est requis par Windows pour éviter les restrictions de permissions.",
-      alreadyInstalled: "Déjà installé",
-      alreadyInstalledSub: "J'ai déjà le jeu",
+      whyAppDataTitle: "Pourquoi installer ici ?",
+      whyAppDataBody:
+        "Le launcher n’est pas signé Authenticode. Sur d’autres disques (G:\\, D:\\, OneDrive…), Windows Defender et l’indexation verrouillent parfois les fichiers pendant la mise à jour (« Accès refusé »). Le dossier AppData est toujours accessible en écriture et évite ces verrous.",
+      installHere: "Installer maintenant",
+      installHereSub: "Emplacement recommandé — AppData\\PNW Launcher",
+      importOldSaves: "J'ai déjà le jeu, importer mes saves",
       footerHint: "Vous pourrez changer le dossier d'installation du jeu plus tard via le menu Dossier",
     },
+    migrateSaves: {
+      title: "Importer mes anciennes sauvegardes",
+      body:
+        "Choisissez le dossier qui contient votre ancien jeu. Le launcher cherchera les dossiers « Saves » ou « Save » et copiera leur contenu dans votre installation actuelle. Aucun fichier existant ne sera écrasé.",
+      pickFolder: "Choisir le dossier…",
+      cancel: "Annuler",
+      close: "Fermer",
+      needInstallFirst:
+        "Le jeu doit être installé avant l'import. Cliquez sur « Installer puis importer » : le launcher installe le jeu, puis rouvre automatiquement cette fenêtre.",
+      installThenImport: "Installer puis importer",
+      busy: "Import en cours…",
+      successTitle: "Import terminé",
+      successBody: (n: number) =>
+        `${n} fichier(s) de sauvegarde ont été copiés avec succès dans votre installation.`,
+      empty:
+        "Aucun dossier « Saves » ou « Save » n'a été trouvé dans le dossier sélectionné.",
+    },
+    folderMigrateSaves: "Importer saves depuis un dossier",
     installPrompt: {
       title: "Jeu non trouvé",
       confirm: "Installer maintenant",
@@ -275,12 +307,15 @@ export function getLauncherUi(L: UiLang) {
         comingSoon: "Bientôt disponible",
         queueTitle: "Rejoindre la queue",
         queueSubtitle: "Trouvez un adversaire de votre niveau elo.",
-        queueBtn: "Bientôt disponible",
+        queueBtn: "Chercher un match",
+        queueBtnLoading: "Connexion...",
+        queueBtnInBattle: "Combat en cours",
+        queueBtnNeedGame: "Lance le jeu d'abord",
         myRank: "Votre rang",
         leaderboardTitle: "Classement",
         leaderboardEmpty: "Classement à venir",
         footer:
-          "Le matchmaking sera ouvert prochainement. Les stats et le leaderboard seront réinitialisés lors du lancement officiel.",
+          "Le matchmaking classé utilise votre MMR pour trouver un adversaire de votre niveau.",
         columns: {
           rank: "Rang",
           player: "Joueur",
@@ -288,6 +323,36 @@ export function getLauncherUi(L: UiLang) {
           wins: "V",
           losses: "D",
           winrate: "Winrate",
+        },
+        // ── Modal de recherche ──
+        searching: {
+          title: "Recherche d'adversaire",
+          subtitle: "Le serveur cherche un adversaire proche de ton niveau",
+          waitTime: "Temps d'attente",
+          mmrWindow: "Fenêtre MMR",
+          mmrWindowValue: (w: number | null) => (w == null ? "Tous adversaires" : `±${w}`),
+          yourMmr: (mmr: number) => `Ton MMR : ${mmr}`,
+          cancel: "Annuler la recherche",
+          connecting: "Connexion au serveur...",
+          error: "Erreur de connexion",
+        },
+        // ── Popup match trouvé ──
+        matchFound: {
+          title: "Match trouvé !",
+          subtitle: "Acceptez dans les 10 secondes",
+          opponentRank: "Rang",
+          opponentMmr: "MMR",
+          accept: "Accepter",
+          decline: "Refuser",
+          waiting: "En attente de l'adversaire...",
+          waitingSubtitle: "Ton opposant confirme le match",
+          countdown: (s: number) => `${s}s`,
+          cancelTimeout: "Délai expiré",
+          cancelDeclined: "L'adversaire a refusé",
+          cancelOpponentLeft: "L'adversaire s'est déconnecté",
+          cancelUnknown: "Match annulé",
+          backToQueue: "Retour à la queue",
+          close: "Fermer",
         },
       },
       amical: {
@@ -324,6 +389,26 @@ export function getLauncherUi(L: UiLang) {
           elo: "Rang",
           lp: "LP",
           unranked: "Non classé",
+          sectionAmical: "Combat Amical",
+          sectionRanked: "Combat Classé",
+          matches: (n: number) => `${n} combat${n > 1 ? "s" : ""}`,
+          rankedEmpty: "Aucun combat classé joué",
+          rankedEmptyHint: "Lance-toi dans le ladder pour décrocher ton premier rang !",
+          // ── Ranked hero & placement ──
+          heroTitle: "Rang actuel",
+          placementTitle: "Phase de placement",
+          placementProgress: (n: number) => `${n} / 5`,
+          placementHint: "Finis tes 5 placements pour obtenir ton rang",
+          placementComplete: "Placements terminés !",
+          lpBarLabel: (lp: number) => `${lp} / 100 LP`,
+          apexLpLabel: (lp: number) => `${lp} LP`,
+          mmrLabel: (mmr: number) => `${mmr} MMR`,
+          // ── Promotion celebration ──
+          promotionTitle: "Promotion !",
+          promotionSubtitle: (tier: string) => `Bienvenue en ${tier}`,
+          promotionPlacementTitle: "Rang attribué !",
+          promotionPlacementSubtitle: (tier: string) => `Tu démarres en ${tier}`,
+          promotionContinue: "Continuer",
         },
         filters: {
           all: "Tous",
@@ -354,6 +439,11 @@ export function getLauncherUi(L: UiLang) {
           timeAgoMin: (n: number) => `il y a ${n} min`,
           timeAgoHour: (n: number) => `il y a ${n} h`,
           timeAgoDay: (n: number) => `il y a ${n} j`,
+          betBadge: "MISE",
+          betWon: "Butin gagné",
+          betLost: "Pokémon perdu",
+          betDraw: "Mise annulée",
+          betUnknown: "Pokémon",
         },
       },
       banner: {
@@ -365,6 +455,7 @@ export function getLauncherUi(L: UiLang) {
         sentDesc: (name: string) => `En attente de ${name}...`,
         waitingTitle: "Lancement…",
         waitingDesc: "Préparation du combat dans le jeu",
+        waitingHint: "Si le combat ne se lance pas, retournez sur la carte du jeu (fermez le PC, le menu, etc.)",
         liveTitle: "EN DIRECT",
         liveDesc: (name: string) => `Combat contre ${name}`,
         spectators: (n: number) => `${n} spectateur${n > 1 ? "s" : ""}`,
@@ -378,6 +469,28 @@ export function getLauncherUi(L: UiLang) {
         forfeitReason: (name: string) => `${name} a abandonné le combat`,
         crashReason: (name: string) => `Problème technique de ${name}`,
         errorTitle: "Erreur",
+        // Pari Pokémon
+        betIncomingTitle: "Défi avec mise !",
+        betIncomingDesc: (name: string, pokeName: string, level: number) =>
+          `${name} vous défie et mise ${pokeName} Nv.${level}`,
+        betCompleteWin: (pokeName: string) => `Vous avez gagné ${pokeName} ! Transfert en cours...`,
+        betCompleteLoss: (pokeName: string) => `Vous avez perdu ${pokeName}. Transfert en cours...`,
+        betCompleteDraw: "Match nul — aucun Pokémon échangé.",
+      },
+      bet: {
+        modeTitle: "Type de combat",
+        modeNormal: "Combat Normal",
+        modeNormalDesc: "Un combat amical classique, sans conséquence.",
+        modeBet: "Parier un Pokémon",
+        modeBetDesc: "Chaque joueur mise un Pokémon de son PC. Le perdant perd tout !",
+        selectTitle: "Choisissez votre mise",
+        selectDesc: "Sélectionnez un Pokémon de votre PC à mettre en jeu.",
+        yourBet: "Votre mise",
+        theirBet: "Mise adverse",
+        confirmBet: "Confirmer la mise",
+        cancelBet: "Annuler",
+        pendingTransfers: "Paris en attente",
+        noPendingBets: "Aucun pari en attente.",
       },
       errors: {
         gameNotRunning: "Lancez le jeu avant de défier un joueur !",
@@ -454,6 +567,9 @@ export function getLauncherUi(L: UiLang) {
       detectFailed: (d: string) => `Détection échouée : ${d}`,
       saveImported: (path: string) => `💾 Save importée : ${path}`,
       saveImportFailed: (d: string) => `Import save échoué : ${d}`,
+      savesMigrated: (n: number) => `💾 ${n} fichier(s) de sauvegarde importé(s)`,
+      savesMigrateFailed: (d: string) => `Import saves échoué : ${d}`,
+      savesMigrateEmpty: "ℹ️ Aucun dossier « Saves » trouvé dans le dossier sélectionné",
       launchGame: "🎮 Lancement du jeu...",
       launchFailed: (d: string) => `Impossible de lancer : ${d}`,
       folderPickCanceled: "ℹ️ Choix du dossier annulé — langue inchangée.",
@@ -589,14 +705,32 @@ export function getLauncherUi(L: UiLang) {
       enTitleLoading: "Checking server…",
       enTrackWarn:
         "The English track cannot be used (missing manifest, file too small, or invalid archive on the server). Use French until a valid ZIP is published.",
-      firstTimeQ: "Is this your first time playing Pokémon New World?",
-      firstTime: "First time",
-      firstTimeSub: "I’ve never played",
-      firstTimeNote: "The launcher and game will be installed in AppData (C:\\Users\\…). This folder is required by Windows to avoid permission restrictions.",
-      alreadyInstalled: "Already installed",
-      alreadyInstalledSub: "I already have the game",
+      whyAppDataTitle: "Why install here?",
+      whyAppDataBody:
+        "The launcher is not Authenticode-signed. On other drives (G:\\, D:\\, OneDrive…), Windows Defender and indexing sometimes lock files during updates ('Access denied'). The AppData folder is always writable and avoids those locks.",
+      installHere: "Install now",
+      installHereSub: "Recommended location — AppData\\PNW Launcher",
+      importOldSaves: "I already have the game — import my saves",
       footerHint: "You can change the game install folder later via the Folder menu",
     },
+    migrateSaves: {
+      title: "Import my old saves",
+      body:
+        "Pick the folder that contains your old game. The launcher will look for 'Saves' or 'Save' folders and copy their contents into your current install. No existing file will be overwritten.",
+      pickFolder: "Choose the folder…",
+      cancel: "Cancel",
+      close: "Close",
+      needInstallFirst:
+        "The game must be installed before import. Click 'Install then import': the launcher will install the game, then automatically reopen this window.",
+      installThenImport: "Install then import",
+      busy: "Importing…",
+      successTitle: "Import complete",
+      successBody: (n: number) =>
+        `${n} save file(s) were successfully copied into your install.`,
+      empty:
+        "No 'Saves' or 'Save' folder was found in the selected folder.",
+    },
+    folderMigrateSaves: "Import saves from a folder",
     installPrompt: {
       title: "Game not found",
       confirm: "Install now",
@@ -697,12 +831,45 @@ export function getLauncherUi(L: UiLang) {
         comingSoon: "Coming soon",
         queueTitle: "Join the queue",
         queueSubtitle: "Find an opponent at your elo level.",
-        queueBtn: "Coming soon",
+        queueBtn: "Find a match",
+        queueBtnLoading: "Connecting...",
+        queueBtnInBattle: "Already in battle",
+        queueBtnNeedGame: "Launch the game first",
         myRank: "Your rank",
         leaderboardTitle: "Leaderboard",
         leaderboardEmpty: "Leaderboard coming soon",
         footer:
-          "Matchmaking will open shortly. Stats and leaderboard will be reset at the official launch.",
+          "Ranked matchmaking uses your MMR to pair you with opponents at your level.",
+        // ── Searching modal ──
+        searching: {
+          title: "Searching for opponent",
+          subtitle: "The server is looking for someone close to your level",
+          waitTime: "Wait time",
+          mmrWindow: "MMR window",
+          mmrWindowValue: (w: number | null) => (w == null ? "Any opponent" : `±${w}`),
+          yourMmr: (mmr: number) => `Your MMR: ${mmr}`,
+          cancel: "Cancel search",
+          connecting: "Connecting to server...",
+          error: "Connection error",
+        },
+        // ── Match found popup ──
+        matchFound: {
+          title: "Match found!",
+          subtitle: "Accept within 10 seconds",
+          opponentRank: "Rank",
+          opponentMmr: "MMR",
+          accept: "Accept",
+          decline: "Decline",
+          waiting: "Waiting for opponent...",
+          waitingSubtitle: "Your opponent is confirming the match",
+          countdown: (s: number) => `${s}s`,
+          cancelTimeout: "Time expired",
+          cancelDeclined: "Opponent declined",
+          cancelOpponentLeft: "Opponent disconnected",
+          cancelUnknown: "Match cancelled",
+          backToQueue: "Back to queue",
+          close: "Close",
+        },
         columns: {
           rank: "Rank",
           player: "Player",
@@ -746,6 +913,26 @@ export function getLauncherUi(L: UiLang) {
           elo: "Rank",
           lp: "LP",
           unranked: "Unranked",
+          sectionAmical: "Casual Battles",
+          sectionRanked: "Ranked Battles",
+          matches: (n: number) => `${n} match${n > 1 ? "es" : ""}`,
+          rankedEmpty: "No ranked matches yet",
+          rankedEmptyHint: "Jump into the ladder to earn your first rank!",
+          // ── Ranked hero & placement ──
+          heroTitle: "Current Rank",
+          placementTitle: "Placement Matches",
+          placementProgress: (n: number) => `${n} / 5`,
+          placementHint: "Finish your 5 placements to earn your rank",
+          placementComplete: "Placements complete!",
+          lpBarLabel: (lp: number) => `${lp} / 100 LP`,
+          apexLpLabel: (lp: number) => `${lp} LP`,
+          mmrLabel: (mmr: number) => `${mmr} MMR`,
+          // ── Promotion celebration ──
+          promotionTitle: "Promotion!",
+          promotionSubtitle: (tier: string) => `Welcome to ${tier}`,
+          promotionPlacementTitle: "Rank assigned!",
+          promotionPlacementSubtitle: (tier: string) => `You start at ${tier}`,
+          promotionContinue: "Continue",
         },
         filters: {
           all: "All",
@@ -776,6 +963,11 @@ export function getLauncherUi(L: UiLang) {
           timeAgoMin: (n: number) => `${n} min ago`,
           timeAgoHour: (n: number) => `${n} h ago`,
           timeAgoDay: (n: number) => `${n} d ago`,
+          betBadge: "BET",
+          betWon: "Prize won",
+          betLost: "Pokémon lost",
+          betDraw: "Bet cancelled",
+          betUnknown: "Pokémon",
         },
       },
       banner: {
@@ -787,6 +979,7 @@ export function getLauncherUi(L: UiLang) {
         sentDesc: (name: string) => `Waiting for ${name}...`,
         waitingTitle: "Launching…",
         waitingDesc: "Preparing the battle in-game",
+        waitingHint: "If the battle doesn't start, return to the game map (close the PC, menu, etc.)",
         liveTitle: "LIVE",
         liveDesc: (name: string) => `Battle vs ${name}`,
         spectators: (n: number) => `${n} spectator${n > 1 ? "s" : ""}`,
@@ -800,6 +993,28 @@ export function getLauncherUi(L: UiLang) {
         forfeitReason: (name: string) => `${name} forfeited the battle`,
         crashReason: (name: string) => `Technical issue with ${name}`,
         errorTitle: "Error",
+        // Pokémon bet
+        betIncomingTitle: "Bet challenge!",
+        betIncomingDesc: (name: string, pokeName: string, level: number) =>
+          `${name} challenges you and bets ${pokeName} Lv.${level}`,
+        betCompleteWin: (pokeName: string) => `You won ${pokeName}! Transferring...`,
+        betCompleteLoss: (pokeName: string) => `You lost ${pokeName}. Transferring...`,
+        betCompleteDraw: "Draw — no Pokémon exchanged.",
+      },
+      bet: {
+        modeTitle: "Battle type",
+        modeNormal: "Normal Battle",
+        modeNormalDesc: "A classic friendly battle, no stakes.",
+        modeBet: "Bet a Pokémon",
+        modeBetDesc: "Each player bets a Pokémon from their PC. Loser loses everything!",
+        selectTitle: "Choose your bet",
+        selectDesc: "Select a Pokémon from your PC to put on the line.",
+        yourBet: "Your bet",
+        theirBet: "Opponent's bet",
+        confirmBet: "Confirm bet",
+        cancelBet: "Cancel",
+        pendingTransfers: "Pending bets",
+        noPendingBets: "No pending bets.",
       },
       errors: {
         gameNotRunning: "Launch the game before challenging a player!",
@@ -876,6 +1091,9 @@ export function getLauncherUi(L: UiLang) {
       detectFailed: (d: string) => `Detection failed: ${d}`,
       saveImported: (path: string) => `💾 Save imported: ${path}`,
       saveImportFailed: (d: string) => `Save import failed: ${d}`,
+      savesMigrated: (n: number) => `💾 ${n} save file(s) imported`,
+      savesMigrateFailed: (d: string) => `Save migration failed: ${d}`,
+      savesMigrateEmpty: "ℹ️ No 'Saves' folder found in the selected folder",
       launchGame: "🎮 Launching game...",
       launchFailed: (d: string) => `Could not launch: ${d}`,
       folderPickCanceled: "ℹ️ Folder choice canceled — language unchanged.",

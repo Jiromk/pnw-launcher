@@ -1557,7 +1557,7 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
   const battleTurnCountRef = useRef(0);
   const battleStartedAtRef = useRef<string>("");
   // Notification toast pour les defis recus quand on n'est pas dans la Tour de Combat
-  const [challengeToast, setChallengeToast] = useState<{ fromName: string; fromAvatar: string | null; roomCode: string; expiresAt: number } | null>(null);
+  const [challengeToast, setChallengeToast] = useState<{ fromName: string; fromAvatar: string | null; roomCode: string; expiresAt: number; betMode?: boolean; betPokeName?: string; betPokeLevel?: number } | null>(null);
   const challengeToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Notification toast pour les erreurs (jeu non lance, etc.)
   const [errorToast, setErrorToast] = useState<string | null>(null);
@@ -2697,7 +2697,7 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
     const cleanup = connectLobby(session.user.id, {
       onInvite: (p) => {
         if (battleStateRef.current.phase !== "idle") return;
-        console.log("[BattleLobby] Invite received from", p.fromName, "room", p.roomCode);
+        console.log("[BattleLobby] Invite received from", p.fromName, "room", p.roomCode, p.betMode ? "(BET)" : "");
         setBattleState({
           phase: "inviting",
           roomCode: p.roomCode,
@@ -2705,6 +2705,10 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
           partnerName: p.fromName,
           partnerAvatar: p.fromAvatar || null,
           dmChannelId: p.dmChannelId || 0,
+          // Champs pari
+          betMode: p.betMode || undefined,
+          theirBet: p.betPreview || null,
+          theirBetB64: p.betPokemonB64 || undefined,
         });
         playInviteSound();
         // Afficher un toast global SAUF si l'utilisateur est dans la Tour de Combat
@@ -2714,6 +2718,9 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
           setChallengeToast({
             fromName: p.fromName,
             fromAvatar: p.fromAvatar || null,
+            betMode: p.betMode || false,
+            betPokeName: p.betPreview?.name,
+            betPokeLevel: p.betPreview?.level,
             roomCode: p.roomCode,
             expiresAt: Date.now() + 60_000,
           });
@@ -2726,9 +2733,23 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
         const code = p.roomCode;
         const partnerName = (cur as any).partnerName || p.partnerName || "Adversaire";
         if (battleTimeoutRef.current) { clearTimeout(battleTimeoutRef.current); battleTimeoutRef.current = null; }
-        setBattleState((prev) => ({ ...prev, phase: "waiting_game" } as any));
+
+        // ── BET MODE: ne pas lancer le relay. Entrer en phase sélection. ──
+        // BattleTowerView gère l'overlay et lance le relay quand les deux ont choisi.
+        if ((cur as any).betMode) {
+          setBattleState((prev) => ({
+            ...prev,
+            phase: "waiting_game",
+          } as any));
+          return;
+        }
+
+        // ── Normal mode: flow classique ──
+        setBattleState((prev) => ({
+          ...prev,
+          phase: "waiting_game",
+        } as any));
         if (battleRelayCleanupRef.current) { battleRelayCleanupRef.current(); battleRelayCleanupRef.current = null; }
-        // Cleanup AVANT le trigger pour garantir un etat IPC propre (pas de trigger stale)
         await cleanupBattleFiles();
         // Petit delai pour laisser le filesystem flush avant d'ecrire le nouveau trigger
         await new Promise(r => setTimeout(r, 50));
@@ -2747,7 +2768,7 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
             // forfeit = notre abandon volontaire → loss
             // game_end = fin normale via battle_result (Alt-F4 detecte par VMS → loss)
             const result =
-              reason === "opponent_forfeit" ? "win"
+              reason === "opponent_forfeit" || reason === "opponent_game_end" ? (battleResultRef.current || "win")
               : reason === "opponent_crash" ? "draw"
               : reason === "crash" ? "draw"
               : reason === "forfeit" ? "loss"
@@ -2755,12 +2776,16 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
               : "unknown";
             saveBattleLog({ roomCode: code, myUserId: session?.user?.id || "", partnerId: (prev as any).partnerId || "", partnerName: (prev as any).partnerName || partnerName, result, reason: reason || "unknown", turns: battleTurnCountRef.current, startedAt: battleStartedAtRef.current, endedAt: new Date().toISOString(), turnLog: [..._currentBattleTurnLog], eventLog: [..._currentBattleEventLog] });
             setBattleState((prev2) => (prev2 as any).roomCode === code ? { phase: "complete", roomCode: code, partnerId: (prev2 as any).partnerId || "", partnerName: (prev2 as any).partnerName || "", endReason: reason, battleResult: result } : prev2);
-            // Ecrire opponent_left dans l'inbox + delai pour que le jeu le lise avant cleanup
-            writeOpponentLeft(reason || "unknown")
-              .then(() => new Promise(r => setTimeout(r, 2500))) // 2.5s pour que le jeu traite le signal
-              .then(() => writeStopTrigger())
-              .then(() => cleanupBattleFiles())
-              .catch(() => {});
+            // writeOpponentLeft UNIQUEMENT si l'adversaire a quitte pendant qu'on jouait
+            const needsOpponentLeft = reason?.startsWith("opponent_");
+            if (needsOpponentLeft) {
+              writeOpponentLeft(reason || "unknown")
+                .then(() => writeStopTrigger())
+                .then(() => cleanupBattleFiles())
+                .catch(() => {});
+            } else {
+              writeStopTrigger().then(() => cleanupBattleFiles()).catch(() => {});
+            }
           },
           () => { battleTurnCountRef.current++; }, // compteur de tours
           undefined, // spectator count handled in BattleArenaView
@@ -3532,6 +3557,7 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
         profile={profile}
         gameProfile={gameProfile}
         siteUrl={siteUrl}
+        savePath={lastSavePath}
         speciesNames={psdkNames.species}
         onProfileReload={onProfileReload}
         allMembers={allMembers}
@@ -3630,7 +3656,7 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
     if (challengeToastTimerRef.current) { clearTimeout(challengeToastTimerRef.current); challengeToastTimerRef.current = null; }
 
     await fullCleanup(battleRelayCleanupRef);
-    sendBattleAccept(toast.roomCode, (battleStateRef.current as any).partnerId || "", session.user.id, profile?.display_name || profile?.username || "Joueur");
+    sendBattleAccept({ roomCode: toast.roomCode, fromId: (battleStateRef.current as any).partnerId || "", acceptedBy: session.user.id, partnerName: profile?.display_name || profile?.username || "Joueur" });
     setBattleState((prev) => ({ ...(prev as any), phase: "waiting_game" } as any));
 
     try {
@@ -3655,7 +3681,7 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
         // forfeit = notre abandon volontaire → loss
         // game_end = fin normale via battle_result (Alt-F4 detecte par VMS → loss)
         const result =
-          reason === "opponent_forfeit" ? "win"
+          reason === "opponent_forfeit" || reason === "opponent_game_end" ? (battleResultRef.current || "win")
           : reason === "opponent_crash" ? "draw"
           : reason === "crash" ? "draw"
           : reason === "forfeit" ? "loss"
@@ -3675,11 +3701,16 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
           eventLog: [..._currentBattleEventLog],
         });
         setBattleState((prev2) => (prev2 as any).roomCode === toast.roomCode ? { phase: "complete", roomCode: toast.roomCode, partnerId: (prev2 as any).partnerId || "", partnerName: (prev2 as any).partnerName || toast.fromName, endReason: reason, battleResult: result } as any : prev2);
-        writeOpponentLeft(reason || "unknown")
-          .then(() => new Promise(r => setTimeout(r, 2500)))
-          .then(() => writeStopTrigger())
-          .then(() => cleanupBattleFiles())
-          .catch(() => {});
+        // writeOpponentLeft UNIQUEMENT si l'adversaire a quitte pendant qu'on jouait
+        const needsOpponentLeft = reason?.startsWith("opponent_");
+        if (needsOpponentLeft) {
+          writeOpponentLeft(reason || "unknown")
+            .then(() => writeStopTrigger())
+            .then(() => cleanupBattleFiles())
+            .catch(() => {});
+        } else {
+          writeStopTrigger().then(() => cleanupBattleFiles()).catch(() => {});
+        }
       },
       () => { battleTurnCountRef.current++; },
       undefined,
@@ -3710,14 +3741,20 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
       left: "50%",
       transform: "translateX(-50%)",
       zIndex: 999999,
-      background: "linear-gradient(135deg, rgba(20,20,30,0.95), rgba(40,30,60,0.95))",
-      border: "2px solid rgba(255, 80, 130, 0.6)",
-      borderRadius: 12,
+      background: challengeToast.betMode
+        ? "linear-gradient(135deg, rgba(25,18,12,0.97), rgba(35,20,15,0.97))"
+        : "linear-gradient(135deg, rgba(20,20,30,0.95), rgba(40,30,60,0.95))",
+      border: challengeToast.betMode
+        ? "2px solid rgba(245, 158, 11, 0.6)"
+        : "2px solid rgba(255, 80, 130, 0.6)",
+      borderRadius: 14,
       padding: "14px 18px",
       display: "flex",
       alignItems: "center",
       gap: 14,
-      boxShadow: "0 10px 40px rgba(0,0,0,0.6), 0 0 20px rgba(255, 80, 130, 0.3)",
+      boxShadow: challengeToast.betMode
+        ? "0 10px 40px rgba(0,0,0,0.6), 0 0 24px rgba(245, 158, 11, 0.25)"
+        : "0 10px 40px rgba(0,0,0,0.6), 0 0 20px rgba(255, 80, 130, 0.3)",
       color: "white",
       fontFamily: "system-ui, sans-serif",
       minWidth: 380,
@@ -3725,12 +3762,19 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
     }}>
       <style>{`@keyframes pnw-challenge-toast-in { from { opacity: 0; transform: translate(-50%, -20px); } to { opacity: 1; transform: translate(-50%, 0); } }`}</style>
       {challengeToast.fromAvatar && (
-        <img src={challengeToast.fromAvatar} alt="" style={{ width: 44, height: 44, borderRadius: "50%", border: "2px solid rgba(255,80,130,0.8)" }} />
+        <img src={challengeToast.fromAvatar} alt="" style={{
+          width: 44, height: 44, borderRadius: "50%",
+          border: challengeToast.betMode ? "2px solid rgba(245,158,11,0.8)" : "2px solid rgba(255,80,130,0.8)",
+          boxShadow: challengeToast.betMode ? "0 0 12px rgba(245,158,11,0.3)" : undefined,
+        }} />
       )}
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 2 }}>Défi en combat</div>
+        <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 2 }}>{challengeToast.betMode ? "Défi avec mise !" : "Défi en combat"}</div>
         <div style={{ fontSize: 15, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-          <strong style={{ color: "#ff6b9d" }}>{challengeToast.fromName}</strong> te défie !
+          <strong style={{ color: challengeToast.betMode ? "#f59e0b" : "#ff6b9d" }}>{challengeToast.fromName}</strong>
+          {challengeToast.betMode && challengeToast.betPokeName
+            ? <> mise <strong style={{ color: "#fbbf24" }}>{challengeToast.betPokeName}</strong> Nv.{challengeToast.betPokeLevel ?? "?"}</>
+            : " te défie !"}
         </div>
       </div>
       <div style={{ display: "flex", gap: 8 }}>

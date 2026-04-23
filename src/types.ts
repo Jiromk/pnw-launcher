@@ -329,10 +329,36 @@ export type TradeMessageData = {
 
 export type BattlePhase = "idle" | "inviting" | "waiting_game" | "relaying" | "complete" | "error";
 
+/** Champs optionnels pour le mode pari Pokémon. */
+export type BattleBetFields = {
+  betMode?: boolean;
+  myBet?: TradeSelection | null;
+  theirBet?: TradeSelectionPreview | null;
+  theirBetB64?: string;
+  /** Type de match (amical par défaut). Déterminé à l'ouverture du combat. */
+  matchType?: "amical" | "ranked";
+};
+
 export type BattleRoomState =
   | { phase: "idle" }
-  | { phase: "inviting"; roomCode: string; partnerId: string; partnerName: string; partnerAvatar: string | null; dmChannelId: number; startedAt?: number }
-  | { phase: "waiting_game"; roomCode: string; partnerId: string; partnerName: string; partnerAvatar: string | null; dmChannelId: number }
-  | { phase: "relaying"; roomCode: string; partnerId: string; partnerName: string; partnerAvatar: string | null; dmChannelId: number }
-  | { phase: "complete"; roomCode: string; partnerId: string; partnerName: string; endReason?: string; battleResult?: string }
+  | { phase: "inviting"; roomCode: string; partnerId: string; partnerName: string; partnerAvatar: string | null; dmChannelId: number; startedAt?: number } & BattleBetFields
+  | { phase: "waiting_game"; roomCode: string; partnerId: string; partnerName: string; partnerAvatar: string | null; dmChannelId: number } & BattleBetFields
+  | { phase: "relaying"; roomCode: string; partnerId: string; partnerName: string; partnerAvatar: string | null; dmChannelId: number } & BattleBetFields
+  | { phase: "complete"; roomCode: string; partnerId: string; partnerName: string; endReason?: string; battleResult?: string } & BattleBetFields
   | { phase: "error"; roomCode: string; partnerId: string; partnerName: string; message: string };
+
+/** Pari Pokémon en attente (persisté dans Supabase). */
+export type PendingBetTransfer = {
+  id: number;
+  room_code: string;
+  winner_id: string;
+  loser_id: string;
+  winner_receives_b64: string;
+  winner_receives_preview: TradeSelectionPreview;
+  loser_loses_preview: TradeSelectionPreview;
+  loser_box_idx: number;
+  loser_slot_idx: number;
+  status: "pending" | "completed" | "expired";
+  created_at: string;
+  completed_at: string | null;
+};

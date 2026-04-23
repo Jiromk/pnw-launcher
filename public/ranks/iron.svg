@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <linearGradient id="iron-outer" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#6B7280"/>
+      <stop offset="0.5" stop-color="#4B5563"/>
+      <stop offset="1" stop-color="#1F2937"/>
+    </linearGradient>
+    <linearGradient id="iron-inner" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#374151"/>
+      <stop offset="1" stop-color="#111827"/>
+    </linearGradient>
+    <linearGradient id="iron-emblem" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#9CA3AF"/>
+      <stop offset="0.5" stop-color="#6B7280"/>
+      <stop offset="1" stop-color="#374151"/>
+    </linearGradient>
+    <radialGradient id="iron-shine" cx="50%" cy="25%" r="55%">
+      <stop offset="0" stop-color="#E5E7EB" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#000" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <!-- Outer plate -->
+  <circle cx="64" cy="64" r="60" fill="url(#iron-outer)" stroke="#0F172A" stroke-width="2"/>
+  <circle cx="64" cy="64" r="60" fill="url(#iron-shine)"/>
+  <!-- Inner ring -->
+  <circle cx="64" cy="64" r="48" fill="url(#iron-inner)" stroke="#0F172A" stroke-width="1.5"/>
+  <!-- Rough iron emblem : chunky triangular stone -->
+  <path d="M 64 34 L 86 62 L 80 90 L 48 90 L 42 62 Z"
+        fill="url(#iron-emblem)" stroke="#0F172A" stroke-width="2" stroke-linejoin="round"/>
+  <!-- Inner facet highlight -->
+  <path d="M 64 42 L 76 62 L 64 70 L 52 62 Z"
+        fill="#D1D5DB" opacity="0.35"/>
+  <!-- Crack detail -->
+  <path d="M 58 70 L 62 78 L 56 84" stroke="#0F172A" stroke-width="1.5" stroke-linecap="round" fill="none" opacity="0.6"/>
+</svg>

@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <linearGradient id="ma-outer" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#E9D5FF"/>
+      <stop offset="0.45" stop-color="#A855F7"/>
+      <stop offset="1" stop-color="#4C1D95"/>
+    </linearGradient>
+    <linearGradient id="ma-inner" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#6B21A8"/>
+      <stop offset="1" stop-color="#1E0B3C"/>
+    </linearGradient>
+    <linearGradient id="ma-gem" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FAF5FF"/>
+      <stop offset="0.4" stop-color="#D8B4FE"/>
+      <stop offset="1" stop-color="#7E22CE"/>
+    </linearGradient>
+    <linearGradient id="ma-crown" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FEF3C7"/>
+      <stop offset="0.5" stop-color="#FBBF24"/>
+      <stop offset="1" stop-color="#92400E"/>
+    </linearGradient>
+    <radialGradient id="ma-shine" cx="50%" cy="25%" r="55%">
+      <stop offset="0" stop-color="#FAF5FF" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#000" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="ma-halo" cx="50%" cy="50%" r="55%">
+      <stop offset="0.65" stop-color="#A855F7" stop-opacity="0"/>
+      <stop offset="1" stop-color="#A855F7" stop-opacity="0.55"/>
+    </radialGradient>
+  </defs>
+  <!-- Aura -->
+  <circle cx="64" cy="64" r="63" fill="url(#ma-halo)"/>
+  <!-- Outer plate -->
+  <circle cx="64" cy="64" r="60" fill="url(#ma-outer)" stroke="#1E0B3C" stroke-width="2"/>
+  <circle cx="64" cy="64" r="60" fill="url(#ma-shine)"/>
+  <!-- Decorative ring dots -->
+  <g fill="#FEF3C7" opacity="0.85">
+    <circle cx="64" cy="10" r="1.8"/>
+    <circle cx="64" cy="118" r="1.8"/>
+    <circle cx="10" cy="64" r="1.8"/>
+    <circle cx="118" cy="64" r="1.8"/>
+    <circle cx="26" cy="26" r="1.4"/>
+    <circle cx="102" cy="26" r="1.4"/>
+    <circle cx="26" cy="102" r="1.4"/>
+    <circle cx="102" cy="102" r="1.4"/>
+  </g>
+  <!-- Inner ring -->
+  <circle cx="64" cy="64" r="48" fill="url(#ma-inner)" stroke="#1E0B3C" stroke-width="1.5"/>
+  <!-- Crown above the gem (5 points) -->
+  <g transform="translate(64 48)">
+    <path d="M -22 0 L -22 -14 L -14 -6 L -7 -16 L 0 -4 L 7 -16 L 14 -6 L 22 -14 L 22 0 Z"
+          fill="url(#ma-crown)" stroke="#451A03" stroke-width="1.6" stroke-linejoin="round"/>
+    <!-- Gems on crown -->
+    <circle cx="-14" cy="-6" r="1.6" fill="#EF4444"/>
+    <circle cx="0"   cy="-4" r="1.8" fill="#A855F7"/>
+    <circle cx="14"  cy="-6" r="1.6" fill="#EF4444"/>
+    <!-- Crown base -->
+    <rect x="-24" y="-2" width="48" height="5" rx="1.5" fill="url(#ma-crown)" stroke="#451A03" stroke-width="1.3"/>
+  </g>
+  <!-- Central gem (octagon cut) -->
+  <g transform="translate(64 78)">
+    <path d="M -16 -10 L -10 -18 L 10 -18 L 16 -10 L 16 10 L 10 18 L -10 18 L -16 10 Z"
+          fill="url(#ma-gem)" stroke="#1E0B3C" stroke-width="1.8" stroke-linejoin="round"/>
+    <!-- Top facet -->
+    <path d="M -16 -10 L -10 -18 L 10 -18 L 16 -10 L 0 -4 Z"
+          fill="#FAF5FF" opacity="0.5"/>
+    <!-- Central sparkle -->
+    <circle cx="0" cy="-2" r="2.2" fill="#FFFFFF" opacity="0.85"/>
+  </g>
+</svg>

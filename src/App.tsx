@@ -18,6 +18,7 @@ import { fetchPatchNotes, findVersionNotes, type PatchVersion } from "./utils/pa
 import { parseSave } from "./profile";
 import {
   FaFolderOpen,
+  FaFolderPlus,
   FaPlay,
   FaDownload,
   FaPause,
@@ -334,15 +335,19 @@ function FolderDropdown({
   onClose,
   onChooseFolder,
   onInsertSave,
+  onMigrateSaves,
   chooseLabel,
   insertLabel,
+  migrateLabel,
 }: {
   anchorRef: React.RefObject<HTMLDivElement | null>;
   onClose: () => void;
   onChooseFolder: () => void;
   onInsertSave: () => void;
+  onMigrateSaves: () => void;
   chooseLabel: string;
   insertLabel: string;
+  migrateLabel: string;
 }) {
   const [pos, setPos] = useState({ top: 0, right: 0 });
   useEffect(() => {
@@ -365,10 +370,16 @@ function FolderDropdown({
           <FaFolderOpen /> {chooseLabel}
         </button>
         <button
-          className="w-full text-left px-3 py-2.5 hover:bg-white/10 rounded-b-xl flex items-center gap-2 transition-colors duration-200"
+          className="w-full text-left px-3 py-2.5 hover:bg-white/10 flex items-center gap-2 transition-colors duration-200"
           onClick={onInsertSave}
         >
           <FaFileImport /> {insertLabel}
+        </button>
+        <button
+          className="w-full text-left px-3 py-2.5 hover:bg-white/10 rounded-b-xl flex items-center gap-2 transition-colors duration-200"
+          onClick={onMigrateSaves}
+        >
+          <FaFolderPlus /> {migrateLabel}
         </button>
       </div>
     </>
@@ -512,6 +523,19 @@ export default function App() {
   const [showInstallPrompt, setShowInstallPrompt] = useState(false);
   const [showUpdateNotice, setShowUpdateNotice] = useState(false);
   const [showLauncherSelfUpdate, setShowLauncherSelfUpdate] = useState(false);
+  // ── Migration des anciennes sauvegardes (welcome flow + menu Dossier) ──
+  const [showMigrationModal, setShowMigrationModal] = useState(false);
+  const [migrationBusy, setMigrationBusy] = useState(false);
+  const [migrationResult, setMigrationResult] = useState<{
+    ok: boolean;
+    empty?: boolean;
+    copied?: number;
+    foundDirs?: number;
+    destination?: string;
+    error?: string;
+  } | null>(null);
+  /** true = ouvre automatiquement le modal de migration dès que l'install courante se termine (listener `pnw://progress` branche `done`). */
+  const pendingMigrationRef = useRef(false);
   const [launcherSelfUpdatePayload, setLauncherSelfUpdatePayload] = useState<{
     currentVersion: string;
     remoteVersion: string;
@@ -689,6 +713,15 @@ export default function App() {
           setStatus("ready");
           await loadProfileRef.current();
           void probeEnglishTrackRef.current();
+          // Si l'utilisateur a cliqué « J'ai déjà le jeu, importer mes saves » depuis le welcome
+          // avant l'installation, on rouvre automatiquement le modal de migration maintenant
+          // que le jeu est installé et que le dossier Saves de destination existe.
+          if (pendingMigrationRef.current && info.hasExe === true) {
+            pendingMigrationRef.current = false;
+            setMigrationResult(null);
+            setMigrationBusy(false);
+            setShowMigrationModal(true);
+          }
         }, 200);
         return;
       }
@@ -718,6 +751,13 @@ export default function App() {
       const msg = formatErrorForUser(e.payload?.error, uiLang);
       setLog((l) => prependUnique(l, `❌ ${msg}`));
       void logToFile("ERROR", `Game update error: ${e.payload?.error ?? "(unknown)"}`);
+      // Fermer la fenêtre de mise à jour pour que l'utilisateur voie le message d'erreur
+      // dans le journal (sinon il reste bloqué sur le dialog à 100 % sans sortie possible).
+      setShowUpdateNotice(false);
+      setShowGameUpdateDialog(false);
+      autoUpdateStarted.current = false;
+      // L'install a échoué : ne pas rouvrir automatiquement le modal de migration.
+      pendingMigrationRef.current = false;
     });
     return () => {
       un1.then((f) => f());
@@ -1519,37 +1559,6 @@ export default function App() {
     }
   }
 
-  // ⚠️ Modifié : plus d’auto-scan ici. On ouvre directement l’explorateur pour choisir le DOSSIER du jeu.
-  async function handleExistingUser() {
-    try {
-      setShowInitialChoice(false);
-      const dir = await open({
-        title: "Sélectionner le dossier de Pokémon New World",
-        directory: true,
-        multiple: false,
-        defaultPath: installDir || "C:\\",
-      });
-      if (!dir) {
-        setLog((l) => prependUnique(l, ui.log.selectionCanceled));
-        return;
-      }
-      /* Dossier choisi = racine du jeu déjà installé (pas de sous-dossier imposé). */
-      const pathStr = String(dir);
-      await invoke("cmd_set_install_dir", { path: pathStr });
-      setInstallDir(pathStr);
-      setLog((l) => prependUnique(l, ui.log.gameFolderSet(pathStr)));
-
-      const newInfo = await readInstallInfo();
-      const L: "fr" | "en" =
-        newInfo.gameLang === "fr" || newInfo.gameLang === "en" ? newInfo.gameLang : "fr";
-      const m = await fetchManifest({ lang: L });
-      if (m) processInstallStatus(m, newInfo, newInfo.hasExe === true);
-      await loadProfile();
-    } catch (e: any) {
-      setLog((l) => prependUnique(l, `❌ ${ui.log.selectionError(String(e))}`));
-    }
-  }
-
   /* ====== Actions utilisateur ====== */
   async function handleInstallConfirm() {
     setShowInstallPrompt(false);
@@ -1617,6 +1626,62 @@ export default function App() {
       await loadProfile();
     } catch (e: any) {
       setLog((l) => prependUnique(l, `❌ ${ui.log.saveImportFailed(String(e))}`));
+    }
+  }
+
+  /**
+   * Migre les sauvegardes depuis un ancien dossier de jeu vers l'installation courante.
+   * Appelé par le flow de migration (welcome modal « J'ai déjà le jeu » + menu Dossier).
+   */
+  async function migrateSavesFrom(
+    sourceFolder: string,
+  ): Promise<{
+    ok: boolean;
+    empty?: boolean;
+    copied?: number;
+    foundDirs?: number;
+    destination?: string;
+    error?: string;
+  }> {
+    try {
+      const res = await invoke<{
+        foundDirs: number;
+        copied: number;
+        destination: string;
+      }>("cmd_migrate_saves_from_folder", { sourceFolder });
+      if (res.foundDirs === 0) {
+        setLog((l) => prependUnique(l, ui.log.savesMigrateEmpty));
+        return { ok: false, empty: true, ...res };
+      }
+      setLog((l) => prependUnique(l, ui.log.savesMigrated(res.copied)));
+      await loadProfile();
+      return { ok: true, ...res };
+    } catch (e: any) {
+      const errStr = String(e ?? "");
+      setLog((l) => prependUnique(l, `❌ ${ui.log.savesMigrateFailed(formatErrorForUser(errStr, uiLang))}`));
+      return { ok: false, error: formatErrorForUser(errStr, uiLang) };
+    }
+  }
+
+  /** Ouvre le dialog natif de sélection de dossier puis lance la migration. */
+  async function openMigrationDialog(): Promise<void> {
+    try {
+      const dir = await open({
+        title: "Sélectionner votre ancien dossier de jeu",
+        directory: true,
+        multiple: false,
+        defaultPath: installDir || "C:\\",
+      });
+      if (!dir) return;
+      setMigrationBusy(true);
+      const res = await migrateSavesFrom(String(dir));
+      setMigrationResult(res);
+    } catch (e: any) {
+      const errStr = String(e ?? "");
+      setLog((l) => prependUnique(l, `❌ ${ui.log.savesMigrateFailed(formatErrorForUser(errStr, uiLang))}`));
+      setMigrationResult({ ok: false, error: formatErrorForUser(errStr, uiLang) });
+    } finally {
+      setMigrationBusy(false);
     }
   }
 
@@ -2093,8 +2158,15 @@ export default function App() {
                     onClose={() => setOpenFolderMenu(false)}
                     onChooseFolder={() => { setOpenFolderMenu(false); chooseFolder(); }}
                     onInsertSave={() => { setOpenFolderMenu(false); insertSave(); }}
+                    onMigrateSaves={() => {
+                      setOpenFolderMenu(false);
+                      setMigrationResult(null);
+                      setMigrationBusy(false);
+                      setShowMigrationModal(true);
+                    }}
                     chooseLabel={ui.folderChoose}
                     insertLabel={ui.folderInsertSave}
+                    migrateLabel={ui.folderMigrateSaves}
                   />,
                   document.body,
                 )}
@@ -2789,46 +2861,201 @@ export default function App() {
                 <span>2</span>
                 <span className="h-px flex-1 bg-gradient-to-r from-white/15 to-transparent" aria-hidden />
               </div>
-              <p className="text-[15px] font-semibold text-white/92">{ui.welcome.firstTimeQ}</p>
-              <div className="grid grid-cols-2 gap-3">
-                <button
-                  type="button"
-                  disabled={gameLang !== "fr" && gameLang !== "en"}
-                  onClick={handleFirstTimeUser}
-                  className="group flex flex-col items-center gap-3 rounded-2xl bg-gradient-to-br from-blue-500/22 to-indigo-600/18 p-4 ring-1 ring-white/15 transition-all hover:from-blue-500/32 hover:to-indigo-600/28 hover:ring-sky-400/25 hover:shadow-[0_0_24px_-12px_rgba(59,130,246,0.35)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300/50 disabled:pointer-events-none disabled:opacity-40 disabled:grayscale"
-                >
-                  <span className="flex h-12 w-12 items-center justify-center rounded-xl bg-white/10 ring-1 ring-white/10 transition-colors group-hover:bg-white/[0.14]">
-                    <FaPlus className="text-2xl text-sky-300" aria-hidden />
-                  </span>
-                  <div className="text-center">
-                    <div className="font-semibold text-white/95">{ui.welcome.firstTime}</div>
-                    <div className="mt-1 text-[11px] text-white/50">{ui.welcome.firstTimeSub}</div>
-                  </div>
-                </button>
 
-                <button
-                  type="button"
-                  disabled={gameLang !== "fr" && gameLang !== "en"}
-                  onClick={handleExistingUser}
-                  className="group flex flex-col items-center gap-3 rounded-2xl bg-gradient-to-br from-emerald-500/22 to-teal-600/18 p-4 ring-1 ring-white/15 transition-all hover:from-emerald-500/32 hover:to-teal-600/28 hover:ring-emerald-400/25 hover:shadow-[0_0_24px_-12px_rgba(16,185,129,0.32)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300/50 disabled:pointer-events-none disabled:opacity-40 disabled:grayscale"
-                >
-                  <span className="flex h-12 w-12 items-center justify-center rounded-xl bg-white/10 ring-1 ring-white/10 transition-colors group-hover:bg-white/[0.14]">
-                    <FaGamepad className="text-2xl text-emerald-300" aria-hidden />
-                  </span>
-                  <div className="text-center">
-                    <div className="font-semibold text-white/95">{ui.welcome.alreadyInstalled}</div>
-                    <div className="mt-1 text-[11px] text-white/50">{ui.welcome.alreadyInstalledSub}</div>
+              {/* Panneau d'info : pourquoi AppData */}
+              <div className="rounded-xl border border-amber-400/25 bg-amber-500/[0.09] p-4">
+                <div className="flex items-start gap-3">
+                  <FaShieldHalved className="mt-0.5 shrink-0 text-base text-amber-200/95" aria-hidden />
+                  <div className="space-y-1.5">
+                    <p className="text-[13px] font-semibold text-amber-100/95">
+                      {ui.welcome.whyAppDataTitle}
+                    </p>
+                    <p className="text-[12px] leading-relaxed text-amber-100/80">
+                      {ui.welcome.whyAppDataBody}
+                    </p>
                   </div>
-                </button>
+                </div>
               </div>
-              <p className="rounded-xl border border-amber-400/20 bg-amber-500/[0.08] px-3.5 py-2.5 text-xs leading-relaxed text-amber-100/85">
-                {ui.welcome.firstTimeNote}
-              </p>
+
+              {/* CTA principale : installer dans AppData */}
+              <button
+                type="button"
+                disabled={gameLang !== "fr" && gameLang !== "en"}
+                onClick={handleFirstTimeUser}
+                className="group flex w-full items-center gap-4 rounded-2xl bg-gradient-to-br from-blue-500/22 to-indigo-600/18 p-4 text-left ring-1 ring-white/15 transition-all hover:from-blue-500/32 hover:to-indigo-600/28 hover:ring-sky-400/25 hover:shadow-[0_0_24px_-12px_rgba(59,130,246,0.35)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300/50 disabled:pointer-events-none disabled:opacity-40 disabled:grayscale"
+              >
+                <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-white/10 ring-1 ring-white/10 transition-colors group-hover:bg-white/[0.14]">
+                  <FaPlus className="text-2xl text-sky-300" aria-hidden />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="font-semibold text-white/95">{ui.welcome.installHere}</div>
+                  <div className="mt-1 text-[11px] text-white/55">{ui.welcome.installHereSub}</div>
+                </div>
+              </button>
+
+              {/* Action secondaire : importer des saves depuis un ancien dossier */}
+              <button
+                type="button"
+                disabled={gameLang !== "fr" && gameLang !== "en"}
+                onClick={() => {
+                  setShowInitialChoice(false);
+                  setMigrationResult(null);
+                  setMigrationBusy(false);
+                  setShowMigrationModal(true);
+                }}
+                className="group flex w-full items-center justify-center gap-2 rounded-xl px-3 py-2 text-[12px] text-white/65 transition-colors hover:bg-white/[0.05] hover:text-white/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300/40 disabled:pointer-events-none disabled:opacity-40"
+              >
+                <FaFileImport className="text-xs opacity-75" aria-hidden />
+                <span className="underline-offset-2 group-hover:underline">{ui.welcome.importOldSaves}</span>
+              </button>
             </section>
 
             <p className="border-t border-white/[0.07] pt-4 text-center text-[11px] text-white/45">
               {ui.welcome.footerHint}
             </p>
+          </div>
+        </Modal>
+
+        {/* Modal de migration des anciennes sauvegardes */}
+        <Modal
+          open={showMigrationModal}
+          hideActions
+          onCancel={() => {
+            if (migrationBusy) return;
+            setShowMigrationModal(false);
+            setMigrationResult(null);
+          }}
+          panelClassName="w-[min(560px,94vw)] overflow-hidden border-white/[0.14] bg-gradient-to-b from-[#141f38] via-[#0f172e] to-[#0a1020] p-0 shadow-[0_24px_80px_-20px_rgba(0,0,0,0.85)]"
+          childrenClassName="!text-[14px] text-white/88 leading-relaxed p-6 pt-5"
+        >
+          <div className="space-y-4">
+            <header className="flex items-center gap-3">
+              <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-emerald-500/15 ring-1 ring-emerald-400/25">
+                <FaFileImport className="text-lg text-emerald-300" aria-hidden />
+              </div>
+              <div className="min-w-0 flex-1">
+                <h2 className="text-[17px] font-bold tracking-tight text-white">
+                  {ui.migrateSaves.title}
+                </h2>
+              </div>
+            </header>
+
+            {/* Cas 1 : le jeu n'est pas encore installé → proposer d'installer puis d'importer */}
+            {!hasExe && migrationResult === null && (
+              <>
+                <div className="rounded-xl border border-amber-400/25 bg-amber-500/[0.09] p-3.5 text-[12.5px] leading-relaxed text-amber-100/90">
+                  {ui.migrateSaves.needInstallFirst}
+                </div>
+                <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowMigrationModal(false);
+                      setMigrationResult(null);
+                    }}
+                    className="rounded-xl bg-white/[0.05] px-4 py-2 text-[13px] text-white/80 ring-1 ring-white/15 transition-colors hover:bg-white/[0.1]"
+                  >
+                    {ui.migrateSaves.cancel}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={gameLang !== "fr" && gameLang !== "en"}
+                    onClick={() => {
+                      pendingMigrationRef.current = true;
+                      setShowMigrationModal(false);
+                      void handleFirstTimeUser();
+                    }}
+                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-br from-blue-500/35 to-indigo-600/25 px-4 py-2 text-[13px] font-semibold text-white ring-1 ring-sky-400/35 transition-colors hover:from-blue-500/45 hover:to-indigo-600/35 disabled:pointer-events-none disabled:opacity-40"
+                  >
+                    <FaDownload className="text-xs" aria-hidden />
+                    {ui.migrateSaves.installThenImport}
+                  </button>
+                </div>
+              </>
+            )}
+
+            {/* Cas 2 : jeu installé → proposer de choisir le dossier source */}
+            {hasExe && migrationResult === null && (
+              <>
+                <p className="text-[13px] leading-relaxed text-white/75">
+                  {ui.migrateSaves.body}
+                </p>
+                <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                  <button
+                    type="button"
+                    disabled={migrationBusy}
+                    onClick={() => {
+                      setShowMigrationModal(false);
+                      setMigrationResult(null);
+                    }}
+                    className="rounded-xl bg-white/[0.05] px-4 py-2 text-[13px] text-white/80 ring-1 ring-white/15 transition-colors hover:bg-white/[0.1] disabled:opacity-40"
+                  >
+                    {ui.migrateSaves.cancel}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={migrationBusy}
+                    onClick={() => void openMigrationDialog()}
+                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-br from-emerald-500/35 to-teal-600/25 px-4 py-2 text-[13px] font-semibold text-white ring-1 ring-emerald-400/35 transition-colors hover:from-emerald-500/45 hover:to-teal-600/35 disabled:pointer-events-none disabled:opacity-40"
+                  >
+                    {migrationBusy ? (
+                      <>
+                        <FaArrowsRotate className="animate-spin text-xs" aria-hidden />
+                        {ui.migrateSaves.busy}
+                      </>
+                    ) : (
+                      <>
+                        <FaFolderOpen className="text-xs" aria-hidden />
+                        {ui.migrateSaves.pickFolder}
+                      </>
+                    )}
+                  </button>
+                </div>
+              </>
+            )}
+
+            {/* Cas 3 : résultat de l'import (succès, vide, erreur) */}
+            {migrationResult !== null && (
+              <>
+                <div
+                  className={
+                    migrationResult.ok
+                      ? "rounded-xl border border-emerald-400/25 bg-emerald-500/[0.09] p-3.5 text-[12.5px] leading-relaxed text-emerald-100/90"
+                      : migrationResult.empty
+                        ? "rounded-xl border border-amber-400/25 bg-amber-500/[0.09] p-3.5 text-[12.5px] leading-relaxed text-amber-100/90"
+                        : "rounded-xl border border-rose-400/30 bg-rose-500/[0.1] p-3.5 text-[12.5px] leading-relaxed text-rose-100/90"
+                  }
+                >
+                  {migrationResult.ok && (
+                    <>
+                      <div className="mb-1 flex items-center gap-2 font-semibold">
+                        <FaCircleCheck className="text-sm" aria-hidden />
+                        {ui.migrateSaves.successTitle}
+                      </div>
+                      <p>{ui.migrateSaves.successBody(migrationResult.copied ?? 0)}</p>
+                    </>
+                  )}
+                  {!migrationResult.ok && migrationResult.empty && (
+                    <p>{ui.migrateSaves.empty}</p>
+                  )}
+                  {!migrationResult.ok && !migrationResult.empty && (
+                    <p>{migrationResult.error ?? ui.log.savesMigrateFailed("")}</p>
+                  )}
+                </div>
+                <div className="flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowMigrationModal(false);
+                      setMigrationResult(null);
+                    }}
+                    className="rounded-xl bg-white/[0.08] px-4 py-2 text-[13px] text-white/90 ring-1 ring-white/15 transition-colors hover:bg-white/[0.14]"
+                  >
+                    {ui.migrateSaves.close}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </Modal>
 

@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <linearGradient id="silver-outer" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#E2E8F0"/>
+      <stop offset="0.5" stop-color="#94A3B8"/>
+      <stop offset="1" stop-color="#334155"/>
+    </linearGradient>
+    <linearGradient id="silver-inner" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#475569"/>
+      <stop offset="1" stop-color="#1E293B"/>
+    </linearGradient>
+    <linearGradient id="silver-emblem" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#F8FAFC"/>
+      <stop offset="0.4" stop-color="#CBD5E1"/>
+      <stop offset="1" stop-color="#475569"/>
+    </linearGradient>
+    <radialGradient id="silver-shine" cx="50%" cy="25%" r="55%">
+      <stop offset="0" stop-color="#F8FAFC" stop-opacity="0.45"/>
+      <stop offset="1" stop-color="#000" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <!-- Outer plate -->
+  <circle cx="64" cy="64" r="60" fill="url(#silver-outer)" stroke="#0F172A" stroke-width="2"/>
+  <circle cx="64" cy="64" r="60" fill="url(#silver-shine)"/>
+  <!-- Inner ring -->
+  <circle cx="64" cy="64" r="48" fill="url(#silver-inner)" stroke="#0F172A" stroke-width="1.5"/>
+  <!-- Diamond-cut gem (4-point star kite) -->
+  <path d="M 64 30 L 94 64 L 64 98 L 34 64 Z"
+        fill="url(#silver-emblem)" stroke="#0F172A" stroke-width="2" stroke-linejoin="round"/>
+  <!-- Inner facets (4 quadrants for brilliance) -->
+  <path d="M 64 30 L 64 64 L 34 64 Z" fill="#F8FAFC" opacity="0.5"/>
+  <path d="M 64 30 L 94 64 L 64 64 Z" fill="#CBD5E1" opacity="0.35"/>
+  <path d="M 64 98 L 64 64 L 34 64 Z" fill="#475569" opacity="0.4"/>
+  <path d="M 64 98 L 64 64 L 94 64 Z" fill="#334155" opacity="0.5"/>
+  <!-- Central reflection -->
+  <circle cx="64" cy="64" r="4" fill="#FFFFFF" opacity="0.7"/>
+</svg>

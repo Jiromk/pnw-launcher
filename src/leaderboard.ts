@@ -1,5 +1,6 @@
 import { supabase } from "./supabaseClient";
 import type { PlayerProfile, TeamMember } from "./types";
+import type { RankTier } from "./ranked";
 
 /* ==================== Types ==================== */
 
@@ -96,26 +97,56 @@ export async function fetchLeaderboard(): Promise<LeaderboardEntry[]> {
 
 /* ==================== PvP Stats ==================== */
 
+/**
+ * Stats PvP détaillées par mode.
+ * - `*_amical` / `*_ranked` : compteurs incrémentés par les RPC (source de vérité).
+ * - `pvp_wins/losses/draws` : colonnes **générées** en DB (somme amical+ranked).
+ * - `battle_mmr` : MMR caché (Elo), source de vérité pour le matchmaking.
+ * - `battle_rank_tier` : rang visible (unranked → challenger).
+ * - `battle_lp` : LP 0-100 hors apex, illimité en apex.
+ * - `placement_played` / `placement_wins` : phase de placement (5 matchs).
+ * - `battle_elo` : legacy (pas utilisé — conservé pour rétrocompat).
+ */
 export type PvpStats = {
+  pvp_wins_amical: number;
+  pvp_losses_amical: number;
+  pvp_draws_amical: number;
+  pvp_wins_ranked: number;
+  pvp_losses_ranked: number;
+  pvp_draws_ranked: number;
   pvp_wins: number;
   pvp_losses: number;
   pvp_draws: number;
-  battle_elo: number | null;
+  battle_mmr: number;
+  battle_rank_tier: RankTier;
   battle_lp: number;
+  placement_played: number;
+  placement_wins: number;
+  battle_elo: number | null;
 };
 
 export async function fetchPvpStats(userId: string): Promise<PvpStats> {
   const { data } = await supabase
     .from("leaderboard_scores")
-    .select("pvp_wins, pvp_losses, pvp_draws, battle_elo, battle_lp")
+    .select("pvp_wins_amical, pvp_losses_amical, pvp_draws_amical, pvp_wins_ranked, pvp_losses_ranked, pvp_draws_ranked, pvp_wins, pvp_losses, pvp_draws, battle_mmr, battle_rank_tier, battle_lp, placement_played, placement_wins, battle_elo")
     .eq("user_id", userId)
     .single();
   return {
+    pvp_wins_amical: data?.pvp_wins_amical ?? 0,
+    pvp_losses_amical: data?.pvp_losses_amical ?? 0,
+    pvp_draws_amical: data?.pvp_draws_amical ?? 0,
+    pvp_wins_ranked: data?.pvp_wins_ranked ?? 0,
+    pvp_losses_ranked: data?.pvp_losses_ranked ?? 0,
+    pvp_draws_ranked: data?.pvp_draws_ranked ?? 0,
     pvp_wins: data?.pvp_wins ?? 0,
     pvp_losses: data?.pvp_losses ?? 0,
     pvp_draws: data?.pvp_draws ?? 0,
-    battle_elo: data?.battle_elo ?? null,
+    battle_mmr: data?.battle_mmr ?? 1000,
+    battle_rank_tier: (data?.battle_rank_tier as RankTier) ?? "unranked",
     battle_lp: data?.battle_lp ?? 0,
+    placement_played: data?.placement_played ?? 0,
+    placement_wins: data?.placement_wins ?? 0,
+    battle_elo: data?.battle_elo ?? null,
   };
 }
 
@@ -130,6 +161,18 @@ export type BattleTeamSnapshot = {
 };
 
 export type MatchType = "amical" | "ranked";
+
+/** Aperçu minimal du Pokémon misé (stocké en `bet_pokemon_preview`). */
+export type BetPokemonPreview = {
+  speciesId?: number;
+  form?: number | null;
+  name?: string | null;
+  nickname?: string | null;
+  level?: number | null;
+  shiny?: boolean | null;
+  altShiny?: boolean | null;
+  [k: string]: unknown;
+};
 
 export type BattleResultEntry = {
   id: number;
@@ -148,6 +191,12 @@ export type BattleResultEntry = {
   my_team: BattleTeamSnapshot[] | null;
   /** Équipe de l'adversaire, récupérée via self-join sur room_code (peut être null si l'adversaire n'a pas enregistré sa propre ligne). */
   opponent_team: BattleTeamSnapshot[] | null;
+  /** true si le match était en mode pari. */
+  bet_mode: boolean | null;
+  /** Pokémon que j'avais misé. */
+  bet_pokemon_preview: BetPokemonPreview | null;
+  /** Pokémon que l'adversaire avait misé (via self-join). */
+  opponent_bet_preview: BetPokemonPreview | null;
 };
 
 /**
@@ -167,7 +216,11 @@ export async function fetchBattleHistory(userId: string, limit = 20): Promise<Ba
       .eq("user_id", userId)
       .order("created_at", { ascending: false })
       .limit(limit);
-    return (fallback ?? []).map((r: any) => ({ ...r, opponent_team: null })) as BattleResultEntry[];
+    return (fallback ?? []).map((r: any) => ({
+      ...r,
+      opponent_team: null,
+      opponent_bet_preview: null,
+    })) as BattleResultEntry[];
   }
   return (data ?? []) as BattleResultEntry[];
 }
@@ -198,40 +251,100 @@ export type RecordBattleExtras = {
   matchType?: MatchType;
   lpDelta?: number | null;
   myTeam?: BattleTeamSnapshot[] | null;
+  betMode?: boolean;
+  betPokemonPreview?: Record<string, unknown>;
 };
 
+/**
+ * Résultat du RPC ranked — renvoyé côté client pour déclencher l'animation
+ * de promotion si besoin, afficher le nouveau rang, etc.
+ */
+export type RankedRecordResult = {
+  wasRecorded: boolean;
+  newTier: RankTier;
+  newLp: number;
+  newMmr: number;
+  mmrDelta: number;
+  lpDelta: number;
+  promoted: boolean;
+  demoted: boolean;
+  isPlacement: boolean;
+  placementPlayed: number;
+};
+
+/**
+ * Enregistre le résultat d'un combat PvP (amical ou ranked).
+ *
+ * Route vers le bon RPC (`record_friendly_battle` ou `record_ranked_battle`)
+ * selon `extras.matchType`. Les deux RPC sont SECURITY DEFINER : ils utilisent
+ * `auth.uid()` et sont idempotents via `UNIQUE (room_code, user_id)`.
+ *
+ * Retourne `RankedRecordResult` si c'était un match ranked, `null` sinon.
+ * Le caller peut utiliser ce résultat pour déclencher l'animation de promotion.
+ */
 export async function recordBattleResult(
-  userId: string,
+  _userId: string,
   opponentId: string,
   roomCode: string,
   opponentName: string,
   result: "win" | "loss" | "draw",
   reason: string = "battle_end",
   extras: RecordBattleExtras = {},
-): Promise<void> {
-  const startedAt = extras.startedAt ?? null;
-  const endedAt = extras.endedAt ?? new Date().toISOString();
-  let durationSec: number | null = null;
-  if (startedAt) {
-    const diff = Math.round((new Date(endedAt).getTime() - new Date(startedAt).getTime()) / 1000);
-    if (Number.isFinite(diff) && diff >= 0) durationSec = diff;
+): Promise<RankedRecordResult | null> {
+  const matchType: MatchType = extras.matchType ?? "amical";
+
+  // ─── Amical ───
+  if (matchType === "amical") {
+    const { error } = await supabase.rpc("record_friendly_battle", {
+      p_room_code: roomCode,
+      p_opponent_id: opponentId,
+      p_opponent_name: opponentName || null,
+      p_result: result,
+      p_reason: reason,
+      p_started_at: extras.startedAt ?? null,
+      p_ended_at: extras.endedAt ?? null,
+      p_my_team: extras.myTeam ?? null,
+      p_bet_mode: extras.betMode ?? false,
+      p_bet_pokemon_preview: extras.betPokemonPreview ?? null,
+    });
+    if (error) {
+      console.warn("[battle] record_friendly_battle RPC failed:", error.message);
+    }
+    return null;
   }
-  // Insert match record
-  await supabase.from("battle_results").insert({
-    room_code: roomCode,
-    user_id: userId,
-    opponent_id: opponentId,
-    opponent_name: opponentName,
-    result,
-    reason,
-    started_at: startedAt,
-    ended_at: endedAt,
-    duration_sec: durationSec,
-    match_type: extras.matchType ?? "amical",
-    lp_delta: extras.lpDelta ?? null,
-    my_team: extras.myTeam ?? null,
+
+  // ─── Ranked ───
+  const { data, error } = await supabase.rpc("record_ranked_battle", {
+    p_room_code: roomCode,
+    p_opponent_id: opponentId,
+    p_opponent_name: opponentName || null,
+    p_result: result,
+    p_reason: reason,
+    p_started_at: extras.startedAt ?? null,
+    p_ended_at: extras.endedAt ?? null,
+    p_my_team: extras.myTeam ?? null,
+    p_bet_mode: extras.betMode ?? false,
+    p_bet_pokemon_preview: extras.betPokemonPreview ?? null,
   });
-  // Increment aggregate stats
-  const col = result === "win" ? "pvp_wins" : result === "loss" ? "pvp_losses" : "pvp_draws";
-  await supabase.rpc("increment_pvp_stat", { p_user_id: userId, p_column: col });
+
+  if (error) {
+    console.warn("[battle] record_ranked_battle RPC failed:", error.message);
+    return null;
+  }
+  // Le RPC retourne une table (1 ligne) → supabase-js le sort en array
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row) return null;
+
+  return {
+    wasRecorded: !!row.was_recorded,
+    newTier: (row.new_tier as RankTier) ?? "unranked",
+    newLp: row.new_lp ?? 0,
+    newMmr: row.new_mmr ?? 1000,
+    mmrDelta: row.mmr_delta ?? 0,
+    lpDelta: row.lp_delta ?? 0,
+    promoted: !!row.promoted,
+    demoted: !!row.demoted,
+    isPlacement: !!row.is_placement,
+    placementPlayed: row.placement_played ?? 0,
+  };
 }
