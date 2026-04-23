@@ -12337,6 +12337,22 @@ button.gts-card-badge--share:hover{
   animation: rank-hero-pulse 3.5s ease-in-out infinite;
 }
 
+/* ==================== Hologram Globe ==================== */
+
+/* Scanline qui descend en boucle à travers le globe.
+   --globe-size est passée par le composant via inline style. */
+@keyframes hologram-scanline-move {
+  0%   { transform: translateY(0); opacity: 0; }
+  10%  { opacity: 0.9; }
+  80%  { opacity: 0.9; }
+  100% { transform: translateY(var(--globe-size, 200px)); opacity: 0; }
+}
+.hologram-scanline {
+  animation-name: hologram-scanline-move;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
+
 /* ==================== Promotion Celebration ==================== */
 
 /* Overlay qui fade in */

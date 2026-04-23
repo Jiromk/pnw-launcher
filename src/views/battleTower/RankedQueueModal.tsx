@@ -5,10 +5,10 @@ import React, { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   FaXmark,
-  FaMagnifyingGlass,
   FaBullseye,
 } from "react-icons/fa6";
 import { tierIconUrl, tierLabel, tierTheme, type RankTier } from "../../ranked";
+import { HologramGlobe } from "./HologramGlobe";
 
 export type RankedQueueLabels = {
   title: string;
@@ -122,30 +122,9 @@ export function RankedQueueModal({
           </div>
         ) : (
           <>
-            {/* Icône pulsante centrale */}
-            <div className="relative mx-auto mb-6 flex h-28 w-28 items-center justify-center">
-              {/* Triple ping ring */}
-              <span
-                className="absolute inset-0 animate-ping rounded-full border-2 opacity-60"
-                style={{ borderColor: theme.accent }}
-              />
-              <span
-                className="absolute inset-2 animate-ping rounded-full border opacity-40"
-                style={{ borderColor: theme.accent, animationDelay: "0.35s" }}
-              />
-              <div
-                className="relative flex h-16 w-16 items-center justify-center rounded-full border-2"
-                style={{
-                  borderColor: theme.accent + "70",
-                  background: `linear-gradient(135deg, ${theme.glow}, transparent)`,
-                  boxShadow: `0 0 28px ${theme.glowStrong}`,
-                }}
-              >
-                <FaMagnifyingGlass
-                  className="text-2xl"
-                  style={{ color: theme.accent }}
-                />
-              </div>
+            {/* Hologram globe — tourne plus vite en mode recherche */}
+            <div className="relative mx-auto mb-6 flex items-center justify-center">
+              <HologramGlobe size={180} tier={myTier} intensity="searching" />
             </div>
 
             {/* Title */}

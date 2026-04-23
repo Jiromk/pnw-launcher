@@ -250,7 +250,7 @@ export function getLauncherUi(L: UiLang) {
       hint: "Le jeu sera disponible dès la fin de l’installation. Ne fermez pas le launcher.",
     },
     battleTower: {
-      nav: { home: "Accueil", lead: "Combat Lead", amical: "Combat Amical", profile: "Profil" },
+      nav: { home: "Accueil", lead: "Combat Classé", amical: "Combat Amical", profile: "Profil" },
       backToTower: "Retour à la tour",
       home: {
         title: "Tour de Combat",
@@ -259,7 +259,7 @@ export function getLauncherUi(L: UiLang) {
         modes: {
           lead: {
             badge: "Compétitif",
-            title: "Combat Lead",
+            title: "Combat Classé",
             description:
               "Matchmaking classé basé sur votre elo. Affrontez des adversaires de votre niveau.",
           },
@@ -273,7 +273,7 @@ export function getLauncherUi(L: UiLang) {
         statsTitle: "Vos statistiques",
         statsPlaceholder: "Statistiques à venir",
         statsHint:
-          "Les statistiques PvP seront disponibles prochainement, avec le lancement du Combat Lead.",
+          "Les statistiques PvP seront disponibles prochainement, avec le lancement du Combat Classé.",
         statLabels: {
           wins: "Victoires",
           losses: "Défaites",
@@ -291,9 +291,9 @@ export function getLauncherUi(L: UiLang) {
             ev: "EV ≤ 252 par stat / 510 au total",
             banlist: "Aucun Pokémon banni dans l'équipe",
           },
-          rankedOnlyTag: "Combat Lead",
+          rankedOnlyTag: "Combat Classé",
           banlistTitle: "Pokémons bannis",
-          banlistScope: "Applicable uniquement en Combat Lead (classé)",
+          banlistScope: "Applicable uniquement en Combat Classé (classé)",
           banlistEmpty: "Aucun Pokémon n'est actuellement banni.",
           banlistLoading: "Chargement de la banlist…",
           banlistCount: (n: number) => `${n} entrée${n > 1 ? "s" : ""}`,
@@ -302,7 +302,7 @@ export function getLauncherUi(L: UiLang) {
         },
       },
       lead: {
-        title: "Combat Lead",
+        title: "Combat Classé",
         subtitle: "Matchmaking classé",
         comingSoon: "Bientôt disponible",
         queueTitle: "Rejoindre la queue",
@@ -774,7 +774,7 @@ export function getLauncherUi(L: UiLang) {
       hint: "The game will be available as soon as installation completes. Don’t close the launcher.",
     },
     battleTower: {
-      nav: { home: "Home", lead: "Combat Lead", amical: "Friendly Combat", profile: "Profile" },
+      nav: { home: "Home", lead: "Ranked Combat", amical: "Friendly Combat", profile: "Profile" },
       backToTower: "Back to tower",
       home: {
         title: "Battle Tower",
@@ -783,7 +783,7 @@ export function getLauncherUi(L: UiLang) {
         modes: {
           lead: {
             badge: "Competitive",
-            title: "Combat Lead",
+            title: "Ranked Combat",
             description:
               "Ranked matchmaking based on your elo. Face opponents at your level.",
           },
@@ -797,7 +797,7 @@ export function getLauncherUi(L: UiLang) {
         statsTitle: "Your statistics",
         statsPlaceholder: "Stats coming soon",
         statsHint:
-          "PvP statistics will be available soon, alongside the Combat Lead launch.",
+          "PvP statistics will be available soon, alongside the Ranked Combat launch.",
         statLabels: {
           wins: "Wins",
           losses: "Losses",
@@ -817,7 +817,7 @@ export function getLauncherUi(L: UiLang) {
           },
           rankedOnlyTag: "Ranked only",
           banlistTitle: "Banned Pokémon",
-          banlistScope: "Applies only to Ranked Battles (Combat Lead)",
+          banlistScope: "Applies only to Ranked Battles (Ranked Combat)",
           banlistEmpty: "No Pokémon is currently banned.",
           banlistLoading: "Loading banlist…",
           banlistCount: (n: number) => `${n} entr${n > 1 ? "ies" : "y"}`,
@@ -826,7 +826,7 @@ export function getLauncherUi(L: UiLang) {
         },
       },
       lead: {
-        title: "Combat Lead",
+        title: "Ranked Combat",
         subtitle: "Ranked matchmaking",
         comingSoon: "Coming soon",
         queueTitle: "Join the queue",

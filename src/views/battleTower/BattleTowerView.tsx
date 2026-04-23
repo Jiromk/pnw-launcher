@@ -1,5 +1,5 @@
 // src/views/battleTower/BattleTowerView.tsx
-// Wrapper de la Tour de Combat : navigation 3 sous-pages (Accueil / Combat Lead / Combat Amical)
+// Wrapper de la Tour de Combat : navigation 3 sous-pages (Accueil / Combat Classé / Combat Amical)
 // + bannière d'état de combat active (invitation / waiting / relaying / complete / error)
 // qui persiste quelle que soit la sous-page.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -152,6 +152,9 @@ export default function BattleTowerView({
 
   // ── Ranked matchmaking state ──
   const [myPvpStats, setMyPvpStats] = useState<PvpStats | null>(null);
+  /** Set des room codes confirmés ranked. Filet de sécurité si matchType est
+   *  perdu entre le setBattleState d'onMatchStart et le useEffect[complete]. */
+  const rankedRoomsRef = useRef<Set<string>>(new Set());
   const [rankedSearching, setRankedSearching] = useState(false);
   const [rankedJoined, setRankedJoined] = useState<RankedQueueJoinedPayload | null>(null);
   const [rankedWaitMs, setRankedWaitMs] = useState(0);
@@ -230,6 +233,14 @@ export default function BattleTowerView({
         // Nettoyage d'un éventuel précédent relay
         await fullCleanup(battleRelayCleanupRef);
 
+        // Marque le room code comme étant un match ranked (filet de sécurité
+        // si matchType disparaît du battleState plus tard).
+        rankedRoomsRef.current.add(payload.roomCode);
+
+        // Reset le lastRecordedRoomRef — au cas où une session précédente
+        // (peu probable mais possible avec un room code recyclé) l'aurait déjà set.
+        lastRecordedRoomRef.current = "";
+
         // Init battle state côté client
         setBattleState({
           phase: "waiting_game",
@@ -240,6 +251,7 @@ export default function BattleTowerView({
           dmChannelId: 0,
           matchType: "ranked",
         });
+        console.log("[RankedMatch] match_start accepted — room:", payload.roomCode, "opponent:", payload.opponent.name);
 
         // Rafraichit l'équipe
         try {
@@ -470,6 +482,18 @@ export default function BattleTowerView({
     else if (endReason === "game_end") result = st.battleResult || battleResultRef.current || "draw";
 
     const validResult = result === "win" || result === "loss" || result === "draw";
+    // Log de diagnostic : on voit dans la console pourquoi le record n'est pas fait
+    console.log("[battle.complete] state check", {
+      phase: battleState.phase,
+      endReason,
+      result,
+      validResult,
+      partnerId: st.partnerId,
+      roomCode: st.roomCode,
+      matchType: st.matchType,
+      lastRecorded: lastRecordedRoomRef.current,
+      isRanked: rankedRoomsRef.current.has(st.roomCode),
+    });
     if (
       endReason &&
       st.partnerId &&
@@ -482,7 +506,13 @@ export default function BattleTowerView({
         if (!teamForRecord || teamForRecord.length === 0) {
           teamForRecord = await getFreshTeam();
         }
-        const matchTypeForRecord = (st.matchType as "amical" | "ranked" | undefined) ?? "amical";
+        // Filet de sécurité : si le room code est dans rankedRoomsRef, on force
+        // matchType=ranked même si le battleState a perdu le champ.
+        const isRankedRoom = rankedRoomsRef.current.has(st.roomCode);
+        const matchTypeForRecord: "amical" | "ranked" = isRankedRoom
+          ? "ranked"
+          : (st.matchType as "amical" | "ranked" | undefined) ?? "amical";
+        console.log("[battle.complete] recording with matchType:", matchTypeForRecord);
         const rankedResult = await recordBattleResult(
           session.user.id,
           st.partnerId,
@@ -1004,6 +1034,8 @@ export default function BattleTowerView({
           partnerName: st.partnerName,
           endReason: reason,
           battleResult: result,
+          // Conserver le type de match pour le routing vers le bon RPC
+          matchType: st.matchType,
           // Conserver les données de pari pour le transfert
           betMode: st.betMode,
           myBet: st.myBet,
@@ -1046,7 +1078,12 @@ export default function BattleTowerView({
         if (!teamForRecord || teamForRecord.length === 0) {
           teamForRecord = await getFreshTeam();
         }
-        const matchTypeForForfeit = (st.matchType as "amical" | "ranked" | undefined) ?? "amical";
+        // Filet de sécurité : si le room code est dans rankedRoomsRef, on force
+        // matchType=ranked même si le battleState a perdu le champ.
+        const isRankedRoomFor = rankedRoomsRef.current.has(st.roomCode);
+        const matchTypeForForfeit: "amical" | "ranked" = isRankedRoomFor
+          ? "ranked"
+          : (st.matchType as "amical" | "ranked" | undefined) ?? "amical";
         const rankedResult = await recordBattleResult(
           session.user.id,
           st.partnerId,

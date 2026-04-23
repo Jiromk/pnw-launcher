@@ -4,7 +4,6 @@
 import React from "react";
 import { Button } from "../../ui";
 import {
-  FaBullseye,
   FaCrown,
   FaLock,
   FaMagnifyingGlass,
@@ -19,6 +18,7 @@ import {
 } from "../../ranked";
 import type { RankedQueueLabels } from "./RankedQueueModal";
 import type { MatchFoundLabels } from "./MatchFoundPopup";
+import { HologramGlobe } from "./HologramGlobe";
 
 export type CombatLeadLabels = {
   title: string;
@@ -99,14 +99,9 @@ export function CombatLeadView({ labels, myRank, isSearching, isInBattle, onStar
         <div className="pointer-events-none absolute -left-20 -bottom-20 h-60 w-60 rounded-full bg-orange-400/10 blur-3xl" />
 
         <div className="relative flex flex-col items-center text-center">
-          {/* Scanning animation icon */}
-          <div
-            className="relative mb-5 flex h-24 w-24 items-center justify-center rounded-full bg-white/[0.04] ring-1 ring-white/10"
-            style={{ animation: "update-glow-pulse 4s ease-in-out infinite" }}
-          >
-            <FaBullseye className="relative text-4xl text-amber-200/80 drop-shadow-[0_0_14px_rgba(245,158,11,0.4)]" />
-            {/* Ring pulse */}
-            <span className="absolute inset-0 animate-ping rounded-full border border-amber-400/20" />
+          {/* Hologram globe — tourne en continu avec des points scintillants */}
+          <div className="mb-5">
+            <HologramGlobe size={220} tier={tier} intensity={isSearching ? "searching" : "idle"} />
           </div>
 
           <h2 className="mb-2 text-2xl font-bold text-white/90">{labels.queueTitle}</h2>

@@ -289,7 +289,7 @@ export function BattleTowerHome({ labels, onNavigate, siteUrl }: Props) {
         className="mb-14 grid w-full max-w-4xl grid-cols-1 gap-5 md:grid-cols-2"
         style={{ animation: "update-page-in 0.6s ease-out 0.1s both" }}
       >
-        {/* Combat Lead */}
+        {/* Combat Classé */}
         <button
           type="button"
           onClick={() => onNavigate("lead")}
