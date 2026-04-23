@@ -737,10 +737,26 @@ export function startRelay(
             // est gere par le bouton "Abandonner" dans le launcher.
             eventLog.push({ time: new Date().toISOString(), event: "game_disconnect", data: { messageType } });
             if (!disconnectFired) {
-              disconnectFired = true;
-              running = false;
-              socket.emit("leave_room", { roomCode, userId: myUserId, reason: "game_end" });
-              onDisconnect?.("game_end");
+              // Race condition : si le jeu ecrit "disconnect" SANS avoir ecrit
+              // "battle_result" avant (certains flow PSDK normaux), on n'a pas
+              // le resultat local. Le serveur va nous l'envoyer via battle_ended
+              // dans les ~500ms. On attend jusqu'a 1.5s pour laisser battle_ended
+              // prendre la priorite (qui setera disconnectFired=true de son cote).
+              // Si le timeout expire, on fire onDisconnect sans resultat (fallback).
+              const shouldWait = !selfBattleResultSent;
+              const fireDisconnect = () => {
+                if (disconnectFired) return; // battle_ended a deja gere
+                disconnectFired = true;
+                running = false;
+                socket.emit("leave_room", { roomCode, userId: myUserId, reason: "game_end" });
+                onDisconnect?.("game_end");
+              };
+              if (shouldWait) {
+                eventLog.push({ time: new Date().toISOString(), event: "disconnect_wait_for_server_result" });
+                setTimeout(fireDisconnect, 1500);
+              } else {
+                fireDisconnect();
+              }
             }
             pendingOutbox = null;
           } else if (messageType === "battle_result") {
