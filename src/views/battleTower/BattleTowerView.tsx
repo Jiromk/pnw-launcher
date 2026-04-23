@@ -290,16 +290,34 @@ export default function BattleTowerView({
                 : prev,
             ),
           (reason) => {
-            const result =
-              reason === "opponent_forfeit" || reason === "opponent_game_end"
-                ? battleResultRef.current || "win"
-                : reason === "opponent_crash" || reason === "crash"
-                  ? "draw"
-                  : reason === "forfeit"
-                    ? "loss"
-                    : reason === "game_end"
-                      ? battleResultRef.current || "unknown"
-                      : "unknown";
+            // Détermine le résultat en étant prudent quand on n'a pas la vérité
+            // (ni battle_result local, ni battle_ended serveur) : on préfère "draw"
+            // plutôt qu'une fausse "win" via fallback d'heuristique.
+            let result: "win" | "loss" | "draw" = "draw";
+            if (reason === "opponent_forfeit") {
+              result = "win"; // vrai forfeit via bouton → vrai win
+            } else if (reason === "opponent_game_end") {
+              // L'adversaire a quitté naturellement. Si on a reçu la vérité du
+              // serveur via battle_ended, on l'utilise. Sinon fallback "draw"
+              // pour éviter d'enregistrer des fausses victoires.
+              const serverTruth = battleResultRef.current;
+              result =
+                serverTruth === "win" || serverTruth === "loss" || serverTruth === "draw"
+                  ? serverTruth
+                  : "draw";
+            } else if (reason === "opponent_crash" || reason === "crash") {
+              result = "draw";
+            } else if (reason === "forfeit") {
+              result = "loss";
+            } else if (reason === "game_end") {
+              // Notre combat s'est terminé. Si le jeu a écrit battle_result,
+              // on a la vérité. Sinon fallback "draw" (match enregistré en nul).
+              const localTruth = battleResultRef.current;
+              result =
+                localTruth === "win" || localTruth === "loss" || localTruth === "draw"
+                  ? localTruth
+                  : "draw";
+            }
             setBattleState((prev) =>
               (prev as any).roomCode === payload.roomCode
                 ? ({ ...prev, phase: "complete", endReason: reason, battleResult: result } as any)

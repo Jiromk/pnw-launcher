@@ -791,10 +791,24 @@ export function startRelay(
           if (battleDetected && !disconnectFired && stateType != null && !isBattleState) {
             console.log("[BattleRelay] State transitioned from battle to", stateType, "— treating as game_end");
             eventLog.push({ time: new Date().toISOString(), event: "battle_state_transition_end", data: { newState: stateType } });
-            disconnectFired = true;
-            running = false;
-            socket.emit("leave_room", { roomCode, userId: myUserId, reason: "game_end" });
-            onDisconnect?.("game_end");
+            // Race condition : idem que messageType="disconnect". Si on n'a pas
+            // notre propre battle_result, on attend 1.5s que le serveur nous
+            // envoie battle_ended (via le battle_end émis par l'adversaire, ou
+            // via player_left). Sinon on fallback avec onDisconnect "game_end".
+            const shouldWait = !selfBattleResultSent;
+            const fireTransitionDisconnect = () => {
+              if (disconnectFired) return; // un autre handler a pris la main entre-temps
+              disconnectFired = true;
+              running = false;
+              socket.emit("leave_room", { roomCode, userId: myUserId, reason: "game_end" });
+              onDisconnect?.("game_end");
+            };
+            if (shouldWait) {
+              eventLog.push({ time: new Date().toISOString(), event: "transition_wait_for_server_result" });
+              setTimeout(fireTransitionDisconnect, 1500);
+            } else {
+              fireTransitionDisconnect();
+            }
           }
         }
       } catch (pollErr) {
