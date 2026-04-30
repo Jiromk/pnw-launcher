@@ -38,7 +38,6 @@ import { validateTeamForBattle } from "../banlist";
 import { validateTeamStats, reportCheatToServer } from "../statsValidator";
 import { TRADE_PREFIX, generateTradeId, validateIncomingBytes, extractAndEncode, executeTradeLocally, buildTradeMessage, parseTradeMessage, TRADE_PENDING_TIMEOUT, TRADE_SELECTING_TIMEOUT, TRADE_CONFIRMING_TIMEOUT, TRADE_EXECUTING_TIMEOUT } from "../tradeP2P";
 import { loadSaveForEdit, extractPokemonFromBox, encodePokemonForGts } from "../saveWriter";
-import { upsertLeaderboardScore, fetchLeaderboard, type LeaderboardEntry } from "../leaderboard";
 import type { Session } from "@supabase/supabase-js";
 import AdminPanel from "../components/AdminPanel";
 import PCBoxView from "./PCBoxView";
@@ -1761,10 +1760,6 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
   }, [onlineUserIds, tradeState.phase]);
 
   // Leaderboard
-  const [showLeaderboard, setShowLeaderboard] = useState(false);
-  const [leaderboardData, setLeaderboardData] = useState<LeaderboardEntry[]>([]);
-  const [lbTab, setLbTab] = useState<"pokedex" | "shiny">("pokedex");
-  const [lbLoading, setLbLoading] = useState(false);
 
   // Pinned messages
   const [showPinnedPanel, setShowPinnedPanel] = useState(false);
@@ -1916,22 +1911,6 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
       setShowGtsShareModal(true);
     }
   }, [gtsSharePending, session, channels.length]);
-
-  /* ---------- Leaderboard: auto-submit scores ---------- */
-
-  useEffect(() => {
-    if (session?.user?.id && gameProfile) {
-      upsertLeaderboardScore(session.user.id, gameProfile);
-    }
-  }, [session?.user?.id, gameProfile]);
-
-  /* ---------- Leaderboard: fetch on open ---------- */
-
-  useEffect(() => {
-    if (!showLeaderboard) return;
-    setLbLoading(true);
-    fetchLeaderboard().then((d) => { setLeaderboardData(d); setLbLoading(false); });
-  }, [showLeaderboard]);
 
   /* ---------- Load Pokédex / Extradex / Fakemon entries ---------- */
 
@@ -4172,15 +4151,6 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
                     <FaThumbtack />
                   </button>
                 )}
-                {session && (
-                  <button
-                    className={`pnw-chat-header-action${showLeaderboard ? " pnw-chat-header-action--active" : ""}`}
-                    onClick={() => setShowLeaderboard((v) => !v)}
-                    title="Classement"
-                  >
-                    <FaTrophy />
-                  </button>
-                )}
                 {activeChannel.type !== "dm" && (
                   <button
                     className={`pnw-chat-header-action${showMembers ? " pnw-chat-header-action--active" : ""}`}
@@ -5408,112 +5378,6 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
           </div>
         </div>
       )}
-
-      {/* ====== Leaderboard popup ====== */}
-      {showLeaderboard && (() => {
-        const sorted = [...leaderboardData].sort((a, b) =>
-          lbTab === "pokedex" ? b.pokedex_count - a.pokedex_count : b.shinydex_count - a.shinydex_count,
-        );
-        const getScore = (e: LeaderboardEntry) => lbTab === "pokedex" ? e.pokedex_count : e.shinydex_count;
-        const podium = sorted.slice(0, 3);
-        const rest = sorted.slice(3);
-
-        function renderPodiumSlot(idx: number) {
-          const e = podium[idx];
-          if (!e) return null;
-          const p = e.profiles;
-          const name = p.display_name?.trim() || p.username || "?";
-          const nc = roleColor(p.roles ?? []);
-          const heights = [100, 72, 52];
-          return (
-            <div key={e.user_id} className={`pnw-lb-pod pnw-lb-pod--${idx + 1}`}>
-              <div className="pnw-lb-pod-avi-wrap">
-                <div className={`pnw-lb-pod-ring pnw-lb-pod-ring--${idx + 1}`}>
-                  {p.avatar_url
-                    ? <img src={p.avatar_url} alt="" className="pnw-lb-pod-avi" />
-                    : <div className="pnw-lb-pod-avi pnw-chat-avatar--placeholder">{name[0]?.toUpperCase()}</div>}
-                </div>
-                <span className={`pnw-lb-pod-badge pnw-lb-pod-badge--${idx + 1}`}>{idx === 0 ? <FaCrown size={9} /> : idx + 1}</span>
-              </div>
-              <span className="pnw-lb-pod-name" style={nc ? { color: nc } : undefined}>{name}</span>
-              <span className="pnw-lb-pod-val">{getScore(e)}</span>
-              {lbTab === "shiny" && (e.shiny_total ?? 0) > 0 && <span className="pnw-lb-pod-sub">{e.shiny_total} total</span>}
-              <div className="pnw-lb-pod-bar" style={{ height: heights[idx] }} />
-            </div>
-          );
-        }
-
-        return (
-          <div className="pnw-lb-overlay" onClick={() => setShowLeaderboard(false)}>
-            <div className="pnw-lb" onClick={(e) => e.stopPropagation()}>
-              {/* Banner */}
-              <div className="pnw-lb-banner">
-                <div className="pnw-lb-banner-bg" />
-                <button className="pnw-lb-close" onClick={() => setShowLeaderboard(false)}><FaXmark /></button>
-                <FaTrophy className="pnw-lb-trophy" />
-                <h2 className="pnw-lb-title">Classement</h2>
-              </div>
-
-              {/* Tabs */}
-              <div className="pnw-lb-tabs">
-                <button className={`pnw-lb-tab${lbTab === "pokedex" ? " on" : ""}`} onClick={() => setLbTab("pokedex")}>
-                  <FaBookOpen size={11} /> Pokédex
-                </button>
-                <button className={`pnw-lb-tab${lbTab === "shiny" ? " on" : ""}`} onClick={() => setLbTab("shiny")}>
-                  <FaStar size={11} /> ShinyDex
-                </button>
-              </div>
-
-              {lbLoading ? (
-                <div className="pnw-lb-loading"><FaSpinner className="fa-spin" size={18} /></div>
-              ) : (
-                <>
-                  {/* Podium */}
-                  {podium.length > 0 && (
-                    <div className="pnw-lb-podium">
-                      {renderPodiumSlot(1)}
-                      {renderPodiumSlot(0)}
-                      {renderPodiumSlot(2)}
-                    </div>
-                  )}
-
-                  {/* Rest */}
-                  {rest.length > 0 && (
-                    <div className="pnw-lb-list pnw-scrollbar">
-                      {rest.map((entry, i) => {
-                        const rank = i + 4;
-                        const p = entry.profiles;
-                        const name = p.display_name?.trim() || p.username || "Joueur";
-                        const sec = entry.play_time_sec ?? 0;
-                        const h = Math.floor(sec / 3600);
-                        const timeStr = h > 0 ? `${h}h` : `${Math.floor(sec / 60)}min`;
-                        const nc = roleColor(p.roles ?? []);
-                        const gl = roleGlow(p.roles ?? []);
-                        const isSelf = session?.user?.id === entry.user_id;
-                        return (
-                          <div key={entry.user_id} className={`pnw-lb-row${isSelf ? " pnw-lb-row--me" : ""}`}>
-                            <span className="pnw-lb-row-rank">{rank}</span>
-                            <div className="pnw-lb-row-avi">
-                              {p.avatar_url
-                                ? <img src={p.avatar_url} alt="" style={gl} />
-                                : <div className="pnw-chat-avatar--placeholder" style={{ width: 30, height: 30, fontSize: 12, ...gl }}>{name[0]?.toUpperCase()}</div>}
-                            </div>
-                            <div className="pnw-lb-row-info">
-                              <span className="pnw-lb-row-name" style={nc ? { color: nc } : undefined}>{name}</span>
-                              <span className="pnw-lb-row-sub">{timeStr} · {(entry.money ?? 0).toLocaleString("fr-FR")}₽{lbTab === "shiny" && (entry.shiny_total ?? 0) > 0 ? ` · ${entry.shiny_total} total` : ""}</span>
-                            </div>
-                            <span className="pnw-lb-row-val">{getScore(entry)}</span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-          </div>
-        );
-      })()}
 
       {/* Admin panel */}
       {showAdmin && (
