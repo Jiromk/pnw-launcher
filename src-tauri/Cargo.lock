@@ -2612,7 +2612,7 @@ dependencies = [
 
 [[package]]
 name = "pnw-launcher"
-version = "1.7.5"
+version = "1.9.1"
 dependencies = [
  "anyhow",
  "base64 0.22.1",

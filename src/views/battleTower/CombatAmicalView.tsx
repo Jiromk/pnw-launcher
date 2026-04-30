@@ -17,6 +17,20 @@ import {
   FaXmark,
 } from "react-icons/fa6";
 import type { ChatProfile, GameLivePlayer } from "../../types";
+import { isApex, tierIconUrl, tierLabel, tierTheme, type RankTier } from "../../ranked";
+import { supabase } from "../../supabaseClient";
+import { SparringPokeballs } from "./SparringPokeballs";
+
+/** Stats agrégées d'un joueur online — utilisées pour le rang sidebar + stats amicales du profil sélectionné. */
+type OnlinePlayerStats = {
+  tier: RankTier;
+  lp: number;
+  mmr: number;
+  placementPlayed: number;
+  winsAmical: number;
+  lossesAmical: number;
+  drawsAmical: number;
+};
 
 export type CombatAmicalLabels = {
   title: string;
@@ -55,6 +69,11 @@ type Props = {
   onChallenge: (target: ChatProfile) => void;
   onViewProfile: (target: ChatProfile) => void;
   battleStateIsIdle: boolean;
+  /** Target pre-selectionne (depuis la card de profil du chat). Si fourni,
+   *  on l'installe directement comme `selected` au montage. */
+  preselectedTarget?: ChatProfile | null;
+  /** Appele apres consommation du preselect (pour clear le state parent). */
+  onPreselectConsumed?: () => void;
 };
 
 type PlayerStatus = "available" | "in-game" | "in-battle";
@@ -110,9 +129,66 @@ export function CombatAmicalView({
   onChallenge,
   onViewProfile,
   battleStateIsIdle,
+  preselectedTarget,
+  onPreselectConsumed,
 }: Props) {
-  const [selected, setSelected] = useState<ChatProfile | null>(null);
+  const [selected, setSelected] = useState<ChatProfile | null>(preselectedTarget ?? null);
   const [filter, setFilter] = useState("");
+
+  // Si un target arrive apres le mount (changement de page), on l'installe
+  // comme selection puis on notifie le parent pour qu'il clear son state.
+  useEffect(() => {
+    if (!preselectedTarget) return;
+    setSelected(preselectedTarget);
+    onPreselectConsumed?.();
+  }, [preselectedTarget, onPreselectConsumed]);
+  const [playerStats, setPlayerStats] = useState<Map<string, OnlinePlayerStats>>(
+    () => new Map(),
+  );
+
+  // ── Batch fetch des stats de tous les joueurs en ligne (en une requête) ──
+  const onlineUserIdsList = useMemo(
+    () =>
+      Array.from(onlineUserIds)
+        .filter((id) => id !== currentUserId)
+        .sort(),
+    [onlineUserIds, currentUserId],
+  );
+  const onlineKey = onlineUserIdsList.join(",");
+
+  useEffect(() => {
+    if (onlineUserIdsList.length === 0) {
+      setPlayerStats(new Map());
+      return;
+    }
+    let cancelled = false;
+    supabase
+      .from("leaderboard_scores")
+      .select(
+        "user_id, battle_rank_tier, battle_lp, battle_mmr, placement_played, pvp_wins_amical, pvp_losses_amical, pvp_draws_amical",
+      )
+      .in("user_id", onlineUserIdsList)
+      .then(({ data }) => {
+        if (cancelled || !data) return;
+        const map = new Map<string, OnlinePlayerStats>();
+        for (const r of data) {
+          map.set(r.user_id, {
+            tier: (r.battle_rank_tier as RankTier) ?? "unranked",
+            lp: r.battle_lp ?? 0,
+            mmr: r.battle_mmr ?? 1000,
+            placementPlayed: r.placement_played ?? 0,
+            winsAmical: r.pvp_wins_amical ?? 0,
+            lossesAmical: r.pvp_losses_amical ?? 0,
+            drawsAmical: r.pvp_draws_amical ?? 0,
+          });
+        }
+        setPlayerStats(map);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onlineKey]);
 
   // Build the online players list (excluding self), sorted: available first, then in-game, then in-battle
   const onlinePlayers = useMemo(() => {
@@ -168,8 +244,8 @@ export function CombatAmicalView({
             className="flex h-full min-h-[480px] flex-col items-center justify-center rounded-3xl border border-white/[0.06] bg-white/[0.02] p-10 text-center ring-1 ring-inset ring-white/[0.03] backdrop-blur-sm"
             style={{ animation: "update-page-in 0.4s ease-out both" }}
           >
-            <div className="mb-6 flex h-24 w-24 items-center justify-center rounded-full bg-gradient-to-br from-emerald-500/15 to-teal-500/10 ring-1 ring-emerald-300/20">
-              <FaHandshake className="text-4xl text-emerald-200/80 drop-shadow-[0_0_16px_rgba(52,211,153,0.35)]" />
+            <div className="mb-6">
+              <SparringPokeballs size={260} />
             </div>
             <h2 className="mb-2 text-2xl font-bold text-white/85">
               {labels.emptyStateTitle}
@@ -240,37 +316,81 @@ export function CombatAmicalView({
               </div>
             </div>
 
-            {/* Stats placeholders */}
-            <div className="relative mt-8">
-              <div className="mb-3 flex items-center gap-2">
-                <FaChartLine className="text-sm text-white/50" />
-                <h3 className="text-sm font-semibold uppercase tracking-wider text-white/55">
-                  {labels.profileStatsTitle}
-                </h3>
-              </div>
-              <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-                <StatTile
-                  icon={<FaTrophy className="text-emerald-300/70" />}
-                  label={labels.statLabels.wins}
-                  placeholder={labels.statsPlaceholder}
-                />
-                <StatTile
-                  icon={<FaSkull className="text-rose-300/70" />}
-                  label={labels.statLabels.losses}
-                  placeholder={labels.statsPlaceholder}
-                />
-                <StatTile
-                  icon={<FaChartLine className="text-sky-300/70" />}
-                  label={labels.statLabels.winrate}
-                  placeholder={labels.statsPlaceholder}
-                />
-                <StatTile
-                  icon={<FaShieldHalved className="text-amber-300/70" />}
-                  label={labels.statLabels.elo}
-                  placeholder={labels.statsPlaceholder}
-                />
-              </div>
-            </div>
+            {/* Stats amicales du joueur sélectionné */}
+            {(() => {
+              const stats = playerStats.get(selected.id);
+              const wins = stats?.winsAmical ?? 0;
+              const losses = stats?.lossesAmical ?? 0;
+              const draws = stats?.drawsAmical ?? 0;
+              const totalAmical = wins + losses + draws;
+              const winrate =
+                totalAmical > 0
+                  ? Math.round((wins / totalAmical) * 1000) / 10
+                  : null;
+              const tier = stats?.tier ?? "unranked";
+              const placementDone = (stats?.placementPlayed ?? 0) >= 5;
+              const isRanked = placementDone && tier !== "unranked";
+              return (
+                <div className="relative mt-8">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      <FaChartLine className="text-sm text-white/50" />
+                      <h3 className="text-sm font-semibold uppercase tracking-wider text-white/55">
+                        {labels.profileStatsTitle}
+                      </h3>
+                    </div>
+                    {/* Badge "Amical" pour clarifier le scope des stats affichées */}
+                    <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-400/30 bg-emerald-500/10 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-emerald-200">
+                      <FaHandshake className="text-[9px]" />
+                      {labels.title}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+                    <StatTile
+                      icon={<FaTrophy className="text-emerald-300/70" />}
+                      label={labels.statLabels.wins}
+                      value={stats ? String(wins) : null}
+                      placeholder={labels.statsPlaceholder}
+                    />
+                    <StatTile
+                      icon={<FaSkull className="text-rose-300/70" />}
+                      label={labels.statLabels.losses}
+                      value={stats ? String(losses) : null}
+                      placeholder={labels.statsPlaceholder}
+                    />
+                    <StatTile
+                      icon={<FaChartLine className="text-sky-300/70" />}
+                      label={labels.statLabels.winrate}
+                      value={
+                        stats
+                          ? winrate != null
+                            ? `${winrate}%`
+                            : "—"
+                          : null
+                      }
+                      placeholder={labels.statsPlaceholder}
+                    />
+                    {/* Tile Rang (si le joueur est classé) sinon Total amical */}
+                    {isRanked && stats ? (
+                      <PlayerRankTile
+                        tier={tier}
+                        lp={stats.lp}
+                        mmr={stats.mmr}
+                        labels={labels}
+                      />
+                    ) : (
+                      <StatTile
+                        icon={<FaShieldHalved className="text-amber-300/70" />}
+                        label={labels.statLabels.elo}
+                        value={stats ? String(totalAmical) : null}
+                        valueLabel={stats ? "combats" : undefined}
+                        placeholder={labels.statsPlaceholder}
+                      />
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Challenge + View profile buttons */}
             <div className="relative mt-8 flex flex-col items-center gap-2">
@@ -382,13 +502,41 @@ export function CombatAmicalView({
                           <div className="truncate text-sm font-medium text-white/85">
                             {displayName(profile)}
                           </div>
-                          <div className="text-[10px] text-white/40">
-                            {status === "in-battle"
-                              ? labels.statusInBattle
-                              : status === "in-game"
-                                ? labels.statusInGame
-                                : labels.statusAvailable}
-                          </div>
+                          {(() => {
+                            const ps = playerStats.get(profile.id);
+                            const isRanked =
+                              ps &&
+                              ps.placementPlayed >= 5 &&
+                              ps.tier !== "unranked";
+                            if (isRanked && ps) {
+                              const tt = tierTheme(ps.tier);
+                              return (
+                                <div
+                                  className="flex items-center gap-1 truncate text-[10px] font-semibold uppercase tracking-wider"
+                                  style={{ color: tt.accent }}
+                                >
+                                  <img
+                                    src={tierIconUrl(ps.tier)}
+                                    alt={tierLabel(ps.tier)}
+                                    className="h-3 w-3"
+                                  />
+                                  <span className="truncate">
+                                    {tierLabel(ps.tier)}
+                                    {!isApex(ps.tier) && ` · ${ps.lp} LP`}
+                                  </span>
+                                </div>
+                              );
+                            }
+                            return (
+                              <div className="text-[10px] text-white/40">
+                                {status === "in-battle"
+                                  ? labels.statusInBattle
+                                  : status === "in-game"
+                                    ? labels.statusInGame
+                                    : labels.statusAvailable}
+                              </div>
+                            );
+                          })()}
                         </div>
                         {status === "in-battle" && (
                           <FaHandFist className="shrink-0 text-xs text-rose-300/80" />
@@ -474,10 +622,16 @@ function StatusPill({
 function StatTile({
   icon,
   label,
+  value,
+  valueLabel,
   placeholder,
 }: {
   icon: React.ReactNode;
   label: string;
+  /** null/undefined → skeleton placeholder. */
+  value?: string | null;
+  /** Petit suffixe optionnel à droite de la valeur. */
+  valueLabel?: string;
   placeholder: string;
 }) {
   return (
@@ -488,8 +642,79 @@ function StatTile({
         </span>
         <span className="text-sm opacity-70">{icon}</span>
       </div>
-      <div className="mb-1.5 h-6 w-14 animate-pulse rounded bg-white/[0.06]" />
-      <p className="text-[9px] italic text-white/25">{placeholder}</p>
+      {value === null || value === undefined ? (
+        <>
+          <div className="mb-1.5 h-6 w-14 animate-pulse rounded bg-white/[0.06]" />
+          <p className="text-[9px] italic text-white/25">{placeholder}</p>
+        </>
+      ) : (
+        <div className="flex items-baseline gap-1.5">
+          <span className="text-[18px] font-bold tracking-tight text-white">{value}</span>
+          {valueLabel && (
+            <span className="text-[10px] font-medium text-white/40">{valueLabel}</span>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Tuile spéciale pour afficher le rang ranked d'un joueur sélectionné. */
+function PlayerRankTile({
+  tier,
+  lp,
+  mmr,
+  labels,
+}: {
+  tier: RankTier;
+  lp: number;
+  mmr: number;
+  labels: CombatAmicalLabels;
+}) {
+  const theme = tierTheme(tier);
+  const apex = isApex(tier);
+  const lpText = apex ? `${lp} LP` : `${lp}/100 LP`;
+  return (
+    <div
+      className="relative overflow-hidden rounded-2xl border bg-gradient-to-br from-white/[0.04] via-white/[0.02] to-transparent p-4 ring-1 ring-inset backdrop-blur-sm"
+      style={{
+        borderColor: theme.accent + "30",
+        boxShadow: `inset 0 0 0 1px ${theme.glow}`,
+      }}
+    >
+      {/* Glow d'accent */}
+      <div
+        className="pointer-events-none absolute -right-10 -top-10 h-24 w-24 rounded-full blur-3xl"
+        style={{ background: theme.glow, opacity: 0.6 }}
+        aria-hidden
+      />
+      <div className="relative mb-2 flex items-center justify-between">
+        <span
+          className="text-[10px] font-medium uppercase tracking-wider"
+          style={{ color: theme.accent }}
+        >
+          {labels.statLabels.elo}
+        </span>
+        <img
+          src={tierIconUrl(tier)}
+          alt={tierLabel(tier)}
+          className="h-6 w-6 drop-shadow-[0_2px_4px_rgba(0,0,0,0.5)]"
+        />
+      </div>
+      <div className="relative flex items-baseline gap-1.5">
+        <span
+          className="text-[15px] font-extrabold tracking-tight"
+          style={{ color: theme.accent, textShadow: `0 0 10px ${theme.glow}` }}
+        >
+          {tierLabel(tier)}
+        </span>
+      </div>
+      <p
+        className="relative mt-0.5 text-[9px] font-semibold tracking-wider"
+        style={{ color: theme.accent + "AA" }}
+      >
+        {lpText} · {mmr} MMR
+      </p>
     </div>
   );
 }

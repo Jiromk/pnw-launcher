@@ -6,6 +6,7 @@ import { normalizeName } from "../utils/pokedexLookup";
 import CustomSelect from "../components/CustomSelect";
 import { supabaseGts } from "../supabaseGts";
 import { supabase as supabaseChat } from "../supabaseClient";
+import { TradeGlobe } from "./TradeGlobe";
 
 const GTS_BOT_USER_ID = "00000000-0000-0000-0000-000000000001";
 import {
@@ -2341,6 +2342,15 @@ export default function GTSView({
 
   return (
     <main className="gts-page launcher-home animate-in">
+      {/* Couches de fond (orbes ambiants + grain + vignette) */}
+      <div className="gts-bg-layers" aria-hidden>
+        <div className="gts-bg-orb gts-bg-orb-1" />
+        <div className="gts-bg-orb gts-bg-orb-2" />
+        <div className="gts-bg-orb gts-bg-orb-3" />
+        <div className="gts-bg-vignette" />
+        <div className="gts-bg-grain" />
+      </div>
+
       <div className="gts-container">
         {onBack && (
           <button type="button" className="bst-back" onClick={onBack} aria-label="Retour">
@@ -2348,64 +2358,65 @@ export default function GTSView({
           </button>
         )}
 
-        {/* ─── Hero (même "hero" glass que l'accueil — pas section.glass pour éviter le style du 1er div) ─── */}
+        {/* ─── Hero (deux rangées : top = icône + titre + stat info ; bottom = boutons d'action) ─── */}
         <section className="gts-hero hero" aria-labelledby="gts-heading">
-          <div className="gts-hero-icon-wrap">
-            <FaArrowRightArrowLeft className="gts-hero-icon" />
-          </div>
-          <div className="gts-hero-text">
-            <h1 id="gts-heading" className="gts-title">
-              Global Trade System
-            </h1>
-            <p className="gts-subtitle">
-              Recherchez les Pokémon déposés en échange sur le serveur GTS.
-            </p>
-          </div>
-          <div className="gts-hero-actions">
-            <div className="gts-hero-stat">
+          {/* Rangée 1 : identité + stat d'info */}
+          <div className="gts-hero-main">
+            <div className="gts-hero-icon-wrap">
+              <TradeGlobe size={84} />
+            </div>
+            <div className="gts-hero-text">
+              <h1 id="gts-heading" className="gts-title">
+                Global Trade System
+              </h1>
+              <p className="gts-subtitle">
+                Recherchez les Pokémon déposés en échange sur le serveur GTS.
+              </p>
+            </div>
+            <div className="gts-hero-stat gts-hero-stat-info">
               <FaGlobe className="gts-hero-stat-icon" />
               <div className="gts-hero-stat-text">
                 <span className="gts-hero-stat-value">{dexLoading ? "…" : dexRows.length}</span>
                 <span className="gts-hero-stat-label">espèces connues</span>
               </div>
             </div>
+          </div>
+
+          {/* Divider subtil */}
+          <div className="gts-hero-divider" aria-hidden />
+
+          {/* Rangée 2 : boutons d'action */}
+          <div className="gts-hero-actions">
             <button
               type="button"
-              className="gts-hero-stat gts-pcbox-btn"
+              className="gts-hero-action gts-pcbox-btn"
               onClick={openHistory}
               title="Historique des échanges"
             >
-              <FaClockRotateLeft className="gts-hero-stat-icon" />
-              <div className="gts-hero-stat-text">
-                <span className="gts-hero-stat-value" style={{fontSize:".85rem"}}>Historique</span>
-              </div>
+              <FaClockRotateLeft className="gts-hero-action-icon" />
+              <span className="gts-hero-action-label">Historique</span>
             </button>
             {profile?.boxes && profile.boxes.length > 0 && (
               <button
                 type="button"
-                className="gts-hero-stat gts-pcbox-btn"
+                className="gts-hero-action gts-pcbox-btn"
                 onClick={() => setShowPCBox(true)}
               >
-                <FaBoxesStacked className="gts-hero-stat-icon" />
-                <div className="gts-hero-stat-text">
-                  <span className="gts-hero-stat-value" style={{fontSize:".85rem"}}>Boîtes PC</span>
-                </div>
+                <FaBoxesStacked className="gts-hero-action-icon" />
+                <span className="gts-hero-action-label">Boîtes PC</span>
               </button>
             )}
             <button
               type="button"
-              className="gts-hero-stat gts-pcbox-btn"
+              className="gts-hero-action gts-pcbox-btn gts-hero-action--wishlist"
               onClick={() => {
                 if (!chatProfile) { setWishlistGateReason("login"); }
                 else if (!isPatreon) { setWishlistGateReason("patreon"); }
                 else { setShowWishlist(true); }
               }}
-              style={{ position: "relative" }}
             >
-              <FaBell className="gts-hero-stat-icon" style={{ color: "#f96854" }} />
-              <div className="gts-hero-stat-text">
-                <span className="gts-hero-stat-value" style={{fontSize:".85rem"}}>Wishlist</span>
-              </div>
+              <FaBell className="gts-hero-action-icon" style={{ color: "#f96854" }} />
+              <span className="gts-hero-action-label">Wishlist</span>
               {isPatreon && wishlistMatchCount > 0 && (
                 <span className="gts-wish-notif-badge">{wishlistMatchCount}</span>
               )}
@@ -2494,8 +2505,19 @@ export default function GTSView({
               </div>
             )}
             {myDepositStatus === "loaded" && !myDeposit && withdrawAction !== "done" && (
-              <div className="gts-withdraw-empty">
-                <FaCircleInfo size={11} /> Vous n'avez aucun Pokémon déposé sur le GTS.
+              <div className="gts-withdraw-empty gts-withdraw-empty--cta">
+                <span className="gts-withdraw-empty-msg">
+                  <FaCircleInfo size={11} /> Vous n'avez aucun Pokémon déposé sur le GTS.
+                </span>
+                {profile?.boxes && profile.boxes.length > 0 && (
+                  <button
+                    type="button"
+                    className="gts-withdraw-cta-btn"
+                    onClick={() => setShowPCBox(true)}
+                  >
+                    <FaBoxOpen size={11} /> Déposer un Pokémon
+                  </button>
+                )}
               </div>
             )}
             {myDepositStatus === "loaded" && myDeposit && (() => {
@@ -2735,27 +2757,29 @@ export default function GTSView({
             </div>
 
             {/* Filters — inline avec le champ Pokémon */}
-            <div className="gts-field gts-field--filter">
-              <label className="gts-label">Niveau min</label>
-              <input
-                type="number"
-                min={1}
-                max={100}
-                className="gts-input gts-input--compact"
-                value={levelMin}
-                onChange={(e) => setLevelMin(Number(e.target.value))}
-              />
-            </div>
-            <div className="gts-field gts-field--filter">
-              <label className="gts-label">Niveau max</label>
-              <input
-                type="number"
-                min={1}
-                max={100}
-                className="gts-input gts-input--compact"
-                value={levelMax}
-                onChange={(e) => setLevelMax(Number(e.target.value))}
-              />
+            <div className="gts-field gts-field--level-range">
+              <label className="gts-label">Niveau</label>
+              <div className="gts-level-range">
+                <input
+                  type="number"
+                  min={1}
+                  max={100}
+                  className="gts-input gts-input--compact gts-level-range-input"
+                  aria-label="Niveau min"
+                  value={levelMin}
+                  onChange={(e) => setLevelMin(Number(e.target.value))}
+                />
+                <span className="gts-level-range-sep" aria-hidden>→</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={100}
+                  className="gts-input gts-input--compact gts-level-range-input"
+                  aria-label="Niveau max"
+                  value={levelMax}
+                  onChange={(e) => setLevelMax(Number(e.target.value))}
+                />
+              </div>
             </div>
             <div className="gts-field gts-field--filter">
               <label className="gts-label">Genre</label>
@@ -2771,12 +2795,14 @@ export default function GTSView({
             </div>
             <button
                 type="button"
-                className="gts-search-btn accent-glow-btn"
+                className="gts-search-btn"
                 onClick={() => void doSearch()}
                 disabled={loading || dexLoading || !psdkDataReady}
               >
-                {loading ? <FaSpinner className="gts-spin" /> : <FaMagnifyingGlass />}
-                <span>{loading ? "Recherche…" : "Rechercher"}</span>
+                <span className="gts-search-btn-icon">
+                  {loading ? <FaSpinner className="gts-spin" /> : <FaMagnifyingGlass />}
+                </span>
+                <span className="gts-search-btn-label">{loading ? "Recherche…" : "Rechercher"}</span>
               </button>
           </div>
 

@@ -877,11 +877,11 @@ function ProfileCard({
 
           <div className="pnw-chat-profile-meta">
             <div className="pnw-chat-profile-meta-row">
-              <FaDiscord />
+              <span className="pnw-chat-profile-meta-icon"><FaDiscord /></span>
               <span>{target.username}</span>
             </div>
             <div className="pnw-chat-profile-meta-row">
-              <FaCalendar />
+              <span className="pnw-chat-profile-meta-icon"><FaCalendar /></span>
               <span>Membre depuis le {joinDate}</span>
             </div>
           </div>
@@ -1209,13 +1209,9 @@ function ProfileCard({
             </button>
           )}
           {canBattle && onProposeBattle && (
-            <button className="pnw-trade-profile-btn" style={{ background: "linear-gradient(135deg, rgba(220,50,50,.85), rgba(180,30,80,.85))" }} onClick={() => {
-              if (sessionStorage.getItem("pnw_battle_unlocked") === "1") { onProposeBattle(); onClose(); return; }
-              const code = prompt("Code d'acces :");
-              if (code === "1964") { sessionStorage.setItem("pnw_battle_unlocked", "1"); onProposeBattle(); onClose(); }
-              else if (code !== null) alert("Code incorrect.");
-            }}>
-              <FaGamepad /> Défier en combat
+            <button className="pnw-battle-profile-btn" onClick={() => { onProposeBattle(); onClose(); }}>
+              <span className="pnw-battle-profile-btn-icon"><FaGamepad /></span>
+              <span className="pnw-battle-profile-btn-label">Défier en combat</span>
             </button>
           )}
         </div>
@@ -1555,6 +1551,9 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
   const battleRelayCleanupRef = useRef<(() => void) | null>(null);
   const battleResultRef = useRef<string>("");
   const battleTurnCountRef = useRef(0);
+  /** Cible pre-selectionnee pour Combat Amical depuis la card de profil
+   *  du chat. Consommee au mount de CombatAmicalView, puis remise a null. */
+  const [pendingBattleTarget, setPendingBattleTarget] = useState<ChatProfile | null>(null);
   const battleStartedAtRef = useRef<string>("");
   // Notification toast pour les defis recus quand on n'est pas dans la Tour de Combat
   const [challengeToast, setChallengeToast] = useState<{ fromName: string; fromAvatar: string | null; roomCode: string; expiresAt: number; betMode?: boolean; betPokeName?: string; betPokeLevel?: number } | null>(null);
@@ -3569,6 +3568,8 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
         battleRelayCleanupRef={battleRelayCleanupRef}
         battleTimeoutRef={battleTimeoutRef}
         onBack={onBack}
+        pendingBattleTarget={pendingBattleTarget}
+        onPendingBattleTargetConsumed={() => setPendingBattleTarget(null)}
       />
     );
   }
@@ -4327,20 +4328,44 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
                         </div>
                       );
                     }
-                    /* Welcome card */
+                    /* Welcome banner */
                     const isWelcome = msg.content.startsWith("🌟WELCOME🌟");
                     if (isWelcome) {
                       const welcomeName = msg.content.replace("🌟WELCOME🌟", "");
                       const welcomeAvatar = author?.avatar_url;
+                      const welcomeRoleColor = roleColor(author?.roles || []);
+                      const welcomeRoleGlow = roleGlow(author?.roles || []);
                       return (
-                        <div key={msg.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 16px", margin: "4px 0" }}>
-                          <div style={{ width: 20, height: 20, borderRadius: "50%", background: "linear-gradient(135deg, #4ade80, #22d3ee)", display: "grid", placeItems: "center", fontSize: 10, flexShrink: 0 }}>
-                            <FaUserPlus style={{ fontSize: 9, color: "#fff" }} />
-                          </div>
-                          <span style={{ fontSize: ".8rem", color: "rgba(255,255,255,.45)" }}>
-                            {welcomeAvatar && <img src={welcomeAvatar} alt="" style={{ width: 16, height: 16, borderRadius: "50%", marginRight: 5, verticalAlign: "middle" }} />}
-                            <strong style={{ color: "#4ade80" }}>{welcomeName}</strong> a rejoint l'aventure
-                          </span>
+                        <div key={msg.id} className="pnw-chat-welcome-banner">
+                          <span className="pnw-chat-welcome-banner-line" aria-hidden />
+                          <button
+                            type="button"
+                            className="pnw-chat-welcome-banner-pill"
+                            onClick={() => openProfile(author)}
+                          >
+                            <span className="pnw-chat-welcome-banner-spark pnw-chat-welcome-banner-spark--1" aria-hidden />
+                            <span className="pnw-chat-welcome-banner-spark pnw-chat-welcome-banner-spark--2" aria-hidden />
+                            <span className="pnw-chat-welcome-banner-avatar-wrap" style={welcomeRoleGlow}>
+                              {welcomeAvatar ? (
+                                <img src={welcomeAvatar} alt="" className="pnw-chat-welcome-banner-avatar" />
+                              ) : (
+                                <span className="pnw-chat-welcome-banner-avatar pnw-chat-welcome-banner-avatar--placeholder">
+                                  {welcomeName?.[0]?.toUpperCase() || "?"}
+                                </span>
+                              )}
+                            </span>
+                            <span className="pnw-chat-welcome-banner-text">
+                              Bienvenue à{" "}
+                              <strong
+                                className="pnw-chat-welcome-banner-name"
+                                style={welcomeRoleColor ? { color: welcomeRoleColor, background: "none", WebkitTextFillColor: welcomeRoleColor } : undefined}
+                              >
+                                {welcomeName}
+                              </strong>{" "}
+                              dans l'aventure
+                            </span>
+                          </button>
+                          <span className="pnw-chat-welcome-banner-line" aria-hidden />
                         </div>
                       );
                     }
@@ -5768,42 +5793,11 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
             onlineUserIds.has(profilePopup.id) &&
             friendsList.some((f) => f.status === "accepted" && (f.user_id === profilePopup.id || f.friend_id === profilePopup.id))
           }
-          onProposeBattle={async () => {
-            if (!session?.user?.id || !profile) return;
-            const roomCode = generateRoomCode();
-            const targetId = profilePopup.id;
-            // Find or create DM
-            let dmChannelId = 0;
-            for (const c of channels) {
-              if (c.type !== "dm") continue;
-              const { data: members } = await supabase.from("channel_members").select("user_id").eq("channel_id", c.id);
-              if (members?.some((m: any) => m.user_id === targetId)) { dmChannelId = c.id; break; }
-            }
-            if (!dmChannelId) {
-              try {
-                const { data } = await supabase.rpc("create_dm_channel", { target_user_id: targetId });
-                if (data) { dmChannelId = data; const { data: chs } = await supabase.from("channels").select("*").order("created_at", { ascending: true }); if (chs) setChannels(chs); }
-              } catch {}
-            }
-            if (!dmChannelId) return;
-            const dmCh = channels.find((c) => c.id === dmChannelId) || { id: dmChannelId, name: null, type: "dm" as const, background_url: null, slowmode_seconds: 0, created_at: "" };
-            setActiveChannel(dmCh);
-            // ─── Send invite via Railway Socket.io lobby ───
-            const sent = sendBattleInvite({ roomCode, fromId: session.user.id, fromName: profile.display_name || profile.username, fromAvatar: profile.avatar_url, toId: targetId, dmChannelId });
-            if (!sent) return;
-
-            setBattleState({
-              phase: "inviting",
-              roomCode,
-              partnerId: profilePopup.id,
-              partnerName: profilePopup.display_name || profilePopup.username,
-              partnerAvatar: profilePopup.avatar_url,
-              dmChannelId,
-              startedAt: Date.now(),
-            });
-            battleTimeoutRef.current = setTimeout(() => {
-              setBattleState((prev) => prev.phase === "inviting" ? { phase: "idle" } : prev);
-            }, BATTLE_INVITE_TIMEOUT);
+          onProposeBattle={() => {
+            // Navigate to Battle Tower → Combat Amical with target pre-selected.
+            // The actual challenge is fired from CombatAmicalView's "Defier" button.
+            setPendingBattleTarget(profilePopup);
+            onOpenBattle?.();
           }}
           onClose={() => setProfilePopup(null)}
           onEdit={() => setEditingProfile(true)}

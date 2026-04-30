@@ -44,10 +44,31 @@ pub fn cmd_battle_read_outbox() -> Result<Option<String>, String> {
 }
 
 /// Écrit `vms_inbox.json` pour que le jeu lise les données du joueur distant.
+///
+/// Écriture atomique via tmp + rename : sinon, sur Windows, `fs::write` tronque
+/// le fichier AVANT d'y écrire — le jeu qui lit l'inbox à ce moment précis lit un
+/// fichier vide, le supprime, et perd le signal. Critique pour `opponent_left`.
 #[tauri::command]
 pub fn cmd_battle_write_inbox(data: String) -> Result<(), String> {
-    let path = battle_dir()?.join("vms_inbox.json");
-    fs::write(&path, data).map_err(|e| e.to_string())
+    let dir = battle_dir()?;
+    let path = dir.join("vms_inbox.json");
+    let tmp_path = dir.join("vms_inbox.json.tmp");
+
+    fs::write(&tmp_path, &data).map_err(|e| format!("write tmp inbox: {}", e))?;
+
+    // rename() sur Windows échoue si le fichier cible existe → remove puis rename.
+    // Entre les deux, le jeu pourrait lire un inbox absent, ce qui est safe
+    // (read_inbox retourne silencieusement, on retry à la prochaine frame).
+    if path.exists() {
+        let _ = fs::remove_file(&path);
+    }
+    fs::rename(&tmp_path, &path).map_err(|e| {
+        // Si rename a échoué, on tente un cleanup du tmp pour ne pas le laisser traîner.
+        let _ = fs::remove_file(&tmp_path);
+        format!("rename inbox: {}", e)
+    })?;
+
+    Ok(())
 }
 
 /// Écrit `vms_trigger.json` pour déclencher un combat dans le jeu.
@@ -141,7 +162,13 @@ pub fn cmd_battle_cleanup() -> Result<(), String> {
     let dir = battle_dir()?;
     if dir.exists() {
         // Liste explicite des fichiers IPC a supprimer (ne touche pas au reste)
-        let ipc_files = ["vms_outbox.json", "vms_outbox.json.tmp", "vms_inbox.json", "vms_trigger.json"];
+        let ipc_files = [
+            "vms_outbox.json",
+            "vms_outbox.json.tmp",
+            "vms_inbox.json",
+            "vms_inbox.json.tmp",
+            "vms_trigger.json",
+        ];
         for filename in ipc_files.iter() {
             let path = dir.join(filename);
             if path.exists() {
@@ -150,4 +177,27 @@ pub fn cmd_battle_cleanup() -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// Vérifie si `vms_inbox.json` existe encore. Utilisé pour savoir si le jeu a
+/// consommé le dernier message écrit (le jeu supprime l'inbox après l'avoir lu).
+#[tauri::command]
+pub fn cmd_battle_inbox_exists() -> Result<bool, String> {
+    let dir = battle_dir()?;
+    let path = dir.join("vms_inbox.json");
+    Ok(path.exists())
+}
+
+/// Lit et supprime `vms_bet_done.json` (écrit par le jeu après un transfert de pari).
+/// Retourne `None` si le fichier n'existe pas encore.
+#[tauri::command]
+pub fn cmd_battle_read_bet_done() -> Result<Option<String>, String> {
+    let dir = battle_dir()?;
+    let path = dir.join("vms_bet_done.json");
+    if !path.exists() {
+        return Ok(None);
+    }
+    let raw = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let _ = fs::remove_file(&path);
+    Ok(Some(raw))
 }

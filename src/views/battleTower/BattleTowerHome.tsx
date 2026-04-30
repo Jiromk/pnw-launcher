@@ -1,6 +1,6 @@
 // src/views/battleTower/BattleTowerHome.tsx
 // Page d'accueil de la Tour de Combat : hero + 2 cards de mode + stats placeholder.
-import React, { useEffect, useRef, useState } from "react";
+import React, { useRef, useState } from "react";
 import {
   FaChartLine,
   FaChevronRight,
@@ -11,9 +11,11 @@ import {
   FaTrophy,
   FaCircleInfo,
   FaCircleCheck,
-  FaBan,
 } from "react-icons/fa6";
-import { fetchBanlist, type BannedPokemon } from "../../banlist";
+import { isApex, tierIconUrl, tierLabel, tierTheme, type RankTier } from "../../ranked";
+import type { PvpStats } from "../../leaderboard";
+import type { TowerConfig } from "../../towerStatus";
+import { RankTower } from "./RankTower";
 
 export type BattleTowerHomeLabels = {
   title: string;
@@ -40,49 +42,23 @@ export type BattleTowerHomeLabels = {
       version: string;
       iv: string;
       ev: string;
-      banlist: string;
     };
-    rankedOnlyTag: string;
-    banlistTitle: string;
-    banlistScope: string;
-    banlistEmpty: string;
-    banlistLoading: string;
-    banlistCount: (n: number) => string;
-    formBase: string;
-    formLabel: (f: number) => string;
   };
 };
 
 type Props = {
   labels: BattleTowerHomeLabels;
   onNavigate: (page: "lead" | "amical") => void;
-  siteUrl: string;
+  /** Stats PvP du joueur — pour afficher les vraies valeurs et choisir
+   *  amical/classé selon que les placements sont terminés. */
+  myPvpStats?: PvpStats | null;
+  /** Config Tour de Combat (saison courante + annonces) chargée par TowerStatusGate. */
+  towerConfig?: TowerConfig | null;
 };
 
-export function BattleTowerHome({ labels, onNavigate, siteUrl }: Props) {
+export function BattleTowerHome({ labels, onNavigate, myPvpStats, towerConfig }: Props) {
   const [showInfo, setShowInfo] = useState(false);
-  const [banlist, setBanlist] = useState<BannedPokemon[] | null>(null);
-  const [banlistLoading, setBanlistLoading] = useState(true);
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // Fetch banlist une fois au montage (cache 60s côté module)
-  useEffect(() => {
-    let cancelled = false;
-    fetchBanlist(siteUrl)
-      .then((list) => {
-        if (cancelled) return;
-        setBanlist(list);
-        setBanlistLoading(false);
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setBanlist([]);
-        setBanlistLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [siteUrl]);
 
   // Hover gérée avec petit délai pour éviter flicker quand on traverse l'espace button→tooltip
   const handleEnter = () => {
@@ -96,8 +72,6 @@ export function BattleTowerHome({ labels, onNavigate, siteUrl }: Props) {
     if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
     hideTimerRef.current = setTimeout(() => setShowInfo(false), 150);
   };
-
-  const banlistCount = banlist?.length ?? 0;
 
   return (
     <div className="relative flex flex-col items-center px-6 py-10 sm:px-10 sm:py-14">
@@ -113,15 +87,6 @@ export function BattleTowerHome({ labels, onNavigate, siteUrl }: Props) {
           className="group relative flex h-11 w-11 items-center justify-center rounded-full border border-amber-400/25 bg-gradient-to-br from-amber-500/[0.12] via-white/[0.04] to-transparent text-amber-200 ring-1 ring-inset ring-amber-300/10 backdrop-blur-sm transition duration-300 hover:-translate-y-0.5 hover:border-amber-300/45 hover:bg-amber-500/[0.18] hover:text-amber-100 hover:shadow-[0_10px_30px_-10px_rgba(245,158,11,0.5)]"
         >
           <FaCircleInfo className="text-lg drop-shadow-[0_0_10px_rgba(245,158,11,0.55)]" />
-          {/* Badge de compteur si Pokémons bannis */}
-          {banlistCount > 0 && (
-            <span
-              className="absolute -right-1 -top-1 flex h-5 min-w-[20px] items-center justify-center rounded-full border border-rose-300/40 bg-gradient-to-br from-rose-500 to-red-600 px-1 text-[10px] font-bold text-white shadow-[0_4px_12px_rgba(244,63,94,0.45)]"
-              aria-hidden
-            >
-              {banlistCount}
-            </span>
-          )}
         </button>
 
         {/* Tooltip overlay */}
@@ -159,7 +124,9 @@ export function BattleTowerHome({ labels, onNavigate, siteUrl }: Props) {
                 </div>
               </div>
 
-              {/* Section: Conditions d'accès */}
+              {/* Section: Conditions d'accès — règles générales (la banlist
+                  est déplacée dans le tooltip Combat Classé puisqu'elle ne
+                  s'applique qu'en classé). */}
               <div className="relative px-5 py-4">
                 <h4 className="mb-3 flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider text-amber-300/90">
                   <FaCircleCheck className="text-[10px]" />
@@ -169,112 +136,25 @@ export function BattleTowerHome({ labels, onNavigate, siteUrl }: Props) {
                   <RuleItem text={labels.info.rules.version} />
                   <RuleItem text={labels.info.rules.iv} />
                   <RuleItem text={labels.info.rules.ev} />
-                  <RuleItem
-                    text={labels.info.rules.banlist}
-                    tag={labels.info.rankedOnlyTag}
-                  />
                 </ul>
-              </div>
-
-              {/* Separator */}
-              <div className="relative mx-5 h-px bg-gradient-to-r from-transparent via-white/[0.08] to-transparent" />
-
-              {/* Section: Banlist */}
-              <div className="relative px-5 py-4">
-                <div className="mb-2 flex items-center justify-between">
-                  <h4 className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider text-rose-300/90">
-                    <FaBan className="text-[10px]" />
-                    {labels.info.banlistTitle}
-                  </h4>
-                  {banlist && banlistCount > 0 && (
-                    <span className="inline-flex items-center rounded-full border border-rose-400/30 bg-rose-500/10 px-2 py-0.5 text-[10px] font-bold tracking-wide text-rose-200">
-                      {labels.info.banlistCount(banlistCount)}
-                    </span>
-                  )}
-                </div>
-                <p className="mb-3 flex items-center gap-1.5 text-[10.5px] italic text-amber-200/70">
-                  <FaCrown className="text-[9px]" />
-                  {labels.info.banlistScope}
-                </p>
-
-                {banlistLoading ? (
-                  <p className="text-[12px] italic text-white/40">
-                    {labels.info.banlistLoading}
-                  </p>
-                ) : banlistCount === 0 ? (
-                  <div className="flex items-center gap-2 rounded-xl border border-emerald-400/15 bg-emerald-500/[0.06] px-3 py-2.5">
-                    <FaCircleCheck className="text-sm text-emerald-300/85" />
-                    <span className="text-[12px] text-emerald-100/85">
-                      {labels.info.banlistEmpty}
-                    </span>
-                  </div>
-                ) : (
-                  <ul className="max-h-[340px] space-y-2 overflow-y-auto overscroll-contain pr-2"
-                      style={{
-                        scrollbarWidth: "thin",
-                        scrollbarColor: "rgba(244,63,94,0.35) transparent",
-                      }}
-                  >
-                    {(banlist ?? []).map((b) => (
-                      <li
-                        key={b.id || `${b.speciesId}_${b.form ?? "base"}`}
-                        className="flex items-start gap-3 rounded-xl border border-white/[0.06] bg-white/[0.025] px-3 py-2.5 transition hover:border-rose-400/20 hover:bg-rose-500/[0.05]"
-                      >
-                        {b.imageUrl ? (
-                          <img
-                            src={b.imageUrl}
-                            alt=""
-                            className="h-10 w-10 shrink-0 rounded-lg bg-black/30 object-contain ring-1 ring-white/10"
-                            onError={(e) => {
-                              (e.currentTarget as HTMLImageElement).style.display = "none";
-                            }}
-                          />
-                        ) : (
-                          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-black/30 text-rose-300/70 ring-1 ring-white/10">
-                            <FaBan className="text-sm" />
-                          </div>
-                        )}
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2">
-                            <span className="truncate text-[13px] font-semibold text-white">
-                              {b.name || `#${b.speciesId}`}
-                            </span>
-                            <span className="shrink-0 rounded-full bg-white/[0.06] px-1.5 py-0.5 font-mono text-[9px] text-white/50">
-                              #{String(b.speciesId).padStart(3, "0")}
-                            </span>
-                          </div>
-                          <div className="text-[10.5px] text-white/45">
-                            {b.form != null
-                              ? labels.info.formLabel(b.form)
-                              : labels.info.formBase}
-                          </div>
-                          {b.reason && (
-                            <div className="mt-1 text-[11px] italic leading-snug text-rose-200/75">
-                              « {b.reason} »
-                            </div>
-                          )}
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                )}
               </div>
             </div>
           </div>
         )}
       </div>
 
-      {/* Hero header */}
+      {/* Hero header — Tour des Tiers (segments empilés Iron→Challenger,
+          étage actif illuminé, particules ascendantes) */}
       <div
         className="mb-12 flex flex-col items-center text-center"
         style={{ animation: "update-page-in 0.5s ease-out both" }}
       >
-        <div
-          className="relative mb-6 flex h-24 w-24 items-center justify-center rounded-full bg-gradient-to-br from-amber-500/20 via-white/[0.06] to-sky-500/15 ring-1 ring-white/15"
-          style={{ animation: "update-glow-pulse 4s ease-in-out infinite" }}
-        >
-          <span className="absolute inset-0 rounded-full bg-gradient-to-br from-amber-400/20 to-transparent" />
-          <FaShieldHalved className="relative text-5xl text-amber-200 drop-shadow-[0_0_24px_rgba(245,158,11,0.45)]" />
+        <div className="mb-6">
+          <RankTower
+            size={200}
+            tier={(myPvpStats?.battle_rank_tier as RankTier) ?? "unranked"}
+            intensity="idle"
+          />
         </div>
         <h1 className="mb-3 text-center text-4xl font-bold tracking-tight text-white sm:text-5xl">
           {labels.title}
@@ -362,41 +242,254 @@ export function BattleTowerHome({ labels, onNavigate, siteUrl }: Props) {
         </button>
       </div>
 
-      {/* Stats placeholder section */}
-      <div
-        className="w-full max-w-4xl"
-        style={{ animation: "update-page-in 0.6s ease-out 0.2s both" }}
-      >
-        <div className="mb-4 flex items-center gap-3">
+      {/* Bannière saison + annonces (si configurées côté admin) */}
+      <SeasonAnnouncementBanner config={towerConfig} />
+
+      {/* Stats section — ranked si placements terminés, sinon amical */}
+      <StatsSection labels={labels} myPvpStats={myPvpStats} />
+    </div>
+  );
+}
+
+/* ─────────────────── Saison & Annonces ─────────────────── */
+
+function SeasonAnnouncementBanner({ config }: { config?: TowerConfig | null }) {
+  if (!config) return null;
+  const season = config.season;
+  const hasSeasonContent =
+    !!season &&
+    ((season.name && season.name !== "Saison 1") ||
+      !!season.startDate ||
+      !!season.endDate ||
+      (season.description && season.description.trim().length > 0));
+  const announcements = (config.announcements || "").trim();
+  const hasAnnouncements = announcements.length > 0;
+
+  if (!hasSeasonContent && !hasAnnouncements) return null;
+
+  const fmtDate = (iso: string | null) => {
+    if (!iso) return null;
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return null;
+    return d.toLocaleDateString("fr-FR", { day: "2-digit", month: "long", year: "numeric" });
+  };
+  const startStr = fmtDate(season?.startDate ?? null);
+  const endStr = fmtDate(season?.endDate ?? null);
+
+  return (
+    <div
+      className="mb-10 w-full max-w-4xl"
+      style={{ animation: "update-page-in 0.6s ease-out 0.15s both" }}
+    >
+      <div className="relative overflow-hidden rounded-2xl border border-amber-400/20 bg-gradient-to-br from-amber-500/[0.08] via-orange-500/[0.04] to-transparent ring-1 ring-inset ring-amber-300/10 backdrop-blur-sm">
+        {/* Corner glow */}
+        <div className="pointer-events-none absolute -right-20 -top-20 h-48 w-48 rounded-full bg-amber-400/15 blur-3xl" />
+
+        {hasSeasonContent && (
+          <div className="relative px-6 py-5">
+            <div className="flex items-start gap-4">
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-amber-400/25 to-orange-500/15 ring-1 ring-amber-300/30">
+                <FaTrophy className="text-xl text-amber-100 drop-shadow-[0_0_8px_rgba(245,158,11,0.5)]" />
+              </div>
+              <div className="flex-1">
+                <div className="mb-1 flex items-center gap-3 text-[10px] font-bold uppercase tracking-widest text-amber-300/80">
+                  <span>Saison {season.number}</span>
+                  {(startStr || endStr) && (
+                    <span className="text-white/40">
+                      {startStr && <>du {startStr}</>}
+                      {startStr && endStr && " "}
+                      {endStr && <>au {endStr}</>}
+                    </span>
+                  )}
+                </div>
+                <h3 className="mb-2 text-xl font-bold text-white">{season.name}</h3>
+                {season.description && season.description.trim() && (
+                  <p className="whitespace-pre-line text-sm leading-relaxed text-white/70">
+                    {season.description}
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {hasSeasonContent && hasAnnouncements && (
+          <div className="relative mx-6 border-t border-amber-300/10" />
+        )}
+
+        {hasAnnouncements && (
+          <div className="relative px-6 py-5">
+            <div className="mb-2 flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-amber-300/80">
+              <FaCircleInfo className="text-[11px]" />
+              <span>Annonces</span>
+            </div>
+            <p className="whitespace-pre-line text-sm leading-relaxed text-white/80">
+              {announcements}
+            </p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────── Stats section ─────────────────── */
+
+function StatsSection({
+  labels,
+  myPvpStats,
+}: {
+  labels: BattleTowerHomeLabels;
+  myPvpStats?: PvpStats | null;
+}) {
+  const placementDone = (myPvpStats?.placement_played ?? 0) >= 5;
+  const showRanked = placementDone;
+  const tier = (myPvpStats?.battle_rank_tier as RankTier) ?? "unranked";
+  const theme = tierTheme(tier);
+
+  // Stats à afficher (ranked ou amical)
+  const wins = showRanked
+    ? (myPvpStats?.pvp_wins_ranked ?? 0)
+    : (myPvpStats?.pvp_wins_amical ?? 0);
+  const losses = showRanked
+    ? (myPvpStats?.pvp_losses_ranked ?? 0)
+    : (myPvpStats?.pvp_losses_amical ?? 0);
+  const draws = showRanked
+    ? (myPvpStats?.pvp_draws_ranked ?? 0)
+    : (myPvpStats?.pvp_draws_amical ?? 0);
+  const total = wins + losses + draws;
+  const winrate =
+    total > 0 ? Math.round((wins / total) * 1000) / 10 : null;
+  const hasStats = !!myPvpStats;
+
+  return (
+    <div
+      className="w-full max-w-4xl"
+      style={{ animation: "update-page-in 0.6s ease-out 0.2s both" }}
+    >
+      {/* Header avec mode badge */}
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
           <FaChartLine className="text-base text-white/55" />
           <h3 className="text-lg font-semibold text-white/85">{labels.statsTitle}</h3>
         </div>
+        {/* Badge du mode courant */}
+        <span
+          className="inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[10px] font-bold uppercase tracking-wider"
+          style={{
+            borderColor: showRanked ? theme.accent + "40" : "#10B98140",
+            background: showRanked
+              ? `linear-gradient(135deg, ${theme.glow}, transparent)`
+              : "linear-gradient(135deg, rgba(16,185,129,0.15), transparent)",
+            color: showRanked ? theme.accent : "#34D399",
+          }}
+        >
+          {showRanked ? (
+            <FaCrown className="text-[9px]" />
+          ) : (
+            <FaTrophy className="text-[9px]" />
+          )}
+          {showRanked ? labels.modes.lead.title : labels.modes.amical.title}
+        </span>
+      </div>
 
-        <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-          <StatTile
-            icon={<FaTrophy className="text-emerald-300/70" />}
-            label={labels.statLabels.wins}
-            placeholder={labels.statsPlaceholder}
-          />
-          <StatTile
-            icon={<FaSkull className="text-rose-300/70" />}
-            label={labels.statLabels.losses}
-            placeholder={labels.statsPlaceholder}
-          />
-          <StatTile
-            icon={<FaChartLine className="text-sky-300/70" />}
-            label={labels.statLabels.winrate}
-            placeholder={labels.statsPlaceholder}
-          />
+      <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+        <StatTile
+          icon={<FaTrophy className="text-emerald-300/70" />}
+          label={labels.statLabels.wins}
+          value={hasStats ? String(wins) : null}
+          placeholder={labels.statsPlaceholder}
+        />
+        <StatTile
+          icon={<FaSkull className="text-rose-300/70" />}
+          label={labels.statLabels.losses}
+          value={hasStats ? String(losses) : null}
+          placeholder={labels.statsPlaceholder}
+        />
+        <StatTile
+          icon={<FaChartLine className="text-sky-300/70" />}
+          label={labels.statLabels.winrate}
+          value={hasStats ? (winrate != null ? `${winrate}%` : "—") : null}
+          placeholder={labels.statsPlaceholder}
+        />
+        {showRanked ? (
+          <RankTile labels={labels} myPvpStats={myPvpStats!} />
+        ) : (
           <StatTile
             icon={<FaCrown className="text-amber-300/70" />}
             label={labels.statLabels.elo}
+            value={hasStats ? String(total) : null}
+            valueLabel={hasStats ? "combats" : undefined}
             placeholder={labels.statsPlaceholder}
           />
-        </div>
-
-        <p className="mt-4 text-center text-xs italic text-white/35">{labels.statsHint}</p>
+        )}
       </div>
+
+      {/* Hint affiché seulement si placements pas finis ou pas de stats */}
+      {(!hasStats || !placementDone) && (
+        <p className="mt-4 text-center text-xs italic text-white/35">
+          {labels.statsHint}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** Tuile spéciale pour afficher le rang ranked (tier + LP). */
+function RankTile({
+  labels,
+  myPvpStats,
+}: {
+  labels: BattleTowerHomeLabels;
+  myPvpStats: PvpStats;
+}) {
+  const tier = myPvpStats.battle_rank_tier as RankTier;
+  const theme = tierTheme(tier);
+  const apex = isApex(tier);
+  const lpText = apex
+    ? `${myPvpStats.battle_lp} LP`
+    : `${myPvpStats.battle_lp}/100 LP`;
+  return (
+    <div
+      className="relative overflow-hidden rounded-2xl border bg-gradient-to-br from-white/[0.04] via-white/[0.02] to-transparent p-5 ring-1 ring-inset backdrop-blur-sm"
+      style={{
+        borderColor: theme.accent + "35",
+        boxShadow: `inset 0 0 0 1px ${theme.glow}`,
+      }}
+    >
+      {/* Glow d'accent */}
+      <div
+        className="pointer-events-none absolute -right-12 -top-12 h-28 w-28 rounded-full blur-3xl"
+        style={{ background: theme.glow, opacity: 0.7 }}
+        aria-hidden
+      />
+      <div className="relative mb-3 flex items-center justify-between">
+        <span
+          className="text-xs font-medium uppercase tracking-wider"
+          style={{ color: theme.accent }}
+        >
+          {labels.statLabels.elo}
+        </span>
+        <img
+          src={tierIconUrl(tier)}
+          alt={tierLabel(tier)}
+          className="h-8 w-8 drop-shadow-[0_2px_4px_rgba(0,0,0,0.5)]"
+        />
+      </div>
+      <div className="relative flex items-baseline gap-2">
+        <span
+          className="text-[20px] font-extrabold tracking-tight"
+          style={{ color: theme.accent, textShadow: `0 0 14px ${theme.glow}` }}
+        >
+          {tierLabel(tier)}
+        </span>
+      </div>
+      <p
+        className="mt-1 text-[10px] font-semibold tracking-wider"
+        style={{ color: theme.accent + "AA" }}
+      >
+        {lpText} · {myPvpStats.battle_mmr} MMR
+      </p>
     </div>
   );
 }
@@ -421,10 +514,16 @@ function RuleItem({ text, tag }: { text: string; tag?: string }) {
 function StatTile({
   icon,
   label,
+  value,
+  valueLabel,
   placeholder,
 }: {
   icon: React.ReactNode;
   label: string;
+  /** Si null → skeleton placeholder. */
+  value?: string | null;
+  /** Petit suffixe sous la valeur (ex: "combats"). */
+  valueLabel?: string;
   placeholder: string;
 }) {
   return (
@@ -435,9 +534,20 @@ function StatTile({
         </span>
         <span className="text-base opacity-70">{icon}</span>
       </div>
-      {/* Skeleton value */}
-      <div className="mb-2 h-8 w-16 animate-pulse rounded-md bg-white/[0.08]" />
-      <p className="text-[10px] italic text-white/30">{placeholder}</p>
+      {value === null || value === undefined ? (
+        <>
+          {/* Skeleton value */}
+          <div className="mb-2 h-8 w-16 animate-pulse rounded-md bg-white/[0.08]" />
+          <p className="text-[10px] italic text-white/30">{placeholder}</p>
+        </>
+      ) : (
+        <div className="flex items-baseline gap-2">
+          <span className="text-[22px] font-bold tracking-tight text-white">{value}</span>
+          {valueLabel && (
+            <span className="text-[11px] font-medium text-white/40">{valueLabel}</span>
+          )}
+        </div>
+      )}
     </div>
   );
 }

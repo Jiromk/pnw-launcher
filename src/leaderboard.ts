@@ -150,6 +150,80 @@ export async function fetchPvpStats(userId: string): Promise<PvpStats> {
   };
 }
 
+/* ==================== Ranked Leaderboard ==================== */
+
+export type RankedLeaderboardFilter = "global" | "apex";
+
+export type RankedLeaderboardEntry = {
+  rank: number;
+  user_id: string;
+  username: string;
+  display_name: string | null;
+  avatar_url: string | null;
+  roles: string[];
+  battle_rank_tier: RankTier;
+  battle_lp: number;
+  battle_mmr: number;
+  pvp_wins_ranked: number;
+  pvp_losses_ranked: number;
+  pvp_draws_ranked: number;
+};
+
+export type MyLeaderboardPosition = {
+  rank: number;
+  totalPlayers: number;
+  battleRankTier: RankTier;
+  battleLp: number;
+  battleMmr: number;
+} | null;
+
+/**
+ * Top 100 du leaderboard ranked (filtre global ou apex).
+ * Trié par tier desc > LP desc > MMR desc > wins desc.
+ * Seuls les joueurs avec placements terminés (5/5) apparaissent.
+ */
+export async function fetchRankedLeaderboard(
+  filter: RankedLeaderboardFilter = "global",
+  limit = 100,
+  offset = 0,
+): Promise<RankedLeaderboardEntry[]> {
+  const { data, error } = await supabase.rpc("fetch_ranked_leaderboard", {
+    p_filter: filter,
+    p_limit: limit,
+    p_offset: offset,
+  });
+  if (error) {
+    console.warn("[leaderboard] fetch_ranked_leaderboard failed:", error.message);
+    return [];
+  }
+  return (data ?? []) as RankedLeaderboardEntry[];
+}
+
+/**
+ * Position du joueur courant dans le leaderboard.
+ * Retourne null si l'utilisateur n'est pas classé (placements non terminés).
+ */
+export async function fetchMyLeaderboardPosition(
+  filter: RankedLeaderboardFilter = "global",
+): Promise<MyLeaderboardPosition> {
+  const { data, error } = await supabase.rpc("fetch_my_leaderboard_position", {
+    p_filter: filter,
+  });
+  if (error) {
+    console.warn("[leaderboard] fetch_my_leaderboard_position failed:", error.message);
+    return null;
+  }
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row) return null;
+  return {
+    rank: row.rank,
+    totalPlayers: row.total_players,
+    battleRankTier: row.battle_rank_tier as RankTier,
+    battleLp: row.battle_lp,
+    battleMmr: row.battle_mmr,
+  };
+}
+
 /** Pokémon tel que snapshot au moment du combat (sous-ensemble de TeamMember). */
 export type BattleTeamSnapshot = {
   code: number;

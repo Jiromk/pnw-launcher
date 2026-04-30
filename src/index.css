@@ -3557,22 +3557,133 @@ button.lore-banner{ font:inherit; text-align:inherit; background:none; }
 
 /* ───── GTS View ───── */
 /* Panneaux : mêmes tokens que l’accueil (.launcher-home .hero, section.glass) */
-.gts-page{ min-height:100vh; padding-bottom:4rem; }
-.gts-container{ max-width:980px; margin:0 auto; padding:1.5rem 1.5rem 2rem; }
+.gts-page{ position:relative; min-height:100vh; padding-bottom:4rem; overflow-x:hidden; }
+.gts-container{ position:relative; z-index:1; max-width:980px; margin:0 auto; padding:1.5rem 1.5rem 2rem; }
 
-/* Hero : layout seul — fond / bordure via .launcher-home .hero */
+/* ─── Fond multi-couches (orbes ambiants + vignette + grain) ─── */
+.gts-bg-layers{
+  position:absolute; inset:0; z-index:0;
+  pointer-events:none; overflow:hidden;
+}
+.gts-bg-orb{
+  position:absolute; border-radius:50%; filter:blur(110px);
+}
+.gts-bg-orb-1{
+  top:-10rem; left:-10rem; width:540px; height:540px;
+  background:rgba(167,139,250,.07); /* violet */
+  animation:update-orb-1 18s ease-in-out infinite;
+}
+.gts-bg-orb-2{
+  bottom:-12rem; right:-12rem; width:500px; height:500px;
+  background:rgba(96,165,250,.06); /* blue */
+  animation:update-orb-2 20s ease-in-out infinite;
+}
+.gts-bg-orb-3{
+  top:30%; left:50%; width:360px; height:360px;
+  transform:translateX(-50%);
+  background:rgba(244,114,182,.04); /* pink */
+  animation:update-orb-1 22s ease-in-out infinite reverse;
+}
+.gts-bg-vignette{
+  position:absolute; inset:0;
+  background:radial-gradient(ellipse at center, transparent 38%, rgba(0,0,0,.45) 100%);
+}
+.gts-bg-grain{
+  position:absolute; inset:0;
+  opacity:.05; mix-blend-mode:overlay;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+  background-size:200px 200px;
+}
+
+/* Hero : 2 rangées (top = identité, bottom = actions), corner glows pour la profondeur */
 .gts-hero{
-  display:flex; align-items:center; gap:1.25rem; flex-wrap:wrap;
+  position:relative;
+  display:flex; flex-direction:column; gap:1.1rem;
   margin-bottom:2rem;
+  overflow:hidden;
+}
+.gts-hero::before{
+  content:''; position:absolute; pointer-events:none;
+  top:-30px; right:-50px; width:240px; height:200px;
+  background:radial-gradient(closest-side, rgba(167,139,250,.16), transparent 70%);
+  filter:blur(8px);
+  z-index:0;
+}
+.gts-hero::after{
+  content:''; position:absolute; pointer-events:none;
+  bottom:-40px; left:-60px; width:260px; height:220px;
+  background:radial-gradient(closest-side, rgba(96,165,250,.12), transparent 70%);
+  filter:blur(10px);
+  z-index:0;
+}
+.gts-hero > *{ position:relative; z-index:1; }
+
+/* Rangée 1 : icône + texte + stat d'info */
+.gts-hero-main{
+  display:flex; align-items:center; gap:1.25rem; flex-wrap:wrap;
 }
 .gts-hero-icon-wrap{
   display:grid; place-items:center;
-  width:56px; height:56px; border-radius:16px; flex-shrink:0;
-  background:linear-gradient(135deg, color-mix(in srgb, var(--accent) 28%, transparent), color-mix(in srgb, var(--accent) 8%, transparent));
+  width:104px; height:104px; border-radius:24px; flex-shrink:0;
+  background:linear-gradient(135deg, color-mix(in srgb, var(--accent) 24%, transparent), color-mix(in srgb, var(--accent) 6%, transparent));
   border:1px solid color-mix(in srgb, var(--accent) 30%, transparent);
-  box-shadow:0 0 28px color-mix(in srgb, var(--accent) 18%, transparent), inset 0 1px 0 rgba(255,255,255,.06);
+  box-shadow:
+    0 0 28px color-mix(in srgb, var(--accent) 22%, transparent),
+    inset 0 1px 0 rgba(255,255,255,.08),
+    inset 0 0 0 1px rgba(255,255,255,.03);
 }
 .gts-hero-icon{ font-size:1.4rem; color:rgba(255,255,255,.92); }
+
+/* Stat d'info (compteur d'espèces) — petit pill non-cliquable */
+.gts-hero-stat-info{
+  display:flex; align-items:center; gap:.65rem;
+  padding:.55rem 1rem; border-radius:14px; flex-shrink:0;
+  background:linear-gradient(135deg, rgba(255,255,255,.045), rgba(255,255,255,.02));
+  border:1px solid rgba(255,255,255,.08);
+  box-shadow:inset 0 0 16px color-mix(in srgb, var(--accent) 6%, transparent);
+}
+.gts-hero-stat-info .gts-hero-stat-icon{ font-size:1rem; color:rgba(167,139,250,.75); }
+.gts-hero-stat-info .gts-hero-stat-value{ font-size:1.2rem; font-weight:800; color:#fff; }
+
+/* Divider entre les 2 rangées (ligne fade) */
+.gts-hero-divider{
+  height:1px;
+  background:linear-gradient(to right, transparent, rgba(167,139,250,.22), transparent);
+}
+
+/* Rangée 2 : boutons d'action — full-width, equal-flex, plus présents */
+.gts-hero-actions{
+  display:flex; gap:.7rem; flex-wrap:wrap;
+}
+.gts-hero-action{
+  position:relative;
+  flex:1 1 0; min-width:160px;
+  display:inline-flex; align-items:center; justify-content:center; gap:.6rem;
+  padding:.8rem 1.2rem; border-radius:13px;
+  font-size:.88rem; font-weight:600; letter-spacing:.005em;
+  color:rgba(255,255,255,.92);
+  background:linear-gradient(135deg, color-mix(in srgb, var(--accent) 12%, transparent), color-mix(in srgb, var(--accent) 4%, transparent));
+  border:1px solid color-mix(in srgb, var(--accent) 22%, transparent);
+  box-shadow:
+    inset 0 0 18px color-mix(in srgb, var(--accent) 6%, transparent),
+    inset 0 1px 0 rgba(255,255,255,.06);
+  cursor:pointer;
+  transition:transform .2s, box-shadow .2s, background .25s, border-color .2s;
+}
+.gts-hero-action:hover{
+  transform:translateY(-1px);
+  background:linear-gradient(135deg, color-mix(in srgb, var(--accent) 22%, transparent), color-mix(in srgb, var(--accent) 8%, transparent));
+  border-color:color-mix(in srgb, var(--accent) 42%, transparent);
+  box-shadow:
+    0 8px 22px -8px color-mix(in srgb, var(--accent) 35%, transparent),
+    inset 0 0 22px color-mix(in srgb, var(--accent) 10%, transparent),
+    inset 0 1px 0 rgba(255,255,255,.10);
+}
+.gts-hero-action:active{ transform:translateY(0); }
+.gts-hero-action-icon{ font-size:.95rem; color:rgba(167,139,250,.85); flex-shrink:0; }
+.gts-hero-action-label{ position:relative; z-index:1; }
+.gts-hero-action--wishlist{ position:relative; }
+.gts-hero-action--wishlist:hover .gts-hero-action-icon{ color:#fb923c; }
 .gts-hero-text{ flex:1; min-width:0; }
 .gts-title{
   margin:0; font-size:1.6rem; font-weight:800; letter-spacing:-.025em;
@@ -3617,14 +3728,30 @@ button.lore-banner{ font:inherit; text-align:inherit; background:none; }
 }
 .gts-field--filter{ flex:0 0 95px; min-width:70px; }
 
+/* Niveau Min/Max groupés visuellement (un seul label "Niveau", deux inputs + séparateur) */
+.gts-field--level-range{ flex:0 0 auto; }
+.gts-level-range{
+  display:flex; align-items:center; gap:.4rem;
+}
+.gts-level-range-input{
+  flex:0 0 70px; min-width:60px; text-align:center;
+}
+.gts-level-range-sep{
+  display:inline-flex; align-items:center; justify-content:center;
+  font-size:.85rem; font-weight:700;
+  color:color-mix(in srgb, var(--accent) 60%, rgba(255,255,255,.4));
+  user-select:none;
+}
+
 .gts-label{
   font-size:.62rem; font-weight:700; text-transform:uppercase;
   letter-spacing:.07em; color:rgba(255,255,255,.35);
 }
 .gts-input{
-  background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.09);
+  background:linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.03));
+  border:1px solid rgba(255,255,255,.09);
   border-radius:8px; padding:.5rem .7rem; color:#fff; font-size:.84rem;
-  outline:none; transition:border-color .2s, box-shadow .2s;
+  outline:none; transition:border-color .2s, box-shadow .2s, background .2s;
   -moz-appearance:textfield; width:100%; box-sizing:border-box;
   height:2.35rem;
 }
@@ -3632,9 +3759,14 @@ button.lore-banner{ font:inherit; text-align:inherit; background:none; }
 .gts-input--with-icon{ padding-left:2rem; }
 .gts-input::-webkit-inner-spin-button,
 .gts-input::-webkit-outer-spin-button{ -webkit-appearance:none; margin:0; }
+.gts-input:hover:not(:disabled):not(:focus){
+  border-color:rgba(255,255,255,.18);
+  background:linear-gradient(180deg, rgba(255,255,255,.08), rgba(255,255,255,.04));
+}
 .gts-input:focus{
   border-color:color-mix(in srgb, var(--accent) 55%, transparent);
-  box-shadow:0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
+  background:linear-gradient(180deg, rgba(255,255,255,.07), rgba(255,255,255,.035));
+  box-shadow:0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
 }
 .gts-input:disabled{ opacity:.5; cursor:wait; }
 
@@ -3847,18 +3979,50 @@ select.gts-input:focus{
   border-radius:4px; margin-right:.15rem; letter-spacing:.03em;
 }
 
-/* Search btn */
+/* Search btn — premium CTA (gradient violet→indigo + shimmer + halo icône) */
 .gts-search-btn{
-  display:inline-flex; align-items:center; justify-content:center; gap:.45rem;
-  padding:0 1.3rem; border-radius:8px; border:none;
-  font-size:.82rem; font-weight:600; color:#fff; cursor:pointer;
-  transition:all .2s; flex-shrink:0; white-space:nowrap;
+  position:relative;
+  overflow:hidden;
+  display:inline-flex; align-items:center; justify-content:center; gap:.55rem;
+  padding:0 1.5rem; border-radius:9px; border:none;
+  font-size:.85rem; font-weight:700; color:#fff; cursor:pointer;
+  transition:transform .2s, box-shadow .25s, background .25s;
+  flex-shrink:0; white-space:nowrap;
   height:2.35rem; box-sizing:border-box;
   align-self:flex-end;
+  background:linear-gradient(135deg, color-mix(in srgb, var(--accent) 80%, #6366f1 20%), color-mix(in srgb, var(--accent) 50%, #4338ca 50%));
+  box-shadow:
+    0 5px 16px -5px color-mix(in srgb, var(--accent) 45%, transparent),
+    inset 0 1px 0 rgba(255,255,255,.18),
+    inset 0 0 0 1px color-mix(in srgb, var(--accent) 25%, transparent);
 }
-.gts-search-btn:hover{ filter:brightness(1.15); transform:translateY(-1px); }
-.gts-search-btn:active{ transform:scale(.97); }
-.gts-search-btn:disabled{ opacity:.55; cursor:wait; pointer-events:none; }
+.gts-search-btn::before{
+  content:''; position:absolute; inset:0;
+  background:linear-gradient(120deg, transparent 32%, rgba(255,255,255,.20) 50%, transparent 68%);
+  transform:translateX(-100%);
+  transition:transform .55s ease;
+  pointer-events:none;
+}
+.gts-search-btn-icon,
+.gts-search-btn-label{ position:relative; z-index:1; }
+.gts-search-btn-icon{
+  display:inline-flex; align-items:center; justify-content:center;
+  font-size:.85rem;
+  filter:drop-shadow(0 0 4px color-mix(in srgb, var(--accent) 60%, transparent));
+}
+.gts-search-btn:hover{
+  transform:translateY(-1px);
+  box-shadow:
+    0 10px 26px -8px color-mix(in srgb, var(--accent) 60%, transparent),
+    inset 0 1px 0 rgba(255,255,255,.25),
+    inset 0 0 0 1px color-mix(in srgb, var(--accent) 38%, transparent);
+}
+.gts-search-btn:hover::before{ transform:translateX(100%); }
+.gts-search-btn:active{ transform:translateY(0); }
+.gts-search-btn:disabled{
+  opacity:.55; cursor:wait; pointer-events:none;
+  transform:none; box-shadow:none;
+}
 @keyframes gts-spin{ to{ transform:rotate(360deg); } }
 .gts-spin{ animation:gts-spin .7s linear infinite; }
 
@@ -6350,11 +6514,16 @@ button.gts-card-badge--share:hover{
 
 /* GTS Withdraw section */
 .gts-withdraw-section{
-  margin-top:1rem; padding:.8rem 1rem;
+  margin-top:1rem; padding:.85rem 1.05rem;
   border-radius:14px;
   background:color-mix(in srgb, var(--accent) 5%, rgba(0,0,0,.25));
   border:1px solid color-mix(in srgb, var(--accent) 12%, rgba(255,255,255,.06));
   backdrop-filter:blur(8px);
+  transition:border-color .25s, box-shadow .25s, background .25s;
+}
+.gts-withdraw-section:hover{
+  border-color:color-mix(in srgb, var(--accent) 22%, rgba(255,255,255,.10));
+  box-shadow:0 8px 24px -10px color-mix(in srgb, var(--accent) 30%, transparent);
 }
 .gts-withdraw-heading{
   display:flex; align-items:center; gap:.5rem;
@@ -6367,6 +6536,38 @@ button.gts-card-badge--share:hover{
   font-size:.65rem; color:rgba(255,255,255,.45);
   padding:.3rem 0;
 }
+/* Empty state amélioré : message + bouton CTA "Déposer" */
+.gts-withdraw-empty--cta{
+  justify-content:space-between; flex-wrap:wrap; gap:.6rem;
+  padding:.4rem 0;
+}
+.gts-withdraw-empty-msg{
+  display:inline-flex; align-items:center; gap:.4rem;
+  font-size:.75rem; color:rgba(255,255,255,.55);
+}
+.gts-withdraw-empty-msg svg{ color:color-mix(in srgb, var(--accent) 60%, rgba(255,255,255,.5)); }
+.gts-withdraw-cta-btn{
+  display:inline-flex; align-items:center; gap:.4rem;
+  padding:.4rem .85rem; border-radius:9px;
+  font-size:.72rem; font-weight:700; letter-spacing:.01em;
+  color:#fff;
+  background:linear-gradient(135deg, color-mix(in srgb, var(--accent) 60%, transparent), color-mix(in srgb, var(--accent) 30%, transparent));
+  border:1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  box-shadow:
+    0 3px 10px -2px color-mix(in srgb, var(--accent) 30%, transparent),
+    inset 0 1px 0 rgba(255,255,255,.12);
+  cursor:pointer;
+  transition:transform .2s, box-shadow .2s, background .25s, border-color .2s;
+}
+.gts-withdraw-cta-btn:hover{
+  transform:translateY(-1px);
+  background:linear-gradient(135deg, color-mix(in srgb, var(--accent) 75%, transparent), color-mix(in srgb, var(--accent) 40%, transparent));
+  border-color:color-mix(in srgb, var(--accent) 55%, transparent);
+  box-shadow:
+    0 6px 16px -4px color-mix(in srgb, var(--accent) 45%, transparent),
+    inset 0 1px 0 rgba(255,255,255,.18);
+}
+.gts-withdraw-cta-btn:active{ transform:translateY(0); }
 /* ─── Mon dépôt GTS — nouvelle carte ─── */
 .gts-mydep-card{
   display:flex; flex-direction:column; gap:.6rem;
@@ -7390,25 +7591,30 @@ button.gts-card-badge--share:hover{
   display:flex; align-items:center; gap:8px;
 }
 .gts-browse-timestamp{
-  font-size:.6rem; color:rgba(255,255,255,.35); font-weight:500;
+  font-size:.66rem; color:rgba(255,255,255,.45); font-weight:500;
+  letter-spacing:.005em;
 }
 [data-theme="light"] .gts-browse-timestamp{
-  color:rgba(0,0,0,.35);
+  color:rgba(0,0,0,.4);
 }
 .gts-browse-refresh{
   display:flex; align-items:center; justify-content:center;
-  width:28px; height:28px;
-  border:1px solid rgba(255,255,255,.1);
-  border-radius:6px;
-  background:rgba(255,255,255,.04);
-  color:rgba(255,255,255,.5);
+  width:30px; height:30px;
+  border:1px solid rgba(255,255,255,.10);
+  border-radius:8px;
+  background:linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.02));
+  color:rgba(255,255,255,.55);
   cursor:pointer;
-  transition:all .2s;
+  transition:transform .2s, background .25s, border-color .2s, color .2s, box-shadow .25s;
 }
 .gts-browse-refresh:hover{
-  background:rgba(255,255,255,.08);
-  color:rgba(255,255,255,.8);
+  background:linear-gradient(180deg, rgba(167,139,250,.18), rgba(167,139,250,.08));
+  border-color:rgba(167,139,250,.40);
+  color:#fff;
+  box-shadow:0 4px 12px -4px rgba(167,139,250,.45);
 }
+.gts-browse-refresh:hover svg{ animation:gts-spin .9s linear infinite; }
+.gts-browse-refresh:disabled{ opacity:.55; cursor:wait; }
 [data-theme="light"] .gts-browse-refresh{
   border-color:rgba(0,0,0,.1);
   background:rgba(0,0,0,.03);
@@ -7450,38 +7656,53 @@ button.gts-card-badge--share:hover{
 }
 .gts-browse-item{
   display:flex; align-items:center; gap:14px;
-  padding:16px 18px;
-  background:rgba(255,255,255,.035);
+  padding:14px 18px;
+  background:linear-gradient(135deg, rgba(255,255,255,.045) 0%, rgba(255,255,255,.018) 100%);
   border:none;
   border-radius:14px;
   cursor:pointer;
-  transition:all .22s ease;
+  transition:transform .22s ease, box-shadow .22s ease, background .25s ease;
   text-align:left;
   color:inherit;
   animation:gts-browse-fadein .35s ease both;
   position:relative;
   overflow:hidden;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.04);
 }
 .gts-browse-item::before{
   content:"";
   position:absolute; inset:0;
   border-radius:14px;
-  border:1px solid rgba(255,255,255,.06);
+  border:1px solid rgba(255,255,255,.07);
   pointer-events:none;
-  transition:border-color .22s;
+  transition:border-color .22s, box-shadow .22s;
+}
+/* Subtle accent glow at top-right corner (revealed on hover) */
+.gts-browse-item::after{
+  content:""; position:absolute; pointer-events:none;
+  top:-30%; right:-20%;
+  width:55%; height:120%;
+  background:radial-gradient(closest-side, rgba(99,102,241,.18), transparent 70%);
+  filter:blur(8px);
+  opacity:0;
+  transition:opacity .25s ease;
 }
 @keyframes gts-browse-fadein{
   from{ opacity:0; transform:translateY(8px); }
   to{ opacity:1; transform:translateY(0); }
 }
 .gts-browse-item:hover{
-  background:rgba(99,102,241,.1);
+  background:linear-gradient(135deg, rgba(99,102,241,.12) 0%, rgba(99,102,241,.04) 100%);
   transform:translateY(-2px);
-  box-shadow:0 8px 28px rgba(0,0,0,.18), 0 0 0 1px rgba(99,102,241,.18);
+  box-shadow:
+    0 12px 32px -8px rgba(99,102,241,.30),
+    inset 0 1px 0 rgba(255,255,255,.08);
 }
 .gts-browse-item:hover::before{
-  border-color:rgba(99,102,241,.25);
+  border-color:rgba(99,102,241,.35);
+  box-shadow:inset 0 0 0 1px rgba(99,102,241,.12);
 }
+.gts-browse-item:hover::after{ opacity:1; }
 .gts-browse-item:active{
   transform:translateY(0) scale(.985);
 }
@@ -7497,18 +7718,25 @@ button.gts-card-badge--share:hover{
 }
 
 .gts-browse-item-sprite{
-  width:56px; height:56px;
+  width:64px; height:64px;
   flex-shrink:0;
+  position:relative;
   display:flex; align-items:center; justify-content:center;
-  background:radial-gradient(circle, rgba(255,255,255,.07) 0%, transparent 70%);
-  border-radius:12px;
+  background:radial-gradient(circle at 50% 45%, rgba(255,255,255,.08) 0%, rgba(255,255,255,.02) 55%, transparent 80%);
+  border:1px solid rgba(255,255,255,.05);
+  border-radius:14px;
   overflow:hidden;
+  transition:border-color .22s, transform .22s;
+}
+.gts-browse-item:hover .gts-browse-item-sprite{
+  border-color:rgba(99,102,241,.20);
+  transform:scale(1.05);
 }
 .gts-browse-item-sprite img{
   width:100%; height:100%;
   object-fit:contain;
   image-rendering:pixelated;
-  filter:drop-shadow(0 2px 6px rgba(0,0,0,.35));
+  filter:drop-shadow(0 2px 8px rgba(0,0,0,.45));
 }
 .gts-browse-item--shiny .gts-browse-item-sprite img{
   filter:drop-shadow(0 2px 8px rgba(250,204,21,.3));
@@ -7562,19 +7790,30 @@ button.gts-card-badge--share:hover{
   display:flex; align-items:center; gap:8px;
   flex-shrink:0;
   padding:7px 12px;
-  background:rgba(255,255,255,.04);
-  border-radius:10px;
-  border:1px solid rgba(255,255,255,.04);
+  background:linear-gradient(135deg, rgba(99,102,241,.10), rgba(99,102,241,.04));
+  border-radius:11px;
+  border:1px solid rgba(99,102,241,.18);
+  transition:background .22s, border-color .22s;
+}
+.gts-browse-item:hover .gts-browse-item-want{
+  background:linear-gradient(135deg, rgba(99,102,241,.18), rgba(99,102,241,.08));
+  border-color:rgba(99,102,241,.32);
 }
 [data-theme="light"] .gts-browse-item-want{
-  background:rgba(0,0,0,.025);
+  background:linear-gradient(135deg, rgba(99,102,241,.06), rgba(99,102,241,.02));
+  border-color:rgba(99,102,241,.15);
 }
 .gts-browse-item-arrow{
-  font-size:.5rem;
-  color:rgba(255,255,255,.18);
+  font-size:.55rem;
+  color:rgba(167,139,250,.65);
+  transition:color .22s, transform .25s;
+}
+.gts-browse-item:hover .gts-browse-item-arrow{
+  color:rgba(167,139,250,.95);
+  transform:scale(1.15);
 }
 [data-theme="light"] .gts-browse-item-arrow{
-  color:rgba(0,0,0,.15);
+  color:rgba(99,102,241,.55);
 }
 .gts-browse-item-want-sprite{
   width:34px; height:34px;
@@ -7585,13 +7824,15 @@ button.gts-card-badge--share:hover{
   width:100%; height:100%;
   object-fit:contain;
   image-rendering:pixelated;
-  opacity:.9;
+  opacity:.92;
+  filter:drop-shadow(0 1px 4px rgba(0,0,0,.35));
 }
 .gts-browse-item-want-name{
-  font-size:.66rem; font-weight:600;
-  color:rgba(255,255,255,.5);
-  max-width:80px;
+  font-size:.7rem; font-weight:600;
+  color:rgba(255,255,255,.65);
+  max-width:90px;
   white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  letter-spacing:.005em;
 }
 [data-theme="light"] .gts-browse-item-want-name{
   color:rgba(0,0,0,.4);
@@ -7626,25 +7867,37 @@ button.gts-card-badge--share:hover{
   display:flex; gap:8px; margin-bottom:14px; flex-wrap:wrap;
 }
 .gts-browse-control-btn{
-  display:inline-flex; align-items:center; gap:5px;
-  padding:6px 14px; border-radius:20px;
-  font-size:.72rem; font-weight:600;
-  background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.08);
-  color:rgba(255,255,255,.55); cursor:pointer;
-  transition:all .22s;
+  display:inline-flex; align-items:center; gap:6px;
+  padding:7px 15px; border-radius:20px;
+  font-size:.74rem; font-weight:600;
+  background:linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.02));
+  border:1px solid rgba(255,255,255,.09);
+  color:rgba(255,255,255,.6); cursor:pointer;
+  transition:transform .2s, background .25s, border-color .22s, color .2s, box-shadow .25s;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.04);
 }
 .gts-browse-control-btn:hover{
-  background:rgba(99,102,241,.12); border-color:rgba(99,102,241,.25);
-  color:rgba(255,255,255,.85);
+  background:linear-gradient(180deg, rgba(167,139,250,.18), rgba(167,139,250,.08));
+  border-color:rgba(167,139,250,.35);
+  color:#fff;
+  transform:translateY(-1px);
+  box-shadow:0 4px 12px -4px rgba(167,139,250,.35), inset 0 1px 0 rgba(255,255,255,.10);
 }
 .gts-browse-control-btn--active{
-  background:linear-gradient(135deg, rgba(250,204,21,.15), rgba(245,158,11,.12));
-  border-color:rgba(250,204,21,.4);
-  color:#facc15;
+  background:linear-gradient(135deg, rgba(250,204,21,.20), rgba(245,158,11,.12));
+  border-color:rgba(250,204,21,.50);
+  color:#fde68a;
+  box-shadow:
+    0 4px 14px -4px rgba(250,204,21,.40),
+    inset 0 1px 0 rgba(255,255,255,.14);
 }
 .gts-browse-control-btn--active:hover{
-  background:linear-gradient(135deg, rgba(250,204,21,.22), rgba(245,158,11,.18));
-  border-color:rgba(250,204,21,.55);
+  background:linear-gradient(135deg, rgba(250,204,21,.30), rgba(245,158,11,.18));
+  border-color:rgba(250,204,21,.65);
+  color:#fef3c7;
+  box-shadow:
+    0 6px 18px -4px rgba(250,204,21,.50),
+    inset 0 1px 0 rgba(255,255,255,.20);
 }
 [data-theme="light"] .gts-browse-control-btn{
   background:rgba(0,0,0,.04); border-color:rgba(0,0,0,.1);
@@ -10228,73 +10481,102 @@ button.gts-card-badge--share:hover{
   border:1px solid rgba(46,204,113,.25);
 }
 
-/* ==================== Chat — Welcome card ==================== */
-.pnw-chat-welcome-card{
-  position:relative; margin:16px 24px; border-radius:16px; overflow:hidden;
-  background:linear-gradient(135deg, rgba(88,101,242,.12), rgba(46,204,113,.08), rgba(243,156,18,.06));
-  border:1px solid rgba(88,101,242,.2);
+/* ==================== Chat — Welcome banner ==================== */
+.pnw-chat-welcome-banner{
+  display:flex; align-items:center; gap:12px;
+  margin:14px 16px;
+  animation:pnw-welcome-banner-in .45s cubic-bezier(.2,.7,.2,1) both;
 }
-.pnw-chat-welcome-glow{
-  position:absolute; top:-40px; left:50%; transform:translateX(-50%);
-  width:200px; height:80px;
-  background:radial-gradient(ellipse, rgba(88,101,242,.3), transparent 70%);
+.pnw-chat-welcome-banner-line{
+  flex:1; height:1px;
+  background:linear-gradient(to right, transparent, rgba(74,222,128,.32), transparent);
+}
+.pnw-chat-welcome-banner-pill{
+  position:relative;
+  display:inline-flex; align-items:center; gap:10px;
+  padding:6px 16px 6px 6px;
+  border-radius:999px;
+  background:linear-gradient(135deg, rgba(74,222,128,.16), rgba(34,211,238,.12), rgba(245,158,11,.08));
+  border:1px solid rgba(74,222,128,.30);
+  color:rgba(255,255,255,.82);
+  font-size:.78rem; font-weight:500;
+  cursor:pointer;
+  overflow:hidden;
+  box-shadow:
+    0 6px 22px -10px rgba(74,222,128,.40),
+    0 0 0 1px rgba(255,255,255,.04) inset,
+    0 1px 0 rgba(255,255,255,.10) inset;
+  transition:transform .2s, box-shadow .2s, border-color .2s, background .25s;
+}
+.pnw-chat-welcome-banner-pill::after{
+  content:''; position:absolute; inset:0;
+  background:linear-gradient(120deg, transparent 35%, rgba(255,255,255,.10) 50%, transparent 65%);
+  transform:translateX(-100%);
+  transition:transform .7s ease;
   pointer-events:none;
 }
-.pnw-chat-welcome-content{
-  position:relative; padding:24px 28px; z-index:1;
-  display:flex; flex-direction:column; align-items:center; text-align:center;
+.pnw-chat-welcome-banner-pill:hover{
+  transform:translateY(-1px);
+  border-color:rgba(74,222,128,.55);
+  background:linear-gradient(135deg, rgba(74,222,128,.24), rgba(34,211,238,.18), rgba(245,158,11,.12));
+  box-shadow:
+    0 10px 28px -10px rgba(74,222,128,.55),
+    0 0 0 1px rgba(255,255,255,.10) inset,
+    0 1px 0 rgba(255,255,255,.20) inset;
 }
-.pnw-chat-welcome-icon{
-  width:48px; height:48px; margin-bottom:12px;
-  border-radius:12px; overflow:hidden;
-  background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.1);
+.pnw-chat-welcome-banner-pill:hover::after{ transform:translateX(100%); }
+.pnw-chat-welcome-banner-pill:active{ transform:translateY(0); }
+
+/* Sparkle dots — animated */
+.pnw-chat-welcome-banner-spark{
+  position:absolute; pointer-events:none;
+  width:5px; height:5px; border-radius:50%;
+  background:#fde68a;
+  box-shadow:0 0 8px rgba(253,224,71,.85), 0 0 14px rgba(253,224,71,.40);
+  animation:pnw-welcome-sparkle 2.6s ease-in-out infinite;
+}
+.pnw-chat-welcome-banner-spark--1{ top:5px; left:42px; }
+.pnw-chat-welcome-banner-spark--2{ bottom:5px; right:14px; animation-delay:1.3s; }
+
+/* Avatar wrap (role glow applied via inline style) */
+.pnw-chat-welcome-banner-avatar-wrap{
+  display:inline-flex; align-items:center; justify-content:center;
+  width:30px; height:30px; border-radius:50%;
+  background:rgba(0,0,0,.4);
+  flex-shrink:0;
+  box-shadow:0 0 10px rgba(74,222,128,.30);
+  box-sizing:border-box;
+  overflow:hidden;
+}
+.pnw-chat-welcome-banner-avatar{
+  width:100%; height:100%; border-radius:50%; object-fit:cover;
+}
+.pnw-chat-welcome-banner-avatar--placeholder{
   display:flex; align-items:center; justify-content:center;
+  width:100%; height:100%; border-radius:50%;
+  background:linear-gradient(135deg, #4ade80, #22d3ee);
+  color:#fff; font-weight:700; font-size:13px;
 }
-.pnw-chat-welcome-logo{
-  width:36px; height:36px; object-fit:contain;
+
+.pnw-chat-welcome-banner-text{
+  white-space:nowrap;
+  letter-spacing:.01em;
+  position:relative; z-index:1;
 }
-.pnw-chat-welcome-hero{
-  display:flex; align-items:center; gap:12px; margin-bottom:6px;
-}
-.pnw-chat-welcome-avatar{
-  width:44px; height:44px; border-radius:50%; object-fit:cover;
-  border:2px solid rgba(88,101,242,.5);
-  box-shadow:0 0 12px rgba(88,101,242,.3);
-}
-.pnw-chat-welcome-title{
-  font-size:18px; font-weight:700; color:#e8eaed; margin:0;
-  font-family:'Segoe UI', system-ui, sans-serif;
-}
-.pnw-chat-welcome-name{
-  background:linear-gradient(135deg, #5865f2, #7c6aef);
+.pnw-chat-welcome-banner-name{
+  font-weight:700;
+  background:linear-gradient(135deg, #4ade80, #22d3ee);
   -webkit-background-clip:text; -webkit-text-fill-color:transparent;
   background-clip:text;
 }
-.pnw-chat-welcome-subtitle{
-  font-size:13px; color:rgba(255,255,255,.5); margin:4px 0 18px; line-height:1.4;
+
+@keyframes pnw-welcome-banner-in{
+  from{ opacity:0; transform:translateY(-6px); }
+  to  { opacity:1; transform:translateY(0); }
 }
-.pnw-chat-welcome-features{
-  display:grid; grid-template-columns:1fr 1fr; gap:10px; width:100%; max-width:460px;
-}
-.pnw-chat-welcome-feature{
-  display:flex; align-items:flex-start; gap:10px; text-align:left;
-  padding:10px 12px; border-radius:10px;
-  background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.06);
-  transition:background .15s;
-}
-.pnw-chat-welcome-feature:hover{
-  background:rgba(255,255,255,.08);
-}
-.pnw-chat-welcome-feature-icon{
-  flex-shrink:0; margin-top:2px;
-  color:#5865f2; font-size:14px;
-}
-.pnw-chat-welcome-feature strong{
-  display:block; font-size:12px; font-weight:700; color:#e8eaed;
-  letter-spacing:.3px; text-transform:uppercase; margin-bottom:2px;
-}
-.pnw-chat-welcome-feature span{
-  display:block; font-size:11px; color:rgba(255,255,255,.45); line-height:1.3;
+@keyframes pnw-welcome-sparkle{
+  0%,100% { transform:scale(.5); opacity:.4; }
+  50%     { transform:scale(1); opacity:1; }
 }
 
 /* ==================== Chat — Members sidebar ==================== */
@@ -10648,15 +10930,18 @@ button.gts-card-badge--share:hover{
   animation:chatFadeIn .15s ease;
 }
 .pnw-chat-profile-card{
-  width:100%; max-width:360px;
-  background:linear-gradient(180deg, rgba(12,15,28,.98) 0%, rgba(8,10,20,.99) 100%);
-  border:1px solid rgba(255,255,255,.08);
-  border-radius:16px; overflow:hidden;
+  width:100%; max-width:380px;
+  background:linear-gradient(180deg, rgba(14,18,32,.98) 0%, rgba(8,10,20,.99) 100%);
+  border:1px solid rgba(255,255,255,.10);
+  border-radius:18px; overflow:hidden;
   backdrop-filter:blur(24px);
-  box-shadow:0 20px 60px rgba(0,0,0,.6), 0 0 0 1px rgba(255,255,255,.03) inset;
+  box-shadow:
+    0 28px 80px -20px rgba(0,0,0,.7),
+    0 0 0 1px rgba(255,255,255,.04) inset,
+    0 1px 0 rgba(255,255,255,.06) inset;
   position:relative;
   color:#eaf2ff;
-  animation:chatSlideUp .2s ease;
+  animation:chatSlideUp .22s cubic-bezier(.2,.7,.2,1);
 }
 @keyframes chatSlideUp{
   from{ opacity:0; transform:translateY(12px) scale(.97); }
@@ -10730,6 +11015,23 @@ button.gts-card-badge--share:hover{
 .pnw-chat-profile-body{
   padding:10px 24px 24px;
   background:transparent;
+  position:relative;
+  z-index:1;
+}
+/* Subtle corner glows behind the body content (warm top-right, rose bottom-left) */
+.pnw-chat-profile-body::before{
+  content:''; position:absolute; pointer-events:none;
+  top:-30px; right:-60px; width:240px; height:220px;
+  background:radial-gradient(closest-side, rgba(245,158,11,.13), transparent 70%);
+  filter:blur(8px);
+  z-index:-1;
+}
+.pnw-chat-profile-body::after{
+  content:''; position:absolute; pointer-events:none;
+  bottom:-40px; left:-70px; width:260px; height:240px;
+  background:radial-gradient(closest-side, rgba(244,63,94,.10), transparent 70%);
+  filter:blur(10px);
+  z-index:-1;
 }
 .pnw-chat-profile-name{
   color:#fff; font-size:24px; font-weight:800; margin:6px 0 4px;
@@ -10745,14 +11047,37 @@ button.gts-card-badge--share:hover{
 
 /* Meta rows */
 .pnw-chat-profile-meta{
-  margin-top:16px; display:flex; flex-direction:column; gap:4px;
-  padding:12px 14px; background:rgba(255,255,255,.03); border-radius:10px;
+  margin-top:16px; display:flex; flex-direction:column;
+  padding:6px 12px;
+  background:linear-gradient(135deg, rgba(255,255,255,.05), rgba(255,255,255,.02));
+  border:1px solid rgba(255,255,255,.06);
+  border-radius:12px;
 }
 .pnw-chat-profile-meta-row{
-  display:flex; align-items:center; gap:10px;
-  color:rgba(255,255,255,.5); font-size:12.5px;
+  display:flex; align-items:center; gap:12px;
+  padding:8px 4px;
+  color:rgba(255,255,255,.62); font-size:12.5px; font-weight:500;
+  transition:color .15s;
 }
-.pnw-chat-profile-meta-row svg{ font-size:14px; opacity:.5; flex-shrink:0; width:16px; text-align:center; }
+.pnw-chat-profile-meta-row + .pnw-chat-profile-meta-row{
+  border-top:1px solid rgba(255,255,255,.045);
+}
+.pnw-chat-profile-meta-row:hover{ color:rgba(255,255,255,.88); }
+.pnw-chat-profile-meta-row svg{ flex-shrink:0; }
+.pnw-chat-profile-meta-icon{
+  display:inline-flex; align-items:center; justify-content:center;
+  width:28px; height:28px;
+  background:linear-gradient(135deg, rgba(245,158,11,.18), rgba(244,63,94,.10));
+  border:1px solid rgba(255,255,255,.07);
+  border-radius:8px;
+  color:rgba(255,255,255,.78);
+  font-size:12px;
+  flex-shrink:0;
+}
+.pnw-chat-profile-meta-row:hover .pnw-chat-profile-meta-icon{
+  border-color:rgba(255,255,255,.12);
+  color:#fff;
+}
 
 /* Action buttons */
 /* Mute info on profile card */
@@ -10993,12 +11318,34 @@ button.gts-card-badge--share:hover{
   background:rgba(255,255,255,.1); border-color:rgba(255,255,255,.15); transform:translateY(-1px);
 }
 .pnw-chat-profile-btn--dm{
-  background:var(--accent); color:#fff;
+  position:relative;
+  overflow:hidden;
+  background:linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 70%, #1d1f3a 30%));
+  color:#fff;
+  border:1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  box-shadow:
+    0 4px 14px -4px color-mix(in srgb, var(--accent) 45%, transparent),
+    0 0 0 1px rgba(255,255,255,.05) inset,
+    0 1px 0 rgba(255,255,255,.18) inset;
+}
+.pnw-chat-profile-btn--dm::before{
+  content:''; position:absolute; inset:0;
+  background:linear-gradient(120deg, transparent 30%, rgba(255,255,255,.16) 50%, transparent 70%);
+  transform:translateX(-100%);
+  transition:transform .55s ease;
+  pointer-events:none;
 }
 .pnw-chat-profile-btn--dm:hover{
-  background:color-mix(in srgb, var(--accent) 85%, #000);
-  box-shadow:0 2px 12px color-mix(in srgb, var(--accent) 30%, transparent);
+  background:linear-gradient(135deg, color-mix(in srgb, var(--accent) 95%, #fff 5%), color-mix(in srgb, var(--accent) 75%, #1d1f3a 25%));
+  border-color:color-mix(in srgb, var(--accent) 60%, transparent);
+  transform:translateY(-1px);
+  box-shadow:
+    0 8px 22px -6px color-mix(in srgb, var(--accent) 55%, transparent),
+    0 0 0 1px rgba(255,255,255,.10) inset,
+    0 1px 0 rgba(255,255,255,.25) inset;
 }
+.pnw-chat-profile-btn--dm:hover::before{ transform:translateX(100%); }
+.pnw-chat-profile-btn--dm:active{ transform:translateY(0); }
 /* ==================== Chat — Edit Profile Form ==================== */
 
 /* --- Keyframes --- */
@@ -11620,19 +11967,33 @@ button.gts-card-badge--share:hover{
 
 /* Block button on profile */
 .pnw-chat-profile-btn--block{
-  background:rgba(231,76,60,.08); color:rgba(231,76,60,.7);
-  border:1px solid rgba(231,76,60,.15);
+  background:linear-gradient(135deg, rgba(231,76,60,.10), rgba(190,40,40,.06));
+  color:rgba(231,76,60,.78);
+  border:1px solid rgba(231,76,60,.22);
+  transition:all .18s;
 }
 .pnw-chat-profile-btn--block:hover{
-  background:rgba(231,76,60,.2); color:#e74c3c;
+  background:linear-gradient(135deg, rgba(231,76,60,.22), rgba(190,40,40,.14));
+  border-color:rgba(231,76,60,.45);
+  color:#fca5a5;
+  transform:translateY(-1px);
+  box-shadow:0 6px 18px -6px rgba(231,76,60,.40);
 }
+.pnw-chat-profile-btn--block:active{ transform:translateY(0); }
 .pnw-chat-profile-btn--unblock{
-  background:rgba(46,204,113,.08); color:rgba(46,204,113,.7);
-  border:1px solid rgba(46,204,113,.15);
+  background:linear-gradient(135deg, rgba(46,204,113,.10), rgba(20,160,80,.06));
+  color:rgba(46,204,113,.78);
+  border:1px solid rgba(46,204,113,.22);
+  transition:all .18s;
 }
 .pnw-chat-profile-btn--unblock:hover{
-  background:rgba(46,204,113,.2); color:#2ecc71;
+  background:linear-gradient(135deg, rgba(46,204,113,.22), rgba(20,160,80,.14));
+  border-color:rgba(46,204,113,.45);
+  color:#86efac;
+  transform:translateY(-1px);
+  box-shadow:0 6px 18px -6px rgba(46,204,113,.40);
 }
+.pnw-chat-profile-btn--unblock:active{ transform:translateY(0); }
 
 /* Blocked message placeholder */
 .pnw-chat-msg-blocked{
@@ -12337,6 +12698,56 @@ button.gts-card-badge--share:hover{
   animation: rank-hero-pulse 3.5s ease-in-out infinite;
 }
 
+/* ==================== Ranked Hero / CTA ==================== */
+
+/* Shimmer animée sur la bordure haute de la queue card */
+@keyframes ranked-hero-shimmer-move {
+  0%   { transform: translateX(-100%); opacity: 0; }
+  20%  { opacity: 1; }
+  80%  { opacity: 1; }
+  100% { transform: translateX(100%); opacity: 0; }
+}
+.ranked-hero-shimmer {
+  animation: ranked-hero-shimmer-move 3.6s ease-in-out infinite;
+}
+
+/* Shine au hover sur le bouton "Chercher un match" */
+.ranked-cta-btn {
+  transition: transform 0.25s cubic-bezier(0.22, 0.9, 0.36, 1.2),
+              filter 0.25s ease;
+}
+.ranked-cta-btn:hover {
+  transform: translateY(-2px);
+  filter: brightness(1.15);
+}
+.ranked-cta-shine {
+  background: linear-gradient(
+    115deg,
+    transparent 0%,
+    transparent 35%,
+    rgba(255, 255, 255, 0.18) 50%,
+    rgba(255, 255, 255, 0.04) 58%,
+    transparent 70%,
+    transparent 100%
+  );
+  background-size: 220% 100%;
+  background-position: -120% 0;
+  mix-blend-mode: screen;
+  transition: background-position 0.6s ease;
+}
+.ranked-cta-btn:hover .ranked-cta-shine {
+  background-position: 220% 0;
+}
+
+/* Subtle pulse du titre */
+@keyframes ranked-title-pulse {
+  0%, 100% { filter: drop-shadow(0 0 30px rgba(245,158,11,0.35)); }
+  50%      { filter: drop-shadow(0 0 44px rgba(245,158,11,0.55)); }
+}
+.ranked-title {
+  animation: ranked-title-pulse 4s ease-in-out infinite;
+}
+
 /* ==================== Hologram Globe ==================== */
 
 /* Scanline qui descend en boucle à travers le globe.
@@ -12759,26 +13170,91 @@ button.gts-card-badge--share:hover{
 
 /* ─── Trade button in ProfileCard (full width, separated section) ─── */
 .pnw-trade-profile-btn{
-  display:flex; align-items:center; justify-content:center; gap:.5rem;
-  width:calc(100% - 2.4rem); margin:.8rem 1.2rem 1rem;
-  padding:.55rem 1rem; border-radius:10px;
-  font-size:.78rem; font-weight:600; letter-spacing:.02em;
-  color:#4ade80;
-  background:rgba(74,222,128,.08);
-  border:1px solid rgba(74,222,128,.2);
+  position:relative;
+  overflow:hidden;
+  display:flex; align-items:center; justify-content:center; gap:.55rem;
+  width:calc(100% - 2.4rem); margin:.6rem 1.2rem .35rem;
+  padding:.65rem 1rem; border-radius:11px;
+  font-size:.82rem; font-weight:600; letter-spacing:.02em;
+  color:#86efac;
+  background:linear-gradient(135deg, rgba(74,222,128,.12), rgba(34,197,94,.06));
+  border:1px solid rgba(74,222,128,.28);
   cursor:pointer;
-  transition:all .2s;
+  transition:transform .2s, box-shadow .2s, background .2s, border-color .2s, color .2s;
+}
+.pnw-trade-profile-btn::before{
+  content:''; position:absolute; inset:0;
+  background:linear-gradient(120deg, transparent 30%, rgba(255,255,255,.10) 50%, transparent 70%);
+  transform:translateX(-100%);
+  transition:transform .55s ease;
+  pointer-events:none;
 }
 .pnw-trade-profile-btn:hover{
-  background:rgba(74,222,128,.15);
-  border-color:rgba(74,222,128,.4);
-  color:#86efac;
+  background:linear-gradient(135deg, rgba(74,222,128,.20), rgba(34,197,94,.10));
+  border-color:rgba(74,222,128,.5);
+  color:#bbf7d0;
   transform:translateY(-1px);
-  box-shadow:0 4px 16px rgba(74,222,128,.12);
+  box-shadow:0 8px 24px -8px rgba(74,222,128,.30);
 }
+.pnw-trade-profile-btn:hover::before{ transform:translateX(100%); }
 .pnw-trade-profile-btn:active{
   transform:translateY(0);
   box-shadow:none;
+}
+
+/* ─── Battle CTA in ProfileCard (premium, full width) ─── */
+.pnw-battle-profile-btn{
+  position:relative;
+  overflow:hidden;
+  display:flex; align-items:center; justify-content:center; gap:.6rem;
+  width:calc(100% - 2.4rem); margin:.35rem 1.2rem 1.2rem;
+  padding:.75rem 1rem; border-radius:12px;
+  font-size:.85rem; font-weight:700; letter-spacing:.025em;
+  color:#fff5f5;
+  background:linear-gradient(135deg, rgba(245,158,11,.85) 0%, rgba(220,38,38,.92) 50%, rgba(168,85,247,.85) 100%);
+  background-size:200% 100%;
+  background-position:0% 50%;
+  border:1px solid rgba(245,158,11,.40);
+  cursor:pointer;
+  text-shadow:0 1px 2px rgba(0,0,0,.4);
+  box-shadow:
+    0 6px 22px -6px rgba(220,38,38,.5),
+    0 0 0 1px rgba(255,255,255,.06) inset,
+    0 1px 0 rgba(255,255,255,.18) inset;
+  transition:transform .2s, box-shadow .25s, background-position .5s, border-color .2s;
+}
+.pnw-battle-profile-btn::before{
+  content:''; position:absolute; inset:0;
+  background:linear-gradient(120deg, transparent 30%, rgba(255,255,255,.22) 50%, transparent 70%);
+  transform:translateX(-100%);
+  transition:transform .65s ease;
+  pointer-events:none;
+}
+.pnw-battle-profile-btn:hover{
+  background-position:100% 50%;
+  border-color:rgba(255,255,255,.25);
+  transform:translateY(-1px);
+  box-shadow:
+    0 12px 32px -10px rgba(220,38,38,.65),
+    0 0 0 1px rgba(255,255,255,.10) inset,
+    0 1px 0 rgba(255,255,255,.25) inset;
+}
+.pnw-battle-profile-btn:hover::before{ transform:translateX(100%); }
+.pnw-battle-profile-btn:active{ transform:translateY(0); }
+.pnw-battle-profile-btn-icon{
+  display:inline-flex; align-items:center; justify-content:center;
+  width:24px; height:24px;
+  border-radius:7px;
+  background:rgba(0,0,0,.20);
+  color:#fff;
+  font-size:.85rem;
+  flex-shrink:0;
+  animation:pnw-battle-icon-pulse 2.4s ease-in-out infinite;
+}
+.pnw-battle-profile-btn-label{ position:relative; z-index:1; }
+@keyframes pnw-battle-icon-pulse{
+  0%,100% { box-shadow:0 0 10px rgba(255,200,80,.40), inset 0 0 0 1px rgba(255,255,255,.10); }
+  50%     { box-shadow:0 0 20px rgba(255,200,80,.75), 0 0 30px rgba(220,38,38,.30), inset 0 0 0 1px rgba(255,255,255,.20); }
 }
 
 /* ─── Trade modal overlay (fullscreen) ─── */
@@ -13420,3 +13896,23 @@ button.gts-card-badge--share:hover{
 @keyframes ba-pulse-k{ 0%,100%{ opacity:.7; transform:scale(1); } 50%{ opacity:1; transform:scale(1.12); } }
 @keyframes ba-trophy-k{ 0%{ transform:scale(0) rotate(-20deg); } 60%{ transform:scale(1.2) rotate(5deg); } 100%{ transform:scale(1) rotate(0); } }
 @keyframes ba-live-blink{ 0%,100%{ opacity:1; } 50%{ opacity:.3; } }
+
+/* ==================== Battle Tower — esthétique du fond ==================== */
+@keyframes bt-particle-rise{
+  0%   { transform: translate3d(0, 0, 0); opacity: 0; }
+  8%   { opacity: var(--bt-particle-opacity, 0.5); }
+  92%  { opacity: var(--bt-particle-opacity, 0.5); }
+  100% { transform: translate3d(var(--bt-particle-drift, 0px), -110vh, 0); opacity: 0; }
+}
+@keyframes bt-beam-pulse{
+  0%, 100% { opacity: 0.62; transform: translateX(-50%) scaleY(1); }
+  50%      { opacity: 0.92; transform: translateX(-50%) scaleY(1.04); }
+}
+@keyframes bt-column-pulse{
+  0%, 100% { opacity: 0.42; }
+  50%      { opacity: 0.68; }
+}
+@keyframes bt-grid-scroll{
+  from { background-position: 0 0; }
+  to   { background-position: 0 64px; }
+}

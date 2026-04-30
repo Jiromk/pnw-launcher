@@ -1569,6 +1569,42 @@ fn cmd_check_disk_space_for_update(manifest: Manifest) -> Result<serde_json::Val
         "message": message,
     }))
 }
+
+/// Réessaie une opération filesystem quand elle échoue avec un code d'erreur Windows transitoire
+/// (AccessDenied / SharingViolation / LockViolation). Laisse le temps à Windows Search, à l'indexation,
+/// à Explorer ou à Defender de relâcher leurs handles avant d'abandonner.
+/// `op_name` est inclus dans le message d'erreur final pour savoir EXACTEMENT quelle ligne a cassé.
+fn retry_access_denied<F, T>(op_name: &str, mut f: F) -> Result<T, String>
+where
+    F: FnMut() -> std::io::Result<T>,
+{
+    // 6 tentatives, délais cumulés = 0 + 300 + 800 + 1500 + 3000 + 5000 = ~10.6 s.
+    const DELAYS_MS: [u64; 6] = [0, 300, 800, 1500, 3000, 5000];
+    let mut last_err: Option<std::io::Error> = None;
+    for (i, delay) in DELAYS_MS.iter().enumerate() {
+        if *delay > 0 {
+            thread::sleep(Duration::from_millis(*delay));
+        }
+        match f() {
+            Ok(v) => return Ok(v),
+            Err(e) => {
+                let code = e.raw_os_error();
+                let transient = matches!(code, Some(5) | Some(32) | Some(33));
+                if !transient || i == DELAYS_MS.len() - 1 {
+                    return Err(format!("{op_name}: {e}"));
+                }
+                last_err = Some(e);
+            }
+        }
+    }
+    Err(format!(
+        "{op_name}: {}",
+        last_err
+            .map(|e| e.to_string())
+            .unwrap_or_else(|| "unknown error".to_string())
+    ))
+}
+
 fn run_download_and_install(
     app: &AppHandle,
     dl: &Arc<Mutex<DlInner>>,
@@ -1822,14 +1858,19 @@ fn run_download_and_install(
     // Extraction
     let staging_dir = target_parent.join(".pnw_staging");
     if staging_dir.exists() {
-        fs::remove_dir_all(&staging_dir).map_err(errs)?;
+        retry_access_denied("cleanup previous .pnw_staging", || {
+            fs::remove_dir_all(&staging_dir)
+        })
+        .map_err(|e| format!("{e} (path: {})", staging_dir.display()))?;
     }
-    fs::create_dir_all(&staging_dir).map_err(errs)?;
-    let file = match std::fs::File::open(&tmp_path) {
+    fs::create_dir_all(&staging_dir)
+        .map_err(|e| format!("create .pnw_staging ({}): {e}", staging_dir.display()))?;
+    let file = match retry_access_denied("open downloaded zip", || std::fs::File::open(&tmp_path))
+    {
         Ok(f) => f,
         Err(e) => {
             let _ = fs::remove_file(&tmp_path);
-            return Err(format!("Impossible d'ouvrir le zip : {e}"));
+            return Err(format!("Impossible d'ouvrir le zip ({}): {e}", tmp_path.display()));
         }
     };
     let mut archive = match ZipArchive::new(file) {
@@ -1846,7 +1887,9 @@ fn run_download_and_install(
     let _ = app.emit("pnw://progress", json!({"stage":"extract","extracted":0,"total":total_entries}));
     let extract_result: Result<(), String> = (|| {
         for i in 0..total_entries {
-            let mut f = archive.by_index(i).map_err(errs)?;
+            let mut f = archive
+                .by_index(i)
+                .map_err(|e| format!("read zip entry #{i}: {e}"))?;
             let name_owned = f.name().to_string();
             if zip_path_is_saves(&name_owned) {
                 if last_extract_emit.elapsed() >= Duration::from_millis(100) || i + 1 == total_entries {
@@ -1857,15 +1900,21 @@ fn run_download_and_install(
             }
             let outpath = sanitize_zip_path(&staging_dir, &name_owned);
             if name_owned.ends_with('/') {
-                fs::create_dir_all(&outpath).map_err(errs)?;
+                fs::create_dir_all(&outpath)
+                    .map_err(|e| format!("create dir {}: {e}", outpath.display()))?;
             } else {
                 if let Some(p) = outpath.parent() {
                     if !p.exists() {
-                        fs::create_dir_all(p).map_err(errs)?;
+                        fs::create_dir_all(p)
+                            .map_err(|e| format!("create parent dir {}: {e}", p.display()))?;
                     }
                 }
-                let mut outfile = std::fs::File::create(&outpath).map_err(errs)?;
-                std::io::copy(&mut f, &mut outfile).map_err(errs)?;
+                let mut outfile = retry_access_denied("create file during extract", || {
+                    std::fs::File::create(&outpath)
+                })
+                .map_err(|e| format!("{e} (path: {})", outpath.display()))?;
+                std::io::copy(&mut f, &mut outfile)
+                    .map_err(|e| format!("write file {}: {e}", outpath.display()))?;
             }
             if last_extract_emit.elapsed() >= Duration::from_millis(100) || i + 1 == total_entries {
                 let _ = app.emit("pnw://progress", json!({"stage":"extract","extracted":i+1,"total":total_entries}));
@@ -1904,22 +1953,40 @@ fn run_download_and_install(
 
     let backup_dir = target_parent.join(".pnw_backup");
     if backup_dir.exists() {
-        fs::remove_dir_all(&backup_dir).map_err(errs)?;
+        retry_access_denied("cleanup previous .pnw_backup", || {
+            fs::remove_dir_all(&backup_dir)
+        })
+        .map_err(|e| format!("{e} (path: {})", backup_dir.display()))?;
     }
     if install_root.exists() {
         // Ne renommer en `.pnw_backup` que s’il y avait une vraie install (exe reconnu).
         // Sinon (dossier `Game` vide ou coquille avant 1ère install) : le supprimer pour libérer le nom.
         if find_game_exe_in_dir(&install_root, 10).is_some() {
-            fs::rename(&install_root, &backup_dir).map_err(errs)?;
+            retry_access_denied("rename install_root→.pnw_backup", || {
+                fs::rename(&install_root, &backup_dir)
+            })
+            .map_err(|e| {
+                format!(
+                    "{e} (from: {} → to: {})",
+                    install_root.display(),
+                    backup_dir.display()
+                )
+            })?;
         } else {
             let _ = fs::remove_dir_all(&install_root);
         }
     }
-    if let Err(e) = fs::rename(&effective_staging, &install_root) {
+    if let Err(e) = retry_access_denied("rename .pnw_staging→install_root", || {
+        fs::rename(&effective_staging, &install_root)
+    }) {
         let _ = fs::remove_dir_all(&staging_dir);
         let _ = fs::remove_dir_all(&effective_staging);
         restore_from_backup(&install_root, &backup_dir);
-        return Err(errs(e));
+        return Err(format!(
+            "{e} (from: {} → to: {})",
+            effective_staging.display(),
+            install_root.display()
+        ));
     }
     // Nettoyage de la coquille staging restante (si on a déballé un sous-dossier)
     if staging_dir.exists() {
@@ -1943,14 +2010,17 @@ fn run_download_and_install(
         cfg.install_dir = original_install_dir.clone();
         cfg.install_etag = original_etag.clone();
         let _ = write_config(&cfg);
-        return Err(errs(e));
+        return Err(format!("write .version in {}: {e}", game_dir.display()));
     }
     if let Err(e) = write_install_snapshot(&game_dir) {
         restore_from_backup(&install_root, &backup_dir);
         cfg.install_dir = original_install_dir.clone();
         cfg.install_etag = original_etag.clone();
         let _ = write_config(&cfg);
-        return Err(errs(e));
+        return Err(format!(
+            "write install_manifest.json in {}: {e}",
+            game_dir.display()
+        ));
     }
 
     let gd_str = game_dir.to_string_lossy().to_string();
@@ -2485,6 +2555,94 @@ fn cmd_insert_save(source_path: String) -> Result<String, String> {
     let dest = saves_dir.join(dest_name.as_ref());
     fs::copy(src, &dest).map_err(errs)?;
     Ok(dest.to_string_lossy().to_string())
+}
+
+/// Importe toutes les sauvegardes trouvées dans un dossier source vers l'installation courante.
+/// Recherche tous les dossiers nommés `Saves`/`Save` (insensible à la casse) dans `source_folder`
+/// et copie leur contenu dans `<install>/Saves`. Ne jamais écraser un fichier existant (skip silencieux).
+/// Utilisé par le flow de migration : le user pointe vers son ancien dossier de jeu, on rapatrie les saves.
+#[tauri::command]
+fn cmd_migrate_saves_from_folder(source_folder: String) -> Result<serde_json::Value, String> {
+    let src = PathBuf::from(&source_folder);
+    if !src.is_dir() {
+        return Err("Dossier source introuvable".into());
+    }
+
+    // Destination : install courante avec un exe détecté
+    let install_dir = current_install_dir()
+        .ok_or_else(|| "Jeu pas encore installé — installez d'abord puis importez".to_string())?;
+    let exe = find_game_exe_in_dir(&install_dir, 10)
+        .ok_or_else(|| "Exécutable PNW introuvable — installez d'abord le jeu".to_string())?;
+    let game_root = exe.parent().unwrap_or(&install_dir).to_path_buf();
+    let dest_saves = game_root.join("Saves");
+    fs::create_dir_all(&dest_saves).map_err(errs)?;
+
+    // Anti self-copy : refuser si la source est sous l'install (éviterait une boucle infinie)
+    let src_canon = src.canonicalize().unwrap_or_else(|_| src.clone());
+    let install_canon = install_dir
+        .canonicalize()
+        .unwrap_or_else(|_| install_dir.clone());
+    if src_canon.starts_with(&install_canon) {
+        return Err("Le dossier source est identique à la destination".into());
+    }
+
+    // Walk source à la recherche de dossiers Saves/Save (insensible à la casse via is_save_folder_name)
+    let mut found_dirs: Vec<PathBuf> = Vec::new();
+    for entry in WalkDir::new(&src)
+        .follow_links(false)
+        .max_depth(8)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        if entry.file_type().is_dir() {
+            if let Some(name) = entry.file_name().to_str() {
+                if is_save_folder_name(name) {
+                    found_dirs.push(entry.into_path());
+                }
+            }
+        }
+    }
+
+    // Copie du contenu de chaque dossier trouvé. Skip sur collision pour ne jamais écraser une save.
+    let mut copied = 0usize;
+    for save_dir in &found_dirs {
+        let entries = match fs::read_dir(save_dir) {
+            Ok(it) => it,
+            Err(_) => continue, // dossier lu partiellement / inaccessible : on tente le suivant
+        };
+        for entry in entries {
+            let e = match entry {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+            let src_path = e.path();
+            let out = dest_saves.join(e.file_name());
+            if out.exists() {
+                continue; // jamais écraser une save existante
+            }
+            let copy_res = if src_path.is_dir() {
+                copy_dir_recursive(&src_path, &out).map_err(|err| err.to_string())
+            } else {
+                fs::copy(&src_path, &out).map(|_| ()).map_err(errs)
+            };
+            match copy_res {
+                Ok(()) => copied += 1,
+                Err(err) => {
+                    return Err(format!(
+                        "copie save {} → {}: {err}",
+                        src_path.display(),
+                        out.display()
+                    ));
+                }
+            }
+        }
+    }
+
+    Ok(json!({
+        "foundDirs": found_dirs.len(),
+        "copied": copied,
+        "destination": dest_saves.to_string_lossy(),
+    }))
 }
 
 #[tauri::command]
@@ -3050,6 +3208,7 @@ fn cmd_is_game_running() -> bool {
     false
 }
 
+
 /// Écrit un blob (base64) dans un fichier de save, en créant d'abord un backup `.bak`.
 /// Retourne le chemin du backup créé.
 #[tauri::command]
@@ -3447,6 +3606,7 @@ fn main() {
             cmd_discord_set_presence,
             cmd_launch_game,
             cmd_insert_save,
+            cmd_migrate_saves_from_folder,
             cmd_list_saves,
             cmd_get_save_blob,
             cmd_latest_save_blob,
@@ -3478,7 +3638,9 @@ fn main() {
             battle_relay::cmd_battle_write_inbox,
             battle_relay::cmd_battle_write_trigger,
             battle_relay::cmd_battle_cleanup,
+            battle_relay::cmd_battle_inbox_exists,
             battle_relay::cmd_battle_save_log,
+            battle_relay::cmd_battle_read_bet_done,
         ])
         .run(tauri::generate_context!())
         .expect("erreur au démarrage");

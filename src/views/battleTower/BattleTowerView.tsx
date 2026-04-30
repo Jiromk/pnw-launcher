@@ -30,6 +30,7 @@ import {
   FaTriangleExclamation,
   FaTrophy,
   FaUserCheck,
+  FaUserGroup,
   FaUsers,
   FaVenus,
   FaWandMagicSparkles,
@@ -89,12 +90,14 @@ import { BattleTowerHome } from "./BattleTowerHome";
 import { CombatLeadView } from "./CombatLeadView";
 import { CombatAmicalView } from "./CombatAmicalView";
 import { BattleTowerProfile } from "./BattleTowerProfile";
+import { PlayersListView } from "./PlayersListView";
 import { RankedQueueModal } from "./RankedQueueModal";
 import { MatchFoundPopup } from "./MatchFoundPopup";
 import { PromotionCelebration } from "./PromotionCelebration";
-import type { RankTier } from "../../ranked";
+import { TowerStatusGate } from "./TowerStatusGate";
+import { tierTheme, type RankTier } from "../../ranked";
 
-type Page = "home" | "lead" | "amical" | "profile";
+type Page = "home" | "lead" | "amical" | "profile" | "players";
 
 interface Props {
   session: Session;
@@ -117,6 +120,11 @@ interface Props {
   battleTimeoutRef: React.MutableRefObject<ReturnType<typeof setTimeout> | null>;
   uiLang?: UiLang;
   onBack: () => void;
+  /** Cible pre-selectionnee depuis la card de profil du chat. Si non-null,
+   *  on bascule automatiquement sur Combat Amical avec ce joueur deja selectionne. */
+  pendingBattleTarget?: ChatProfile | null;
+  /** Appele apres consommation pour eviter une re-application a chaque render. */
+  onPendingBattleTargetConsumed?: () => void;
 }
 
 export default function BattleTowerView({
@@ -137,6 +145,8 @@ export default function BattleTowerView({
   battleTimeoutRef,
   uiLang,
   onBack,
+  pendingBattleTarget,
+  onPendingBattleTargetConsumed,
 }: Props) {
   const ui = useMemo(
     () => getLauncherUi(uiLang ?? uiLangFromGameLang("fr")).battleTower,
@@ -149,6 +159,18 @@ export default function BattleTowerView({
   const [inviteTimer, setInviteTimer] = useState(0);
   /** Profil actuellement consulté sur la page "profile". null = profil du joueur courant. */
   const [viewedProfile, setViewedProfile] = useState<ChatProfile | null>(null);
+  /** Cible pre-selectionnee dans CombatAmicalView (relay depuis pendingBattleTarget). */
+  const [preselectedAmicalTarget, setPreselectedAmicalTarget] = useState<ChatProfile | null>(null);
+
+  // Quand un target arrive depuis le chat → on bascule sur "amical" et on
+  // pre-selectionne ce joueur. Le parent est notifie pour qu'il clear son state
+  // (sinon la moindre re-render relancerait l'effet).
+  useEffect(() => {
+    if (!pendingBattleTarget) return;
+    setPreselectedAmicalTarget(pendingBattleTarget);
+    setPage("amical");
+    onPendingBattleTargetConsumed?.();
+  }, [pendingBattleTarget, onPendingBattleTargetConsumed]);
 
   // ── Ranked matchmaking state ──
   const [myPvpStats, setMyPvpStats] = useState<PvpStats | null>(null);
@@ -357,6 +379,9 @@ export default function BattleTowerView({
   }, [session.user.id]);
 
   // ── Handlers pour le bouton "Chercher un match" ──
+  // Note : refreshBattleTeam / checkBanlistOrShowError / checkStatsOrShowError sont
+  // déclarés plus bas dans le composant. Le callback est invoqué au click utilisateur,
+  // donc bien après leur initialisation. On les omet du deps array pour éviter le TDZ.
   const onStartRankedSearch = useCallback(async () => {
     // Vérifie que le jeu est lancé avant de queue-up
     const gameUp = await isGameRunning();
@@ -364,6 +389,11 @@ export default function BattleTowerView({
       setErrorPopup(ui.lead.queueBtnNeedGame);
       return;
     }
+    // ⚠️ La banlist s'applique uniquement en ranked : on bloque la queue
+    // si l'équipe contient un Pokémon banni.
+    const freshTeam = await refreshBattleTeam();
+    if (!(await checkBanlistOrShowError(freshTeam))) return;
+    if (!(await checkStatsOrShowError(freshTeam))) return;
     setRankedSearching(true);
     setRankedError(null);
     setRankedWaitMs(0);
@@ -373,7 +403,13 @@ export default function BattleTowerView({
       session.user.id,
       profile.display_name || profile.username || "Joueur",
     );
-  }, [session.user.id, profile.display_name, profile.username, ui.lead.queueBtnNeedGame]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    session.user.id,
+    profile.display_name,
+    profile.username,
+    ui.lead.queueBtnNeedGame,
+  ]);
 
   const onCancelRankedSearch = useCallback(() => {
     sendRankedQueueLeave(session.user.id);
@@ -656,7 +692,7 @@ export default function BattleTowerView({
         return;
       }
       const freshTeam = await refreshBattleTeam();
-      if (!(await checkBanlistOrShowError(freshTeam))) return;
+      // ⚠️ La banlist ne s'applique PLUS en amical — uniquement en ranked.
       if (!(await checkStatsOrShowError(freshTeam))) return;
       if (battleState.phase === "complete" || battleState.phase === "error") {
         setBattleState({ phase: "idle" });
@@ -961,11 +997,7 @@ export default function BattleTowerView({
       return;
     }
     const freshTeam = await refreshBattleTeam();
-    if (!(await checkBanlistOrShowError(freshTeam))) {
-      sendBattleDecline(st.roomCode, st.partnerId, session.user.id);
-      setBattleState({ phase: "idle" });
-      return;
-    }
+    // ⚠️ La banlist ne s'applique PLUS en amical — uniquement en ranked.
     if (!(await checkStatsOrShowError(freshTeam))) {
       sendBattleDecline(st.roomCode, st.partnerId, session.user.id);
       setBattleState({ phase: "idle" });
@@ -1149,7 +1181,30 @@ export default function BattleTowerView({
 
   const stAny = battleState as any;
 
+  // ── Esthétique de la tour : palette dérivée du tier du joueur ──
+  const towerTheme = useMemo(() => {
+    const tier = (myPvpStats?.battle_rank_tier as RankTier) ?? "unranked";
+    return tierTheme(tier);
+  }, [myPvpStats?.battle_rank_tier]);
+
+  // Particules ascendantes — pseudo-aléatoires mais stables (pas de
+  // re-randomisation à chaque render).
+  const towerParticles = useMemo(
+    () =>
+      Array.from({ length: 28 }, (_, i) => ({
+        left: (i * 71 + 13) % 100,
+        delay: ((i * 0.83) % 14).toFixed(2),
+        duration: 14 + ((i * 7) % 16),
+        size: 1 + ((i * 3) % 4),
+        drift: ((i % 5) - 2) * 22,
+        opacity: 0.35 + (((i * 11) % 60) / 100),
+      })),
+    [],
+  );
+
   return (
+    <TowerStatusGate siteUrl={siteUrl} onBack={onBack}>
+      {(towerConfig) => (
     <div
       className="relative h-full overflow-y-auto overscroll-contain bg-gradient-to-b from-[#0a1020] via-[#0d1224] to-[#080c18]"
       style={{
@@ -1158,8 +1213,10 @@ export default function BattleTowerView({
         scrollbarGutter: "stable",
       }}
     >
-      {/* Animated background orbs (pointer-events none) */}
-      <div className="pointer-events-none absolute inset-0 overflow-hidden">
+      {/* ─── Tower background : multi-couches, sticky (suit le viewport
+          quelle que soit la sous-page et la longueur de scroll) ─── */}
+      <div className="pointer-events-none sticky top-0 z-0 -mb-[100vh] h-screen overflow-hidden">
+        {/* Orbes ambiants (existants) */}
         <div
           className="absolute -top-40 -left-40 h-[540px] w-[540px] rounded-full bg-emerald-500/[0.06] blur-[110px]"
           style={{ animation: "update-orb-1 18s ease-in-out infinite" }}
@@ -1171,6 +1228,106 @@ export default function BattleTowerView({
         <div
           className="absolute top-1/3 left-1/2 h-[360px] w-[360px] -translate-x-1/2 rounded-full bg-sky-500/[0.04] blur-[100px]"
           style={{ animation: "update-orb-1 22s ease-in-out infinite reverse" }}
+        />
+
+        {/* A. Verticalité — faisceau central + 2 colonnes latérales (tier-aware) */}
+        <div
+          className="absolute inset-y-0"
+          style={{
+            left: "50%",
+            width: "min(46vw, 540px)",
+            transform: "translateX(-50%)",
+            background: `radial-gradient(ellipse 50% 100% at 50% 50%, ${towerTheme.glow}, transparent 72%)`,
+            animation: "bt-beam-pulse 7s ease-in-out infinite",
+          }}
+        />
+        <div
+          className="absolute inset-y-0 left-[10%] w-[220px]"
+          style={{
+            background: `linear-gradient(to top, ${towerTheme.glow}, transparent 65%)`,
+            filter: "blur(48px)",
+            animation: "bt-column-pulse 9s ease-in-out infinite",
+          }}
+        />
+        <div
+          className="absolute inset-y-0 right-[10%] w-[220px]"
+          style={{
+            background: `linear-gradient(to top, ${towerTheme.glow}, transparent 65%)`,
+            filter: "blur(48px)",
+            animation: "bt-column-pulse 9s ease-in-out 1.5s infinite",
+          }}
+        />
+
+        {/* B. Sol en perspective — grille holographique tier-aware */}
+        <div
+          className="absolute inset-x-0 bottom-0"
+          style={{
+            height: "60vh",
+            perspective: "640px",
+            perspectiveOrigin: "50% 100%",
+          }}
+        >
+          <div
+            className="absolute inset-0 origin-bottom"
+            style={{
+              transform: "rotateX(60deg)",
+              backgroundImage: `linear-gradient(to right, ${towerTheme.accent}38 1px, transparent 1px), linear-gradient(to bottom, ${towerTheme.accent}38 1px, transparent 1px)`,
+              backgroundSize: "64px 64px",
+              WebkitMaskImage:
+                "linear-gradient(to top, transparent 0%, black 18%, black 82%, transparent 100%)",
+              maskImage:
+                "linear-gradient(to top, transparent 0%, black 18%, black 82%, transparent 100%)",
+              animation: "bt-grid-scroll 12s linear infinite",
+            }}
+          />
+          {/* Halo qui relie le sol au reste de la scène */}
+          <div
+            className="absolute inset-x-0 bottom-0 h-1/2"
+            style={{
+              background: `radial-gradient(ellipse at 50% 100%, ${towerTheme.glow} 0%, transparent 70%)`,
+            }}
+          />
+        </div>
+
+        {/* C. Particules ascendantes (tier-aware) */}
+        {towerParticles.map((p, i) => (
+          <div
+            key={i}
+            className="absolute rounded-full"
+            style={
+              {
+                left: `${p.left}%`,
+                bottom: "-12px",
+                width: `${p.size}px`,
+                height: `${p.size}px`,
+                background: towerTheme.accent,
+                boxShadow: `0 0 ${p.size * 4}px ${towerTheme.glowStrong}`,
+                animation: `bt-particle-rise ${p.duration}s linear ${p.delay}s infinite`,
+                willChange: "transform, opacity",
+                "--bt-particle-opacity": p.opacity.toFixed(2),
+                "--bt-particle-drift": `${p.drift}px`,
+              } as React.CSSProperties
+            }
+          />
+        ))}
+
+        {/* E. Vignette */}
+        <div
+          className="absolute inset-0"
+          style={{
+            background:
+              "radial-gradient(ellipse at center, transparent 38%, rgba(0,0,0,0.55) 100%)",
+          }}
+        />
+
+        {/* E. Grain (SVG noise inline, blend overlay) */}
+        <div
+          className="absolute inset-0 opacity-[0.05] mix-blend-overlay"
+          style={{
+            backgroundImage:
+              "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>\")",
+            backgroundSize: "200px 200px",
+          }}
         />
       </div>
 
@@ -1358,6 +1515,12 @@ export default function BattleTowerView({
               onClick={() => setPage("amical")}
               label={ui.nav.amical}
               icon={<FaUsers className="text-xs" />}
+            />
+            <NavPill
+              active={page === "players"}
+              onClick={() => setPage("players")}
+              label={ui.nav.players}
+              icon={<FaUserGroup className="text-xs" />}
             />
           </div>
 
@@ -1680,7 +1843,8 @@ export default function BattleTowerView({
           <BattleTowerHome
             labels={ui.home}
             onNavigate={(p) => setPage(p)}
-            siteUrl={siteUrl}
+            myPvpStats={myPvpStats}
+            towerConfig={towerConfig}
           />
         )}
         {page === "lead" && (
@@ -1699,6 +1863,24 @@ export default function BattleTowerView({
             isSearching={rankedSearching}
             isInBattle={battleState.phase !== "idle" && battleState.phase !== "complete"}
             onStartSearch={onStartRankedSearch}
+            currentUserId={session.user.id}
+            onViewProfile={(userId) => {
+              const found = allMembers.find((m) => m.id === userId);
+              if (found) {
+                setViewedProfile(found);
+              } else {
+                supabase
+                  .from("profiles")
+                  .select("id, discord_id, username, display_name, avatar_url, banner_url, bio, roles, created_at")
+                  .eq("id", userId)
+                  .single()
+                  .then(({ data }) => {
+                    if (data) setViewedProfile(data as ChatProfile);
+                  });
+              }
+              setPage("profile");
+            }}
+            siteUrl={siteUrl}
           />
         )}
         {page === "amical" && (
@@ -1718,6 +1900,21 @@ export default function BattleTowerView({
               setPage("profile");
             }}
             battleStateIsIdle={battleState.phase === "idle" || battleState.phase === "complete" || battleState.phase === "error"}
+            preselectedTarget={preselectedAmicalTarget}
+            onPreselectConsumed={() => setPreselectedAmicalTarget(null)}
+          />
+        )}
+        {page === "players" && (
+          <PlayersListView
+            labels={ui.players}
+            allMembers={allMembers}
+            onlineUserIds={onlineUserIds}
+            gameLivePlayers={gameLivePlayers}
+            currentUserId={session.user.id}
+            onViewProfile={(p) => {
+              setViewedProfile(p);
+              setPage("profile");
+            }}
           />
         )}
         {page === "profile" && (
@@ -2040,6 +2237,8 @@ export default function BattleTowerView({
         />
       )}
     </div>
+      )}
+    </TowerStatusGate>
   );
 }
 

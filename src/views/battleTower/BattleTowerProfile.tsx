@@ -17,6 +17,8 @@ import {
   FaBolt,
   FaBoltLightning,
   FaArrowLeft,
+  FaArrowTrendUp,
+  FaArrowTrendDown,
   FaEye,
   FaGem,
 } from "react-icons/fa6";
@@ -261,19 +263,6 @@ export function BattleTowerProfile({ labels, profile, isSelf, onBack, onViewOppo
           <FaArrowLeft className="text-xs transition group-hover:-translate-x-0.5" />
           {labels.backToAmical}
         </button>
-      )}
-
-      {/* Badge "Profil de X" quand on consulte quelqu'un d'autre */}
-      {!isSelf && (
-        <div
-          className="flex items-center justify-center"
-          style={{ animation: "update-page-in 0.4s ease-out 0.05s both" }}
-        >
-          <span className="inline-flex items-center gap-2 rounded-full border border-amber-400/25 bg-amber-500/[0.08] px-4 py-1.5 text-[11px] font-bold uppercase tracking-wider text-amber-200">
-            <FaEye className="text-[10px]" />
-            {labels.viewingOther(displayName)}
-          </span>
-        </div>
       )}
 
       {/* ── Hero : bannière + avatar + nom ── */}
@@ -1204,6 +1193,7 @@ function MatchCard({
           glow: "rgba(52,211,153,0.18)",
           softGlow: "rgba(52,211,153,0.10)",
           pulseGlow: "rgba(16,185,129,0.55)",
+          bgTint: "from-emerald-500/[0.06] via-white/[0.012] to-transparent",
           label: labels.history.resultWin,
           labelClass: "text-emerald-200",
           labelShadow: "0 0 24px rgba(16,185,129,0.35)",
@@ -1222,6 +1212,7 @@ function MatchCard({
             glow: "rgba(244,63,94,0.18)",
             softGlow: "rgba(244,63,94,0.10)",
             pulseGlow: "rgba(244,63,94,0.55)",
+            bgTint: "from-rose-500/[0.055] via-white/[0.012] to-transparent",
             label: labels.history.resultLoss,
             labelClass: "text-rose-200",
             labelShadow: "0 0 24px rgba(244,63,94,0.35)",
@@ -1239,6 +1230,7 @@ function MatchCard({
             glow: "rgba(245,158,11,0.18)",
             softGlow: "rgba(245,158,11,0.10)",
             pulseGlow: "rgba(245,158,11,0.55)",
+            bgTint: "from-amber-500/[0.055] via-white/[0.012] to-transparent",
             label: labels.history.resultDraw,
             labelClass: "text-amber-200",
             labelShadow: "0 0 24px rgba(245,158,11,0.35)",
@@ -1274,7 +1266,7 @@ function MatchCard({
 
   return (
     <li
-      className={`match-card group relative overflow-hidden rounded-2xl border ${resultConfig.borderColor} bg-gradient-to-br from-white/[0.04] via-white/[0.015] to-transparent ring-1 ring-inset ${resultConfig.ringColor} backdrop-blur-sm transition duration-300 hover:-translate-y-[3px] hover:border-white/25 hover:shadow-[0_18px_40px_-14px_rgba(0,0,0,0.75)] ${
+      className={`match-card group relative overflow-hidden rounded-2xl border ${resultConfig.borderColor} bg-gradient-to-br ${resultConfig.bgTint} ring-1 ring-inset ${resultConfig.ringColor} backdrop-blur-sm transition duration-300 hover:-translate-y-[3px] hover:border-white/25 hover:shadow-[0_18px_40px_-14px_rgba(0,0,0,0.75)] ${
         isBet ? "match-bet-sheen" : ""
       }`}
       style={{ animation: `match-card-in 0.45s ease-out ${Math.min(index * 0.04, 0.4)}s both` }}
@@ -1325,7 +1317,7 @@ function MatchCard({
           <div className="flex min-w-0 flex-1 flex-col gap-1">
             <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
               <span
-                className={`text-[17px] font-extrabold tracking-tight ${resultConfig.labelClass}`}
+                className={`text-[18px] font-extrabold tracking-tight ${resultConfig.labelClass}`}
                 style={{ textShadow: resultConfig.labelShadow }}
               >
                 {resultConfig.label}
@@ -1384,14 +1376,11 @@ function MatchCard({
                   <span>{duration}</span>
                 </>
               )}
-              {matchType === "ranked" && match.lp_delta != null && (
-                <>
-                  <span className="text-white/20">·</span>
-                  <LpDelta delta={match.lp_delta} labels={labels} />
-                </>
-              )}
             </div>
           </div>
+
+          {/* LP delta badge (ranked uniquement) — ancré à droite du header */}
+          <LpDeltaBadge delta={match.lp_delta} matchType={matchType} />
         </div>
 
         {/* Bet info : affiché seulement si c'était un match avec pari */}
@@ -1816,24 +1805,74 @@ function BetMonThumb({
   );
 }
 
-function LpDelta({
+/**
+ * Badge LP delta — affiché à droite du header de chaque match ranked.
+ *  - Win  → vert émeraude + flèche montante
+ *  - Loss → rose + flèche descendante
+ *  - Draw → ambre, "±0"
+ *  - Match ranked sans data (vieux match avant le tracking) → "—" neutre
+ *  - Amical → null (rien à afficher)
+ */
+function LpDeltaBadge({
   delta,
-  labels,
+  matchType,
 }: {
-  delta: number;
-  labels: BattleTowerProfileLabels;
+  delta: number | null;
+  matchType: string;
 }) {
-  if (delta > 0) {
+  if (matchType !== "ranked") return null;
+
+  if (delta == null) {
     return (
-      <span className="font-bold text-emerald-300">
-        {labels.history.lpGain(delta)}
-      </span>
+      <div
+        className="flex shrink-0 items-center gap-1.5 rounded-xl border border-white/[0.08] bg-white/[0.02] px-3 py-1.5 ring-1 ring-inset ring-white/[0.03]"
+        title="LP non enregistré pour ce match"
+      >
+        <span className="text-[15px] font-extrabold leading-none text-white/30">—</span>
+        <span className="text-[10px] font-bold uppercase tracking-wider text-white/30">LP</span>
+      </div>
     );
   }
-  if (delta < 0) {
-    return <span className="font-bold text-rose-300">{labels.history.lpLoss(-delta)}</span>;
+
+  if (delta > 0) {
+    return (
+      <div className="flex shrink-0 items-center gap-1.5 rounded-xl border-2 border-emerald-400/40 bg-gradient-to-br from-emerald-500/[0.20] via-emerald-500/[0.08] to-transparent px-3 py-1.5 ring-1 ring-inset ring-emerald-300/15 shadow-[0_4px_18px_-6px_rgba(16,185,129,0.45)]">
+        <FaArrowTrendUp className="text-[12px] text-emerald-300" />
+        <span className="text-[15px] font-extrabold leading-none text-emerald-200 tabular-nums">
+          +{delta}
+        </span>
+        <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-300/85">
+          LP
+        </span>
+      </div>
+    );
   }
-  return <span className="text-white/45">{labels.history.lpZero}</span>;
+
+  if (delta < 0) {
+    return (
+      <div className="flex shrink-0 items-center gap-1.5 rounded-xl border-2 border-rose-400/40 bg-gradient-to-br from-rose-500/[0.20] via-rose-500/[0.08] to-transparent px-3 py-1.5 ring-1 ring-inset ring-rose-300/15 shadow-[0_4px_18px_-6px_rgba(244,63,94,0.45)]">
+        <FaArrowTrendDown className="text-[12px] text-rose-300" />
+        <span className="text-[15px] font-extrabold leading-none text-rose-200 tabular-nums">
+          {delta}
+        </span>
+        <span className="text-[10px] font-bold uppercase tracking-wider text-rose-300/85">
+          LP
+        </span>
+      </div>
+    );
+  }
+
+  // delta === 0 → match neutre LP (rare, ex. forfait égalité)
+  return (
+    <div className="flex shrink-0 items-center gap-1.5 rounded-xl border-2 border-amber-400/40 bg-gradient-to-br from-amber-500/[0.18] via-amber-500/[0.06] to-transparent px-3 py-1.5 ring-1 ring-inset ring-amber-300/15">
+      <span className="text-[15px] font-extrabold leading-none text-amber-200 tabular-nums">
+        ±0
+      </span>
+      <span className="text-[10px] font-bold uppercase tracking-wider text-amber-300/85">
+        LP
+      </span>
+    </div>
+  );
 }
 
 function MonSlot({
