@@ -287,7 +287,21 @@ function SeasonAnnouncementBanner({ config }: { config?: TowerConfig | null }) {
 
         {hasSeasonContent && (
           <div className="relative px-6 py-5">
-            <div className="flex items-start gap-4">
+            {/* Bannière saison en background si configurée */}
+            {season.bannerUrl && (
+              <>
+                <div
+                  className="pointer-events-none absolute inset-0 bg-cover bg-center opacity-50"
+                  style={{ backgroundImage: `url(${season.bannerUrl})` }}
+                  aria-hidden
+                />
+                <div
+                  className="pointer-events-none absolute inset-0 bg-gradient-to-r from-[#0d0918] via-[#0d0918]/85 to-[#0d0918]/30"
+                  aria-hidden
+                />
+              </>
+            )}
+            <div className="relative flex items-start gap-4">
               <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-amber-400/25 to-orange-500/15 ring-1 ring-amber-300/30">
                 <FaTrophy className="text-xl text-amber-100 drop-shadow-[0_0_8px_rgba(245,158,11,0.5)]" />
               </div>
