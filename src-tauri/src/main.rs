@@ -4,7 +4,7 @@ use std::{
     collections::hash_map::DefaultHasher,
     fs::{self, OpenOptions},
     hash::{Hash, Hasher},
-    io::{copy, Read},
+    io::{copy, Read, Write},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
     thread,
@@ -26,7 +26,7 @@ use serde_json::json;
 use discord_presence::models::rich_presence::{Activity, ActivityTimestamps};
 use discord_presence::Client as DiscordClient;
 use tauri::Emitter; // pour app.emit(...)
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, State};
 use walkdir::WalkDir;
 use zip::ZipArchive;
 
@@ -3456,16 +3456,13 @@ fn main() {
             dl: Arc::new(Mutex::new(DlInner::default())),
             discord: discord_arc.clone(),
         })
-        .setup(move |app| {
+        .setup(move |_app| {
             if let Ok(mut client) = discord_arc.lock() {
                 let _ = discord_set_presence(&mut *client, "menu", None, None, None, None);
             }
-            // DevTools uniquement en debug — pas en release pour empêcher
-            // un utilisateur final d'inspecter ou modifier le client (anti-cheat).
-            #[cfg(debug_assertions)]
-            if let Some(w) = app.get_webview_window("main") {
-                w.open_devtools();
-            }
+            // En dev, F12 / clic-droit > Inspecter ouvre manuellement les devtools.
+            // En release, les devtools sont désactivés par Tauri pour empêcher un
+            // utilisateur final d'inspecter ou modifier le client (anti-cheat).
             Ok(())
         })
         .plugin(tauri_plugin_dialog::init()) // <— IMPORTANT pour open() côté front

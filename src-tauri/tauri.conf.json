@@ -5,9 +5,16 @@
       "assetProtocol": {
         "enable": true,
         "scope": [
-          "$LOCALAPPDATA/PNW Launcher/**",
+          "$HOME/**",
+          "$LOCALAPPDATA/**",
           "$APPDATA/**",
-          "$RESOURCE/**"
+          "$RESOURCE/**",
+          "$DESKTOP/**",
+          "$DOCUMENT/**",
+          "$DOWNLOAD/**",
+          "$PICTURE/**",
+          "$VIDEO/**",
+          "$AUDIO/**"
         ]
       },
       "capabilities": [
