@@ -524,10 +524,19 @@ export function startRelay(
       }, timeoutMs);
     });
   };
+  // Notifie le caller du résultat du combat. Synchronise immédiatement le
+  // result (utilisé par onDisconnect dans le même tick) puis re-notifie quand
+  // le match_token signé arrive du serveur. Le caller doit traiter les 2 appels
+  // comme idempotents (set battleResultRef + matchTokenRef sans side-effect).
   const fireBattleResult = async (result: string) => {
     if (!onBattleResult) return;
+    // Appel immédiat (synchrone) — le caller peut maintenant lire result
+    // dans onDisconnect qui suit dans le même tick. Token possiblement null.
+    onBattleResult(result, latestMatchToken);
+    if (latestMatchToken) return;
+    // Attendre l'arrivée du token signé puis re-notifier pour set matchTokenRef.
     const token = await awaitMatchToken();
-    onBattleResult(result, token);
+    if (token) onBattleResult(result, token);
   };
   const turnLog: { turn: number; sentAt: string; resolvedAt: string; rngCount: number; rngSeeds?: number[]; myActions: any; opponentActions: any; waitTimeMs?: number }[] = [];
   const eventLog: { time: string; event: string; data?: any }[] = [];
