@@ -327,6 +327,13 @@ export type RecordBattleExtras = {
   myTeam?: BattleTeamSnapshot[] | null;
   betMode?: boolean;
   betPokemonPreview?: Record<string, unknown>;
+  /**
+   * Token HMAC signé par le battle-server prouvant l'authenticité du résultat.
+   * Émis par le serveur via l'event `match_token` à la fin du combat. Sans token
+   * valide, la fonction Postgres log un warning (mode soft pendant la migration)
+   * et passera en rejet strict une fois tous les clients à jour.
+   */
+  matchToken?: string | null;
 };
 
 /**
@@ -380,6 +387,7 @@ export async function recordBattleResult(
       p_my_team: extras.myTeam ?? null,
       p_bet_mode: extras.betMode ?? false,
       p_bet_pokemon_preview: extras.betPokemonPreview ?? null,
+      p_match_token: extras.matchToken ?? null,
     });
     if (error) {
       console.warn("[battle] record_friendly_battle RPC failed:", error.message);
@@ -399,6 +407,7 @@ export async function recordBattleResult(
     p_my_team: extras.myTeam ?? null,
     p_bet_mode: extras.betMode ?? false,
     p_bet_pokemon_preview: extras.betPokemonPreview ?? null,
+    p_match_token: extras.matchToken ?? null,
   });
 
   if (error) {

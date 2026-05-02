@@ -191,6 +191,9 @@ export default function BattleTowerView({
   const battleStartedAtRef = useRef<string>("");
   const turnCountRef = useRef(0);
   const battleResultRef = useRef<string>("");
+  // Token HMAC signé par le battle-server, reçu via l'event `match_token`.
+  // Passé à record_*_battle pour que la fonction Postgres vérifie l'authenticité.
+  const matchTokenRef = useRef<string | null>(null);
   const lastRecordedRoomRef = useRef<string>("");
   /** Snapshot de l'équipe capturée au moment du défi/acceptation (= la vraie team utilisée en combat). */
   const battleTeamSnapshotRef = useRef<TeamMember[] | null>(null);
@@ -300,6 +303,7 @@ export default function BattleTowerView({
         battleStartedAtRef.current = new Date().toISOString();
         turnCountRef.current = 0;
         battleResultRef.current = "";
+        matchTokenRef.current = null;
 
         // Démarre le relay (même mécanique que l'amical)
         const cleanupRelay = startRelay(
@@ -348,9 +352,11 @@ export default function BattleTowerView({
           },
           undefined,
           (count) => setSpectatorCount(count),
-          (result) => {
+          (result, token) => {
             battleResultRef.current = result;
+            if (token) matchTokenRef.current = token;
           },
+          "ranked",
         );
         battleRelayCleanupRef.current = cleanupRelay;
       },
@@ -582,6 +588,7 @@ export default function BattleTowerView({
             myTeam: snapshotTeam(teamForRecord),
             betMode: st.betMode || false,
             betPokemonPreview: st.myBet ? (({ boxIdx: _b, slotIdx: _s, pokemonB64: _p, ...rest }: any) => rest)(st.myBet) : undefined,
+            matchToken: matchTokenRef.current,
           },
         );
 
@@ -880,6 +887,7 @@ export default function BattleTowerView({
     battleStartedAtRef.current = new Date().toISOString();
     turnCountRef.current = 0;
     battleResultRef.current = "";
+    matchTokenRef.current = null;
     const cleanup = startRelay(
       st.roomCode,
       session.user.id,
@@ -915,7 +923,11 @@ export default function BattleTowerView({
       },
       () => { turnCountRef.current++; },
       (count) => { setSpectatorCount(count); },
-      (result) => { battleResultRef.current = result; },
+      (result, token) => {
+        battleResultRef.current = result;
+        if (token) matchTokenRef.current = token;
+      },
+      "amical",
     );
     battleRelayCleanupRef.current = cleanup;
   }, [battleState, session.user.id, setBattleState, battleRelayCleanupRef]);
@@ -1030,6 +1042,7 @@ export default function BattleTowerView({
     battleStartedAtRef.current = new Date().toISOString();
     turnCountRef.current = 0;
     battleResultRef.current = "";
+    matchTokenRef.current = null;
     const cleanup = startRelay(
       st.roomCode,
       session.user.id,
@@ -1099,9 +1112,11 @@ export default function BattleTowerView({
       (count) => {
         setSpectatorCount(count);
       },
-      (result) => {
+      (result, token) => {
         battleResultRef.current = result;
+        if (token) matchTokenRef.current = token;
       },
+      (st.matchType as "amical" | "ranked") ?? "amical",
     );
     battleRelayCleanupRef.current = cleanup;
   }, [battleState, session, profile, setBattleState, battleRelayCleanupRef, ui.errors.gameNotRunningAccept, refreshBattleTeam, checkBanlistOrShowError, checkStatsOrShowError]);
@@ -1147,6 +1162,7 @@ export default function BattleTowerView({
             matchType: matchTypeForForfeit,
             lpDelta: null,
             myTeam: snapshotTeam(teamForRecord),
+            matchToken: matchTokenRef.current,
           },
         );
         if (rankedResult && rankedResult.wasRecorded) {

@@ -442,6 +442,9 @@ export function playTurnSound(): void {
   } catch {}
 }
 
+/** Type de match — le serveur en a besoin pour signer le bon match_type dans le HMAC. */
+export type BattleMatchType = "ranked" | "amical";
+
 export function startRelay(
   roomCode: string,
   myUserId: string,
@@ -449,7 +452,8 @@ export function startRelay(
   onDisconnect?: (reason?: "forfeit" | "crash" | "opponent_forfeit" | "opponent_crash" | "game_end" | "opponent_game_end") => void,
   onTurnReady?: () => void,
   onSpectatorCount?: (count: number) => void,
-  onBattleResult?: (result: string) => void,
+  onBattleResult?: (result: string, matchToken?: string | null) => void,
+  matchType: BattleMatchType = "amical",
 ): () => void {
   let running = true;
   let battleDetected = false;
@@ -461,6 +465,28 @@ export function startRelay(
   let initialDataSent = false; // envoyer player_data UNE SEULE FOIS
   let lastResolvedTurn = 0; // guard: ignorer les battle_command pour les tours deja resolus
   let switchResolvedForPhase = false; // guard: ignorer les battle_switch apres resolution
+  // ─── Match token (HMAC signed by battle-server) ───
+  // Stocké à réception de l'event `match_token`. Passé à onBattleResult pour
+  // que le caller puisse le forwarder à record_*_battle qui vérifie la signature.
+  let latestMatchToken: string | null = null;
+  let matchTokenResolver: ((t: string | null) => void) | null = null;
+  const awaitMatchToken = (timeoutMs = 1500): Promise<string | null> => {
+    if (latestMatchToken) return Promise.resolve(latestMatchToken);
+    return new Promise((resolve) => {
+      matchTokenResolver = resolve;
+      setTimeout(() => {
+        if (matchTokenResolver) {
+          matchTokenResolver(latestMatchToken);
+          matchTokenResolver = null;
+        }
+      }, timeoutMs);
+    });
+  };
+  const fireBattleResult = async (result: string) => {
+    if (!onBattleResult) return;
+    const token = await awaitMatchToken();
+    onBattleResult(result, token);
+  };
   const turnLog: { turn: number; sentAt: string; resolvedAt: string; rngCount: number; rngSeeds?: number[]; myActions: any; opponentActions: any; waitTimeMs?: number }[] = [];
   const eventLog: { time: string; event: string; data?: any }[] = [];
   // Exposer les logs pour saveBattleLog
@@ -601,6 +627,19 @@ export function startRelay(
     onSpectatorCount?.(data.count);
   });
 
+  // ─── Match token (HMAC signed by server) ───
+  // Émis par le serveur quand un joueur émet battle_end. Contient un token signé
+  // que le client passe à record_*_battle pour prouver l'authenticité du résultat.
+  socket.on("match_token", (data: { roomCode?: string; result?: string; matchType?: string; token?: string }) => {
+    if (!data?.token || data.roomCode !== roomCode) return;
+    latestMatchToken = data.token;
+    eventLog.push({ time: new Date().toISOString(), event: "match_token_received", data: { result: data.result, matchType: data.matchType } });
+    if (matchTokenResolver) {
+      matchTokenResolver(data.token);
+      matchTokenResolver = null;
+    }
+  });
+
   /**
    * Helper : si un battle_result était bloqué dans pendingOutbox (parce que waitingForServer),
    * le traiter AVANT de fire onDisconnect — sinon le résultat est perdu.
@@ -613,7 +652,9 @@ export function startRelay(
         const result = pd[1]?.result;
         console.log("[BattleRelay] Flushing pending battle_result before disconnect:", result);
         eventLog.push({ time: new Date().toISOString(), event: "flush_pending_battle_result", data: { result } });
-        onBattleResult?.(result || "unknown");
+        // Émettre battle_end au serveur pour récupérer un match_token signé.
+        if (socket.connected) socket.emit("battle_end", { roomCode, result, matchType });
+        void fireBattleResult(result || "unknown");
       }
     } catch { /* ignore */ }
     pendingOutbox = null;
@@ -627,7 +668,7 @@ export function startRelay(
       flushPendingBattleResult();
       disconnectFired = true;
       running = false;
-      onBattleResult?.(data.result || "unknown");
+      void fireBattleResult(data.result || "unknown");
       // Si NOTRE jeu a deja ecrit battle_result, le combat s'est termine normalement
       // des deux cotes → pas besoin de signal opponent_left. Sinon, l'adversaire a
       // quitte PENDANT qu'on jouait encore → on doit signaler au jeu.
@@ -797,13 +838,13 @@ export function startRelay(
             selfBattleResultSent = true; // NOTRE jeu a termine — pas besoin d'opponent_left
             console.log("[BattleRelay] Battle result from game:", result);
             eventLog.push({ time: new Date().toISOString(), event: "battle_result_from_game", data: { result } });
-            socket.emit("battle_end", { roomCode, result });
+            socket.emit("battle_end", { roomCode, result, matchType });
             pendingOutbox = null;
             // Stopper le relay et notifier le launcher
             if (!disconnectFired) {
               disconnectFired = true;
               running = false;
-              onBattleResult?.(result || "unknown");
+              void fireBattleResult(result || "unknown");
               onDisconnect?.("game_end");
             }
           }

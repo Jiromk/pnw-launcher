@@ -54,6 +54,47 @@ function isFullPlayerDataValid(data) {
   return true;
 }
 
+// ==================== Match HMAC token ====================
+// Le serveur signe le résultat de chaque match avec HMAC-SHA256.
+// Le client passe le token au RPC record_*_battle qui vérifie la signature
+// via Vault (secret partagé). Empêche un user d'enregistrer des résultats
+// fictifs sans avoir réellement joué le match.
+const MATCH_HMAC_SECRET = process.env.MATCH_HMAC_SECRET;
+const MATCH_TOKEN_TTL_SEC = 600; // 10 min : couvre largement l'écriture côté client
+
+if (!MATCH_HMAC_SECRET) {
+  console.warn("[MatchToken] MATCH_HMAC_SECRET manquant — tokens non émis (clients en mode legacy).");
+}
+
+/**
+ * Génère un token signé pour un résultat de match.
+ * Format : base64url(json_payload).base64url(hmac_sha256(json_b64))
+ *
+ * Postgres `verify_match_token()` vérifie que :
+ * - HMAC valide (recalculé avec le même secret depuis Vault)
+ * - exp > now()
+ * - room_code, user_id, opponent_id, result, match_type identiques aux paramètres du RPC
+ */
+function generateMatchToken({ roomCode, userId, opponentId, result, matchType }) {
+  if (!MATCH_HMAC_SECRET) return null;
+  const payload = {
+    room_code: roomCode,
+    user_id: userId,
+    opponent_id: opponentId,
+    result,
+    match_type: matchType,
+    iat: Math.floor(Date.now() / 1000),
+    exp: Math.floor(Date.now() / 1000) + MATCH_TOKEN_TTL_SEC,
+  };
+  const payloadJson = JSON.stringify(payload);
+  const payloadB64 = Buffer.from(payloadJson, "utf8").toString("base64url");
+  const sig = crypto
+    .createHmac("sha256", MATCH_HMAC_SECRET)
+    .update(payloadB64)
+    .digest("base64url");
+  return `${payloadB64}.${sig}`;
+}
+
 // ==================== Auth (Supabase JWT) ====================
 // Le serveur valide le JWT envoyé par le client (handshake.auth.token).
 // Source de vérité pour userId : socket.data.userId — ne JAMAIS faire confiance
@@ -431,21 +472,46 @@ io.on("connection", (socket) => {
   });
 
   // ─── Battle end (result from game) ───
-  socket.on("battle_end", ({ roomCode, result } = {}) => {
+  // Émet match_token signé HMAC à CHAQUE joueur (A et B) avec le bon result
+  // (perspective de chacun). Le client passera son token au RPC record_*_battle
+  // qui vérifie la signature contre le secret du Vault Supabase. Sans token
+  // valide, un attaquant ne peut plus falsifier de résultats.
+  socket.on("battle_end", ({ roomCode, result, matchType } = {}) => {
     const userId = authedUserId(socket);
     if (!userId) return;
     const room = rooms.get(roomCode);
     if (!room) return;
     if (!room.players.has(userId)) return;
     if (!["win", "loss", "draw"].includes(result)) return;
+    const safeMatchType = matchType === "ranked" || matchType === "amical" ? matchType : "amical";
+
     const opponentResult = result === "win" ? "loss" : result === "loss" ? "win" : "draw";
-    // Notify opponent
+    const opponentEntry = [...room.players.entries()].find(([uid]) => uid !== userId);
+    const opponentId = opponentEntry ? opponentEntry[0] : null;
+
+    // Notify opponent + send signed match tokens to both players
     for (const [uid, player] of room.players) {
+      const myResult = uid === userId ? result : opponentResult;
+      const oppId = uid === userId ? opponentId : userId;
+
+      if (oppId) {
+        const token = generateMatchToken({
+          roomCode,
+          userId: uid,
+          opponentId: oppId,
+          result: myResult,
+          matchType: safeMatchType,
+        });
+        if (token) {
+          io.to(player.socketId).emit("match_token", { roomCode, result: myResult, matchType: safeMatchType, token });
+        }
+      }
+
       if (uid !== userId) {
         io.to(player.socketId).emit("battle_ended", { roomCode, result: opponentResult, reason: "battle_end" });
       }
     }
-    console.log(`[Room ${roomCode}] Battle end: ${userId} ${result}`);
+    console.log(`[Room ${roomCode}] Battle end: ${userId} ${result} (${safeMatchType})`);
   });
 
   // ─── Spectate room (DÉSACTIVÉ — sécurité C4) ───

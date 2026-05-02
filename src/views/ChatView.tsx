@@ -2768,6 +2768,7 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
           () => { battleTurnCountRef.current++; }, // compteur de tours
           undefined, // spectator count handled in BattleArenaView
           (result) => { battleResultRef.current = result; },
+          "amical",
         );
         battleRelayCleanupRef.current = relayCleanup;
       },
@@ -3695,6 +3696,7 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
       () => { battleTurnCountRef.current++; },
       undefined,
       (result) => { battleResultRef.current = result; },
+      "amical",
     );
     battleRelayCleanupRef.current = cleanup;
 
