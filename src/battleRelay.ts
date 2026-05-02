@@ -400,6 +400,48 @@ export function sendRankedDecline(roomCode: string, _userId: string): void {
 
 let battleSocket: Socket | null = null;
 
+/**
+ * Émet `battle_end` au serveur (cas où le combat se termine sans que le jeu
+ * ait écrit `battle_result` dans l'outbox — forfeit volontaire, crash, etc.)
+ * et attend le `match_token` signé en réponse. Permet d'enregistrer le résultat
+ * via `record_*_battle` en mode strict (token requis).
+ *
+ * Retourne `null` si le socket n'est pas connecté ou si le serveur n'a pas
+ * répondu dans `timeoutMs`. Le caller peut alors fallback (ex: skip record).
+ */
+export function emitBattleEndAndAwaitToken(
+  roomCode: string,
+  result: "win" | "loss" | "draw",
+  matchType: "ranked" | "amical",
+  timeoutMs = 2000,
+): Promise<string | null> {
+  return new Promise((resolve) => {
+    const sock = battleSocket;
+    if (!sock || !sock.connected) {
+      resolve(null);
+      return;
+    }
+    let resolved = false;
+    const onToken = (data: { roomCode?: string; token?: string }) => {
+      if (resolved) return;
+      if (data?.roomCode === roomCode && data?.token) {
+        resolved = true;
+        sock.off("match_token", onToken);
+        resolve(data.token);
+      }
+    };
+    sock.on("match_token", onToken);
+    sock.emit("battle_end", { roomCode, result, matchType });
+    setTimeout(() => {
+      if (!resolved) {
+        resolved = true;
+        sock.off("match_token", onToken);
+        resolve(null);
+      }
+    }, timeoutMs);
+  });
+}
+
 /** Logs detailles du combat en cours — accessibles pour saveBattleLog */
 export let _currentBattleTurnLog: any[] = [];
 export let _currentBattleEventLog: any[] = [];

@@ -58,6 +58,7 @@ import {
   isGameRunning,
   saveBattleLog,
   sendBattleAccept,
+  emitBattleEndAndAwaitToken,
   sendBattleCancel,
   sendBattleDecline,
   sendBattleInvite,
@@ -573,6 +574,14 @@ export default function BattleTowerView({
           ? "ranked"
           : (st.matchType as "amical" | "ranked" | undefined) ?? "amical";
         console.log("[battle.complete] recording with matchType:", matchTypeForRecord);
+        // Si pas de token reçu (crash, opponent_left sans battle_end côté serveur),
+        // demander au serveur de signer le résultat maintenant. En mode strict,
+        // sans token l'enregistrement échoue → user qui crash ne perd jamais.
+        const recordToken = matchTokenRef.current ?? await emitBattleEndAndAwaitToken(
+          st.roomCode,
+          result as "win" | "loss" | "draw",
+          matchTypeForRecord,
+        );
         const rankedResult = await recordBattleResult(
           session.user.id,
           st.partnerId,
@@ -588,7 +597,7 @@ export default function BattleTowerView({
             myTeam: snapshotTeam(teamForRecord),
             betMode: st.betMode || false,
             betPokemonPreview: st.myBet ? (({ boxIdx: _b, slotIdx: _s, pokemonB64: _p, ...rest }: any) => rest)(st.myBet) : undefined,
-            matchToken: matchTokenRef.current,
+            matchToken: recordToken,
           },
         );
 
@@ -1149,6 +1158,14 @@ export default function BattleTowerView({
         const matchTypeForForfeit: "amical" | "ranked" = isRankedRoomFor
           ? "ranked"
           : (st.matchType as "amical" | "ranked" | undefined) ?? "amical";
+        // Demander au serveur de signer le résultat du forfeit.
+        // Sans ça, en mode HMAC strict, l'enregistrement échouerait : un user
+        // pourrait alors abandonner sans perdre de MMR. Le helper attend max 2s.
+        const forfeitToken = matchTokenRef.current ?? await emitBattleEndAndAwaitToken(
+          st.roomCode,
+          "loss",
+          matchTypeForForfeit,
+        );
         const rankedResult = await recordBattleResult(
           session.user.id,
           st.partnerId,
@@ -1162,7 +1179,7 @@ export default function BattleTowerView({
             matchType: matchTypeForForfeit,
             lpDelta: null,
             myTeam: snapshotTeam(teamForRecord),
-            matchToken: matchTokenRef.current,
+            matchToken: forfeitToken,
           },
         );
         if (rankedResult && rankedResult.wasRecorded) {
