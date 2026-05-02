@@ -104,13 +104,17 @@ function isRateLimited(userId) {
 
 /**
  * Génère un room code 6-chiffres (même format que l'amical) — compatible PSDK
- * qui attend un cluster_id numérique. Ajoute le roomCode à un Set local pour
- * éviter les collisions avec un pending match en cours.
+ * qui attend un cluster_id numérique. crypto.randomInt() au lieu de Math.random()
+ * pour rendre le PRNG imprévisible (un attaquant ne peut pas brute-forcer la
+ * séquence en observant quelques codes).
+ *
+ * Mitigation supplémentaire : `spectate_room` est désactivé côté serveur, donc
+ * même si un code est deviné, il n'y a aucun event à recevoir.
  */
 const _usedRoomCodes = new Set();
 function generateRoomCode() {
   for (let i = 0; i < 50; i++) {
-    const code = String(100000 + Math.floor(Math.random() * 900000));
+    const code = String(100000 + crypto.randomInt(0, 900000));
     if (!_usedRoomCodes.has(code)) {
       _usedRoomCodes.add(code);
       // Auto-cleanup après 15 min (le match est largement fini)
@@ -272,10 +276,18 @@ function startAcceptTimeoutLoop(io) {
  * Attache les handlers Socket.io pour le matchmaking ranked.
  * À appeler depuis index.js dans le `io.on('connection', socket => { ... })`.
  */
+function authedUserId(socket) {
+  return socket.data?.authed ? socket.data.userId : null;
+}
+
 function attachRankedHandlers(socket, io) {
   // ─── Join queue ───
-  socket.on("ranked_queue_join", async ({ userId, displayName }) => {
-    if (!userId) return;
+  socket.on("ranked_queue_join", async ({ displayName } = {}) => {
+    const userId = authedUserId(socket);
+    if (!userId) {
+      socket.emit("ranked_queue_error", { message: "auth_required" });
+      return;
+    }
     if (isRateLimited(userId)) {
       socket.emit("ranked_queue_error", { message: "rate_limited" });
       return;
@@ -293,21 +305,24 @@ function attachRankedHandlers(socket, io) {
     const state = await fetchUserRankState(userId);
     const tier = state.placementPlayed < 5 ? "unranked" : state.tier;
 
+    const safeDisplayName = typeof displayName === "string" && displayName.length <= 64
+      ? displayName : "Joueur";
     const player = {
       userId,
       socketId: socket.id,
-      displayName: displayName || "Joueur",
+      displayName: safeDisplayName,
       mmr: state.mmr,
       tier,
       joinedAt: Date.now(),
     };
     queue.set(userId, player);
     socket.emit("ranked_queue_joined", { mmr: state.mmr, tier, placementPlayed: state.placementPlayed });
-    console.log(`[RankedQueue] ${displayName}(${userId}) joined — ${state.mmr} MMR, ${tier}`);
+    console.log(`[RankedQueue] ${safeDisplayName}(${userId}) joined — ${state.mmr} MMR, ${tier}`);
   });
 
   // ─── Leave queue ───
-  socket.on("ranked_queue_leave", ({ userId }) => {
+  socket.on("ranked_queue_leave", () => {
+    const userId = authedUserId(socket);
     if (!userId) return;
     if (isRateLimited(userId)) return;
     leaveQueue(userId);
@@ -316,7 +331,9 @@ function attachRankedHandlers(socket, io) {
   });
 
   // ─── Accept match ───
-  socket.on("ranked_accept", ({ roomCode, userId }) => {
+  socket.on("ranked_accept", ({ roomCode } = {}) => {
+    const userId = authedUserId(socket);
+    if (!userId) return;
     const pm = pendingMatches.get(roomCode);
     if (!pm) return;
     if (pm.a.userId === userId) pm.acceptedA = true;
@@ -341,7 +358,9 @@ function attachRankedHandlers(socket, io) {
   });
 
   // ─── Decline match ───
-  socket.on("ranked_decline", ({ roomCode, userId }) => {
+  socket.on("ranked_decline", ({ roomCode } = {}) => {
+    const userId = authedUserId(socket);
+    if (!userId) return;
     const pm = pendingMatches.get(roomCode);
     if (!pm) return;
     if (pm.a.userId !== userId && pm.b.userId !== userId) return;

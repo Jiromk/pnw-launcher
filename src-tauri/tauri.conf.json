@@ -5,13 +5,15 @@
       "assetProtocol": {
         "enable": true,
         "scope": [
-          "**"
+          "$LOCALAPPDATA/PNW Launcher/**",
+          "$APPDATA/**",
+          "$RESOURCE/**"
         ]
       },
       "capabilities": [
         "default"
       ],
-      "csp": null
+      "csp": "default-src 'self' tauri: ipc: http://ipc.localhost; img-src 'self' data: blob: tauri: asset: http://asset.localhost https://*.r2.dev https://www.pokemonnewworld.fr https://pokemonnewworld.fr https://cdn.discordapp.com https://*.discordapp.com https://*.discordapp.net https://*.supabase.co; media-src 'self' data: blob: tauri: asset:; connect-src 'self' tauri: ipc: http://ipc.localhost https://*.supabase.co wss://*.supabase.co https://www.pokemonnewworld.fr https://pokemonnewworld.fr https://gts.kawasemi.de https://pnw-launcher-production.up.railway.app wss://pnw-launcher-production.up.railway.app; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; frame-src 'none'; object-src 'none'"
     },
     "windows": [
       {
@@ -67,5 +69,5 @@
     }
   },
   "productName": "PNW Launcher",
-  "version": "1.9.1"
+  "version": "1.9.2"
 }

@@ -7,6 +7,7 @@
  */
 import { invoke } from "@tauri-apps/api/core";
 import { io, Socket } from "socket.io-client";
+import { supabase } from "./supabaseClient";
 
 /* ==================== Constants ==================== */
 
@@ -15,6 +16,20 @@ export const BATTLE_INVITE_TIMEOUT = 60_000;
 
 /** URL du serveur de combat — a changer quand deploye sur Railway */
 const BATTLE_SERVER_URL = import.meta.env.VITE_BATTLE_SERVER_URL || "http://localhost:3001";
+
+/**
+ * Récupère le JWT Supabase pour authentifier le socket auprès du battle-server.
+ * Le serveur le valide via `supabase.auth.getUser(token)` côté service-role.
+ * Sans token valide, les events sensibles sont rejetés.
+ */
+async function getAuthToken(): Promise<string | null> {
+  try {
+    const { data } = await supabase.auth.getSession();
+    return data.session?.access_token ?? null;
+  } catch {
+    return null;
+  }
+}
 
 /* ==================== Game check ==================== */
 
@@ -198,18 +213,30 @@ export function connectLobby(userId: string, callbacks: LobbyCallbacks): () => v
   if (lobbySocket) { lobbySocket.disconnect(); lobbySocket = null; }
   lobbyUserId = userId;
 
+  // Le socket envoie le JWT au handshake. `auth` est lu à chaque (re)connexion
+  // par socket.io-client → on utilise une fonction async pour rafraîchir le
+  // token si la session a été refresh entre-temps.
   const socket = io(BATTLE_SERVER_URL, {
     transports: ["websocket", "polling"],
     reconnection: true,
     reconnectionAttempts: Infinity,
     reconnectionDelay: 2000,
     reconnectionDelayMax: 10000,
+    auth: (cb) => {
+      getAuthToken().then((token) => cb({ token: token ?? "" }));
+    },
   });
   lobbySocket = socket;
 
   socket.on("connect", () => {
     console.log("[BattleLobby] Connected:", socket.id);
-    socket.emit("register_user", { userId });
+    socket.emit("register_user", {});
+  });
+
+  socket.on("connect_error", (err) => {
+    if (/auth/i.test(err.message)) {
+      console.warn("[BattleLobby] Auth failed:", err.message, "— reconnect after session refresh");
+    }
   });
 
   socket.on("connect_error", (err) => {
@@ -257,14 +284,16 @@ export function sendBattleAccept(payload: BattleAcceptPayload): void {
   lobbySocket.emit("battle_accept", payload);
 }
 
-export function sendBattleDecline(roomCode: string, fromId: string, userId: string): void {
+export function sendBattleDecline(roomCode: string, fromId: string, _userId: string): void {
   if (!lobbySocket?.connected) { console.warn("[BattleLobby] Not connected, cannot send decline"); return; }
-  lobbySocket.emit("battle_decline", { roomCode, fromId, userId });
+  // userId est dérivé du JWT côté serveur — ignoré ici.
+  lobbySocket.emit("battle_decline", { roomCode, fromId });
 }
 
-export function sendBattleCancel(roomCode: string, toId: string, userId: string): void {
+export function sendBattleCancel(roomCode: string, toId: string, _userId: string): void {
   if (!lobbySocket?.connected) { console.warn("[BattleLobby] Not connected, cannot send cancel"); return; }
-  lobbySocket.emit("battle_cancel", { roomCode, toId, userId });
+  // userId est dérivé du JWT côté serveur — ignoré ici.
+  lobbySocket.emit("battle_cancel", { roomCode, toId });
 }
 
 /* ==================== Ranked Queue (matchmaking) ==================== */
@@ -346,25 +375,25 @@ export function attachRankedQueueListeners(callbacks: RankedQueueCallbacks): () 
   };
 }
 
-export function sendRankedQueueJoin(userId: string, displayName: string): boolean {
+export function sendRankedQueueJoin(_userId: string, displayName: string): boolean {
   if (!lobbySocket?.connected) { console.warn("[RankedQueue] Not connected"); return false; }
-  lobbySocket.emit("ranked_queue_join", { userId, displayName });
+  lobbySocket.emit("ranked_queue_join", { displayName });
   return true;
 }
 
-export function sendRankedQueueLeave(userId: string): void {
+export function sendRankedQueueLeave(_userId: string): void {
   if (!lobbySocket?.connected) return;
-  lobbySocket.emit("ranked_queue_leave", { userId });
+  lobbySocket.emit("ranked_queue_leave", {});
 }
 
-export function sendRankedAccept(roomCode: string, userId: string): void {
+export function sendRankedAccept(roomCode: string, _userId: string): void {
   if (!lobbySocket?.connected) return;
-  lobbySocket.emit("ranked_accept", { roomCode, userId });
+  lobbySocket.emit("ranked_accept", { roomCode });
 }
 
-export function sendRankedDecline(roomCode: string, userId: string): void {
+export function sendRankedDecline(roomCode: string, _userId: string): void {
   if (!lobbySocket?.connected) return;
-  lobbySocket.emit("ranked_decline", { roomCode, userId });
+  lobbySocket.emit("ranked_decline", { roomCode });
 }
 
 /* ==================== Socket.io Relay ==================== */
@@ -442,18 +471,24 @@ export function startRelay(
   console.log("[BattleRelay] Starting relay for room", roomCode, "via", BATTLE_SERVER_URL);
 
   // ─── Connect to battle server ───
+  // auth: () => ... récupère le JWT à chaque (re)connexion. Le serveur valide
+  // via supabase.auth.getUser() et bind socket.data.userId — les payloads
+  // qui prétendent être un autre user sont ignorés.
   const socket = io(BATTLE_SERVER_URL, {
     transports: ["websocket", "polling"],
     reconnection: true,
     reconnectionAttempts: 10,
     reconnectionDelay: 1000,
+    auth: (cb) => {
+      getAuthToken().then((token) => cb({ token: token ?? "" }));
+    },
   });
   battleSocket = socket;
 
   socket.on("connect", () => {
     console.log("[BattleRelay] Connected to server:", socket.id);
     eventLog.push({ time: new Date().toISOString(), event: "socket_connect", data: { socketId: socket.id } });
-    socket.emit("join_room", { roomCode, userId: myUserId });
+    socket.emit("join_room", { roomCode });
   });
 
   socket.on("connect_error", (err) => {
@@ -679,7 +714,6 @@ export function startRelay(
               turnLog.push({ turn, sentAt: new Date().toISOString(), resolvedAt: "", rngCount: 0, myActions: state[3], opponentActions: null });
               socket.emit("turn_actions", {
                 roomCode,
-                userId: myUserId,
                 turn,
                 fullPlayerData: playerData,
               });
@@ -699,7 +733,6 @@ export function startRelay(
               eventLog.push({ time: new Date().toISOString(), event: "switch_sent", data: { switchInfo: state[2] } });
               socket.emit("switch_data", {
                 roomCode,
-                userId: myUserId,
                 switchInfo: state[2],
                 fullPlayerData: playerData,
               });
@@ -720,7 +753,6 @@ export function startRelay(
                 }});
                 socket.emit("player_data", {
                   roomCode,
-                  userId: myUserId,
                   fullPlayerData: playerData,
                 });
               }
@@ -748,7 +780,7 @@ export function startRelay(
                 if (disconnectFired) return; // battle_ended a deja gere
                 disconnectFired = true;
                 running = false;
-                socket.emit("leave_room", { roomCode, userId: myUserId, reason: "game_end" });
+                socket.emit("leave_room", { roomCode, reason: "game_end" });
                 onDisconnect?.("game_end");
               };
               if (shouldWait) {
@@ -765,7 +797,7 @@ export function startRelay(
             selfBattleResultSent = true; // NOTRE jeu a termine — pas besoin d'opponent_left
             console.log("[BattleRelay] Battle result from game:", result);
             eventLog.push({ time: new Date().toISOString(), event: "battle_result_from_game", data: { result } });
-            socket.emit("battle_end", { roomCode, userId: myUserId, result });
+            socket.emit("battle_end", { roomCode, result });
             pendingOutbox = null;
             // Stopper le relay et notifier le launcher
             if (!disconnectFired) {
@@ -800,7 +832,7 @@ export function startRelay(
               if (disconnectFired) return; // un autre handler a pris la main entre-temps
               disconnectFired = true;
               running = false;
-              socket.emit("leave_room", { roomCode, userId: myUserId, reason: "game_end" });
+              socket.emit("leave_room", { roomCode, reason: "game_end" });
               onDisconnect?.("game_end");
             };
             if (shouldWait) {
@@ -838,7 +870,7 @@ export function startRelay(
       eventLog.push({ time: new Date().toISOString(), event: "game_crash_detected" });
       disconnectFired = true;
       running = false;
-      socket.emit("leave_room", { roomCode, userId: myUserId, reason: "crash" });
+      socket.emit("leave_room", { roomCode, reason: "crash" });
       onDisconnect?.("crash");
     }
   }, 3000);
@@ -848,7 +880,7 @@ export function startRelay(
     running = false;
     clearInterval(gameMonitor);
     if (socket.connected) {
-      socket.emit("leave_room", { roomCode, userId: myUserId });
+      socket.emit("leave_room", { roomCode });
       socket.disconnect();
     }
     battleSocket = null;

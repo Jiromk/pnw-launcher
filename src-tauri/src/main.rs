@@ -4,7 +4,7 @@ use std::{
     collections::hash_map::DefaultHasher,
     fs::{self, OpenOptions},
     hash::{Hash, Hasher},
-    io::{copy, Read, Write},
+    io::{copy, Read},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
     thread,
@@ -776,7 +776,7 @@ fn cmd_gts_search(
     gender: i32,
 ) -> Result<String, String> {
     let handle = thread::spawn(move || -> Result<String, String> {
-        let base_url = format!("http://gts.kawasemi.de/api.php?i={}", game_id);
+        let base_url = format!("https://gts.kawasemi.de/api.php?i={}", game_id);
         let client = Client::builder()
             .timeout(Duration::from_secs(15))
             .build()
@@ -856,7 +856,7 @@ fn cmd_gts_search(
 #[tauri::command]
 fn cmd_gts_download_pokemon(game_id: u32, online_id: String) -> Result<String, String> {
     let handle = thread::spawn(move || -> Result<String, String> {
-        let base_url = format!("http://gts.kawasemi.de/api.php?i={}", game_id);
+        let base_url = format!("https://gts.kawasemi.de/api.php?i={}", game_id);
         let client = Client::builder()
             .timeout(Duration::from_secs(12))
             .build()
@@ -885,7 +885,7 @@ async fn cmd_gts_browse_all(
     tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
         use std::sync::{Arc, Mutex};
 
-        let base_url = format!("http://gts.kawasemi.de/api.php?i={}", game_id);
+        let base_url = format!("https://gts.kawasemi.de/api.php?i={}", game_id);
         let client = Client::builder()
             .timeout(Duration::from_secs(5))
             .build()
@@ -1065,120 +1065,10 @@ fn cmd_open_url(url: String) -> Result<(), String> {
     open_http_url(t)
 }
 
-fn launcher_update_dest_path() -> Result<PathBuf> {
-    Ok(app_local_dir()?.join("pnw_launcher_update.exe"))
-}
-
-struct LauncherInstallerProgressWriter<'a> {
-    app: &'a AppHandle,
-    file: std::fs::File,
-    downloaded: u64,
-    total: u64,
-    last_emit: Instant,
-}
-
-impl Write for LauncherInstallerProgressWriter<'_> {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        let n = self.file.write(buf)?;
-        self.downloaded += n as u64;
-        if self.last_emit.elapsed() >= Duration::from_millis(120)
-            || (self.total > 0 && self.downloaded >= self.total)
-        {
-            let _ = self.app.emit(
-                "pnw://launcher-update-progress",
-                json!({
-                    "stage": "download",
-                    "downloaded": self.downloaded,
-                    "total": self.total
-                }),
-            );
-            self.last_emit = Instant::now();
-        }
-        Ok(n)
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        self.file.flush()
-    }
-}
-
-/// Télécharge l’installateur dans AppData puis lance le fichier (mise à jour du launcher sans passer par le navigateur).
-fn run_download_launcher_installer(app: &AppHandle, url: &str) -> Result<(), String> {
-    let dest = launcher_update_dest_path().map_err(errs)?;
-    if dest.exists() {
-        let _ = fs::remove_file(&dest);
-    }
-    let _ = app.emit(
-        "pnw://launcher-update-progress",
-        json!({ "stage": "download", "downloaded": 0, "total": 0 }),
-    );
-    let client = Client::builder()
-        .timeout(Duration::from_secs(7200))
-        .connect_timeout(Duration::from_secs(45))
-        .build()
-        .map_err(errs)?;
-    let mut resp = client
-        .get(url)
-        .header(USER_AGENT, "pnw-launcher")
-        .send()
-        .and_then(|r| r.error_for_status())
-        .map_err(errs)?;
-    let total = resp.content_length().unwrap_or(0);
-    let file = fs::File::create(&dest).map_err(errs)?;
-    let mut writer = LauncherInstallerProgressWriter {
-        app,
-        file,
-        downloaded: 0,
-        total,
-        last_emit: Instant::now() - Duration::from_secs(1),
-    };
-    copy(&mut resp, &mut writer).map_err(errs)?;
-    writer.file.sync_all().map_err(errs)?;
-    drop(writer);
-    // Fermer l’UI **avant** de lancer l’installateur : sinon le WebView peut traiter l’événement en retard
-    // ou la fenêtre NSIS capte le focus avant le `setState` côté React.
-    let _ = app.emit(
-        "pnw://launcher-update-progress",
-        json!({
-            "stage": "done",
-            "path": dest.to_string_lossy(),
-        }),
-    );
-    // Laisser le front traiter `done` (fermeture du modal) avant de quitter le processus.
-    thread::sleep(Duration::from_millis(450));
-    // Sous Windows : `start` lance l’installateur NSIS dans un processus détaché (pas enfant du launcher).
-    // Sinon le setup peut rester bloqué ou ne pas pouvoir remplacer l’exe tant que le launcher tourne.
-    #[cfg(windows)]
-    {
-        let path_str = dest.to_string_lossy().to_string();
-        std::process::Command::new("cmd")
-            .args(["/C", "start", "", &path_str])
-            .spawn()
-            .map_err(errs)?;
-    }
-    #[cfg(not(windows))]
-    {
-        open::that(&dest).map_err(errs)?;
-    }
-    thread::sleep(Duration::from_millis(200));
-    app.exit(0);
-    Ok(())
-}
-
-#[tauri::command]
-fn cmd_download_launcher_installer(app: AppHandle, url: String) -> Result<(), String> {
-    let t = url.trim().to_string();
-    if !t.starts_with("https://") && !t.starts_with("http://") {
-        return Err("URL invalide".into());
-    }
-    let app_clone = app.clone();
-    thread::spawn(move || {
-        if let Err(e) = run_download_launcher_installer(&app_clone, &t) {
-            let _ = app_clone.emit("pnw://launcher-update-error", json!({"error": e}));
-        }
-    });
-    Ok(())
-}
+// `cmd_download_launcher_installer` retiré : remplacé par tauri-plugin-updater
+// qui vérifie la signature minisign de l'installateur. La version manuelle ne
+// validait aucune signature → vecteur de supply chain. Le plugin updater est
+// configuré dans tauri.conf.json (endpoints + pubkey).
 
 fn local_remembered_dir_has_game(path: Option<&String>) -> bool {
     let Some(s) = path else {
@@ -3382,7 +3272,7 @@ fn cmd_gts_upload_pokemon(
     wanted_gender: i32,
 ) -> Result<String, String> {
     let handle = thread::spawn(move || -> Result<String, String> {
-        let base_url = format!("http://gts.kawasemi.de/api.php?i={}", game_id);
+        let base_url = format!("https://gts.kawasemi.de/api.php?i={}", game_id);
         let client = Client::builder()
             .timeout(Duration::from_secs(15))
             .build()
@@ -3413,7 +3303,7 @@ fn cmd_gts_upload_pokemon(
 #[tauri::command]
 fn cmd_gts_has_pokemon_uploaded(game_id: u32, online_id: u32) -> Result<bool, String> {
     let handle = thread::spawn(move || -> Result<bool, String> {
-        let base_url = format!("http://gts.kawasemi.de/api.php?i={}", game_id);
+        let base_url = format!("https://gts.kawasemi.de/api.php?i={}", game_id);
         let client = Client::builder()
             .timeout(Duration::from_secs(10))
             .build()
@@ -3437,7 +3327,7 @@ fn cmd_gts_has_pokemon_uploaded(game_id: u32, online_id: u32) -> Result<bool, St
 #[tauri::command]
 fn cmd_gts_download_wanted_data(game_id: u32, online_id: u32) -> Result<String, String> {
     let handle = thread::spawn(move || -> Result<String, String> {
-        let base_url = format!("http://gts.kawasemi.de/api.php?i={}", game_id);
+        let base_url = format!("https://gts.kawasemi.de/api.php?i={}", game_id);
         let client = Client::builder()
             .timeout(Duration::from_secs(10))
             .build()
@@ -3461,7 +3351,7 @@ fn cmd_gts_download_wanted_data(game_id: u32, online_id: u32) -> Result<String, 
 #[tauri::command]
 fn cmd_gts_delete_pokemon(game_id: u32, online_id: u32, withdraw: bool) -> Result<bool, String> {
     let handle = thread::spawn(move || -> Result<bool, String> {
-        let base_url = format!("http://gts.kawasemi.de/api.php?i={}", game_id);
+        let base_url = format!("https://gts.kawasemi.de/api.php?i={}", game_id);
         let client = Client::builder()
             .timeout(Duration::from_secs(10))
             .build()
@@ -3486,7 +3376,7 @@ fn cmd_gts_delete_pokemon(game_id: u32, online_id: u32, withdraw: bool) -> Resul
 #[tauri::command]
 fn cmd_gts_is_taken(game_id: u32, online_id: u32) -> Result<bool, String> {
     let handle = thread::spawn(move || -> Result<bool, String> {
-        let base_url = format!("http://gts.kawasemi.de/api.php?i={}", game_id);
+        let base_url = format!("https://gts.kawasemi.de/api.php?i={}", game_id);
         let client = Client::builder()
             .timeout(Duration::from_secs(10))
             .build()
@@ -3509,7 +3399,7 @@ fn cmd_gts_is_taken(game_id: u32, online_id: u32) -> Result<bool, String> {
 #[tauri::command]
 fn cmd_gts_take_pokemon(game_id: u32, online_id: u32) -> Result<bool, String> {
     let handle = thread::spawn(move || -> Result<bool, String> {
-        let base_url = format!("http://gts.kawasemi.de/api.php?i={}", game_id);
+        let base_url = format!("https://gts.kawasemi.de/api.php?i={}", game_id);
         let client = Client::builder()
             .timeout(Duration::from_secs(10))
             .build()
@@ -3532,7 +3422,7 @@ fn cmd_gts_take_pokemon(game_id: u32, online_id: u32) -> Result<bool, String> {
 #[tauri::command]
 fn cmd_gts_upload_new_pokemon(game_id: u32, online_id: u32, pokemon_b64: String) -> Result<bool, String> {
     let handle = thread::spawn(move || -> Result<bool, String> {
-        let base_url = format!("http://gts.kawasemi.de/api.php?i={}", game_id);
+        let base_url = format!("https://gts.kawasemi.de/api.php?i={}", game_id);
         let client = Client::builder()
             .timeout(Duration::from_secs(15))
             .build()
@@ -3570,8 +3460,9 @@ fn main() {
             if let Ok(mut client) = discord_arc.lock() {
                 let _ = discord_set_presence(&mut *client, "menu", None, None, None, None);
             }
-            // Activer les DevTools en release (clic droit > Inspecter)
-            #[cfg(feature = "devtools")]
+            // DevTools uniquement en debug — pas en release pour empêcher
+            // un utilisateur final d'inspecter ou modifier le client (anti-cheat).
+            #[cfg(debug_assertions)]
             if let Some(w) = app.get_webview_window("main") {
                 w.open_devtools();
             }

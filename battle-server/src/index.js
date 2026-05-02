@@ -11,12 +11,64 @@
  */
 
 const http = require("http");
+const crypto = require("crypto");
 const { Server } = require("socket.io");
+const { createClient } = require("@supabase/supabase-js");
 const rankedQueue = require("./rankedQueue");
 
 const PORT = process.env.PORT || 3001;
 const RNG_VALUES_PER_TURN = 300; // doit couvrir TOUS les rand() d'un tour (multi-hit, abilities, weather, etc.)
 const SWITCH_TIMEOUT_MS = 15000; // timeout si un seul joueur envoie ses switch forces
+const MAX_PLAYER_DATA_BYTES = 256 * 1024; // 256 KB par payload (~50 KB suffit normalement)
+const MAX_PARTY_SIZE = 6;
+const MAX_OBJECT_DEPTH = 12;
+const MAX_TURN_NUMBER = 1000; // un combat dépasse rarement 100 tours
+
+/**
+ * Anti-DoS : refuse les payloads dont la profondeur d'imbrication dépasse N.
+ * Un attaquant peut sinon envoyer `{a:{a:{a:{...10000 niveaux}}}}` qui force
+ * Socket.io à parser puis réémettre vers l'autre joueur.
+ */
+function isPayloadShapeOk(value, maxDepth = MAX_OBJECT_DEPTH) {
+  if (value == null) return true;
+  if (typeof value !== "object") return true;
+  if (maxDepth <= 0) return false;
+  if (Array.isArray(value)) {
+    if (value.length > 1024) return false;
+    return value.every((v) => isPayloadShapeOk(v, maxDepth - 1));
+  }
+  const keys = Object.keys(value);
+  if (keys.length > 256) return false;
+  return keys.every((k) => isPayloadShapeOk(value[k], maxDepth - 1));
+}
+
+/**
+ * Validation légère du `fullPlayerData` : structure attendue + tailles raisonnables.
+ * On ne valide pas les règles Pokémon (le serveur n'en connaît rien) mais on rejette
+ * les payloads manifestement malformés ou abusifs.
+ */
+function isFullPlayerDataValid(data) {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return false;
+  if (!isPayloadShapeOk(data)) return false;
+  if (Array.isArray(data.party) && data.party.length > MAX_PARTY_SIZE) return false;
+  return true;
+}
+
+// ==================== Auth (Supabase JWT) ====================
+// Le serveur valide le JWT envoyé par le client (handshake.auth.token).
+// Source de vérité pour userId : socket.data.userId — ne JAMAIS faire confiance
+// au userId envoyé dans les payloads.
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_KEY =
+  process.env.SUPABASE_SERVICE_KEY ||
+  process.env.SUPABASE_SERVICE_ROLE_KEY ||
+  process.env.SUPABASE_ANON_KEY;
+const supabaseAuth = SUPABASE_URL && SUPABASE_KEY
+  ? createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { autoRefreshToken: false, persistSession: false } })
+  : null;
+if (!supabaseAuth) {
+  console.warn("[Auth] SUPABASE_URL ou key manquants — auth désactivée (mode dev uniquement).");
+}
 
 // ==================== Lobby (user -> sockets) ====================
 
@@ -105,10 +157,19 @@ function removePlayerFromAllRooms(socketId, io) {
 
 // ==================== RNG generation ====================
 
+/**
+ * Génère `count` floats uniformes dans [0, 1) avec un PRNG cryptographique.
+ * Math.random() (V8) est prévisible : un attaquant qui voit ~600 RNG d'un combat
+ * peut reconstruire l'état interne et prédire les rolls suivants (crits, multi-hits).
+ * Avec randomBytes, chaque valeur est indépendante et imprévisible.
+ */
 function generateRng(count) {
-  const values = [];
+  const buf = crypto.randomBytes(count * 4); // 4 octets par float
+  const values = new Array(count);
   for (let i = 0; i < count; i++) {
-    values.push(Math.random());
+    // Lire un uint32 puis normaliser dans [0, 1) — précision suffisante pour PSDK.
+    const u32 = buf.readUInt32LE(i * 4);
+    values[i] = u32 / 0x1_0000_0000;
   }
   return values;
 }
@@ -138,52 +199,99 @@ const io = new Server(server, {
   cors: { origin: "*", methods: ["GET", "POST"] },
   pingTimeout: 30000,
   pingInterval: 10000,
+  maxHttpBufferSize: MAX_PLAYER_DATA_BYTES,
 });
 
+// ─── Middleware: validation JWT Supabase ───
+// Le client doit passer son access_token via `auth: { token }` à `io()`.
+// Si la validation échoue, la connexion est refusée → impossible de spoof userId.
+io.use(async (socket, next) => {
+  if (!supabaseAuth) {
+    // Mode dev local sans Supabase configuré : laisser passer mais avec userId null.
+    socket.data.userId = null;
+    socket.data.authed = false;
+    return next();
+  }
+  const token = socket.handshake.auth?.token;
+  if (!token || typeof token !== "string") {
+    return next(new Error("auth_required"));
+  }
+  try {
+    const { data, error } = await supabaseAuth.auth.getUser(token);
+    if (error || !data?.user?.id) {
+      return next(new Error("auth_invalid"));
+    }
+    socket.data.userId = data.user.id;
+    socket.data.authed = true;
+    next();
+  } catch (e) {
+    next(new Error("auth_failed"));
+  }
+});
+
+// Helper: récupère l'userId vérifié du socket. Refuse les actions sensibles
+// si l'auth a échoué (mode dev fallback uniquement).
+function authedUserId(socket) {
+  return socket.data.authed ? socket.data.userId : null;
+}
+
 io.on("connection", (socket) => {
-  console.log(`[Connect] ${socket.id}`);
+  console.log(`[Connect] ${socket.id} userId=${socket.data.userId ?? "anon"}`);
 
   // ─── Ranked matchmaking handlers (queue + pairing + accept) ───
   rankedQueue.attachRankedHandlers(socket, io);
 
   // ─── Lobby: register user for invite system ───
-  socket.on("register_user", ({ userId }) => {
+  socket.on("register_user", () => {
+    const userId = authedUserId(socket);
+    if (!userId) return;
     registerUser(userId, socket.id);
-    socket.data.userId = userId;
     console.log(`[Lobby] ${userId} registered (socket ${socket.id})`);
   });
 
   // ─── Battle invite (lobby) ───
   socket.on("battle_invite", (payload) => {
+    const userId = authedUserId(socket);
+    if (!userId) return;
+    if (!payload || typeof payload !== "object") return;
     const { toId } = payload;
-    const sent = emitToUser(toId, "battle_invite", payload, io);
-    console.log(`[Lobby] Invite from ${payload.fromId} to ${toId}: ${sent ? "delivered" : "user offline"}`);
-    // Acknowledge to sender
+    if (!toId || typeof toId !== "string") return;
+    // Forcer fromId à l'identité authentifiée — ignorer ce que le client envoie.
+    const safePayload = { ...payload, fromId: userId };
+    const sent = emitToUser(toId, "battle_invite", safePayload, io);
+    console.log(`[Lobby] Invite from ${userId} to ${toId}: ${sent ? "delivered" : "user offline"}`);
     socket.emit("battle_invite_ack", { roomCode: payload.roomCode, delivered: sent });
   });
 
-  socket.on("battle_accept", ({ roomCode, fromId, acceptedBy, partnerName }) => {
-    emitToUser(fromId, "battle_accepted", { roomCode, acceptedBy, partnerName }, io);
-    console.log(`[Lobby] ${acceptedBy} accepted invite for room ${roomCode}`);
+  socket.on("battle_accept", ({ roomCode, fromId, partnerName } = {}) => {
+    const userId = authedUserId(socket);
+    if (!userId || !fromId || typeof fromId !== "string") return;
+    emitToUser(fromId, "battle_accepted", { roomCode, acceptedBy: userId, partnerName }, io);
+    console.log(`[Lobby] ${userId} accepted invite for room ${roomCode}`);
   });
 
-  socket.on("battle_decline", ({ roomCode, fromId, userId }) => {
+  socket.on("battle_decline", ({ roomCode, fromId } = {}) => {
+    const userId = authedUserId(socket);
+    if (!userId || !fromId || typeof fromId !== "string") return;
     emitToUser(fromId, "battle_declined", { roomCode, userId }, io);
     console.log(`[Lobby] ${userId} declined invite for room ${roomCode}`);
   });
 
-  socket.on("battle_cancel", ({ roomCode, toId, userId }) => {
+  socket.on("battle_cancel", ({ roomCode, toId } = {}) => {
+    const userId = authedUserId(socket);
+    if (!userId || !toId || typeof toId !== "string") return;
     emitToUser(toId, "battle_cancelled", { roomCode, userId }, io);
     console.log(`[Lobby] ${userId} cancelled invite for room ${roomCode}`);
   });
 
   // ─── Join room ───
-  socket.on("join_room", ({ roomCode, userId }) => {
+  socket.on("join_room", ({ roomCode } = {}) => {
+    const userId = authedUserId(socket);
+    if (!userId || !roomCode || typeof roomCode !== "string") return;
     const room = getOrCreateRoom(roomCode);
     room.players.set(userId, { socketId: socket.id });
     socket.join(roomCode);
     socket.data.roomCode = roomCode;
-    socket.data.userId = userId;
     console.log(`[Room ${roomCode}] ${userId} rejoint (${room.players.size} joueurs)`);
 
     // Notifier l'autre joueur
@@ -191,9 +299,16 @@ io.on("connection", (socket) => {
   });
 
   // ─── Initial player data exchange (avant le combat) ───
-  socket.on("player_data", ({ roomCode, userId, fullPlayerData }) => {
+  socket.on("player_data", ({ roomCode, fullPlayerData } = {}) => {
+    const userId = authedUserId(socket);
+    if (!userId) return;
     const room = rooms.get(roomCode);
     if (!room) return;
+    if (!room.players.has(userId)) return; // doit avoir join_room d'abord
+    if (!isFullPlayerDataValid(fullPlayerData)) {
+      console.warn(`[Room ${roomCode}] player_data rejected (invalid shape) from ${userId}`);
+      return;
+    }
 
     room.initialData.set(userId, fullPlayerData);
     console.log(`[Room ${roomCode}] Donnees initiales de ${userId}`);
@@ -216,9 +331,17 @@ io.on("connection", (socket) => {
   });
 
   // ─── Turn actions (coeur du systeme) ───
-  socket.on("turn_actions", ({ roomCode, userId, turn, fullPlayerData }) => {
+  socket.on("turn_actions", ({ roomCode, turn, fullPlayerData } = {}) => {
+    const userId = authedUserId(socket);
+    if (!userId) return;
     const room = rooms.get(roomCode);
     if (!room) return;
+    if (!room.players.has(userId)) return;
+    if (typeof turn !== "number" || !Number.isFinite(turn) || turn < 0 || turn > MAX_TURN_NUMBER) return;
+    if (!isFullPlayerDataValid(fullPlayerData)) {
+      console.warn(`[Room ${roomCode}] turn_actions rejected (invalid shape) from ${userId}`);
+      return;
+    }
 
     room.turnData.set(userId, { turn, fullData: fullPlayerData });
     console.log(`[Room ${roomCode}] Actions tour ${turn} de ${userId}`);
@@ -255,9 +378,17 @@ io.on("connection", (socket) => {
   });
 
   // ─── Forced switches (Pokemon KO) ───
-  socket.on("switch_data", ({ roomCode, userId, switchInfo, fullPlayerData }) => {
+  socket.on("switch_data", ({ roomCode, switchInfo, fullPlayerData } = {}) => {
+    const userId = authedUserId(socket);
+    if (!userId) return;
     const room = rooms.get(roomCode);
     if (!room) return;
+    if (!room.players.has(userId)) return;
+    if (!isPayloadShapeOk(switchInfo)) return;
+    if (!isFullPlayerDataValid(fullPlayerData)) {
+      console.warn(`[Room ${roomCode}] switch_data rejected (invalid shape) from ${userId}`);
+      return;
+    }
 
     room.switchData.set(userId, { switchInfo, fullData: fullPlayerData });
     console.log(`[Room ${roomCode}] Switch forces de ${userId} (ack vide: ${switchInfo === null || (Array.isArray(switchInfo) && switchInfo.length === 0)})`);
@@ -300,9 +431,13 @@ io.on("connection", (socket) => {
   });
 
   // ─── Battle end (result from game) ───
-  socket.on("battle_end", ({ roomCode, userId, result }) => {
+  socket.on("battle_end", ({ roomCode, result } = {}) => {
+    const userId = authedUserId(socket);
+    if (!userId) return;
     const room = rooms.get(roomCode);
     if (!room) return;
+    if (!room.players.has(userId)) return;
+    if (!["win", "loss", "draw"].includes(result)) return;
     const opponentResult = result === "win" ? "loss" : result === "loss" ? "win" : "draw";
     // Notify opponent
     for (const [uid, player] of room.players) {
@@ -313,38 +448,22 @@ io.on("connection", (socket) => {
     console.log(`[Room ${roomCode}] Battle end: ${userId} ${result}`);
   });
 
-  // ─── Spectate room (read-only) ───
-  socket.on("spectate_room", ({ roomCode, userId }) => {
-    const room = rooms.get(roomCode);
-    if (!room) { socket.emit("spectate_error", { message: "Room introuvable" }); return; }
-    room.spectators.add(socket.id);
-    socket.join(roomCode);
-    socket.data.roomCode = roomCode;
-    socket.data.userId = userId;
-    socket.data.isSpectator = true;
-    const playerIds = [...room.players.keys()];
-    socket.emit("spectate_joined", { roomCode, players: playerIds, turn: room.turnData.size > 0 ? "in_progress" : "waiting" });
-    // Notifier les joueurs qu'un spectateur a rejoint
-    for (const [, player] of room.players) {
-      io.to(player.socketId).emit("spectator_count", { count: room.spectators.size });
-    }
-    console.log(`[Room ${roomCode}] Spectateur ${userId} (${room.spectators.size} spectateurs)`);
+  // ─── Spectate room (DÉSACTIVÉ — sécurité C4) ───
+  // Codes 6 chiffres = brute-force trivial. Les payloads par tour contiennent
+  // l'équipe complète (sets, IVs, EVs) et les Pokémon de pari. À réactiver
+  // seulement avec : codes longs cryptographiques + opt-in explicite des joueurs.
+  socket.on("spectate_room", () => {
+    socket.emit("spectate_error", { message: "spectate_disabled" });
   });
 
-  socket.on("leave_spectate", ({ roomCode }) => {
-    const room = rooms.get(roomCode);
-    if (room) {
-      room.spectators.delete(socket.id);
-      socket.leave(roomCode);
-      // Notifier les joueurs du départ
-      for (const [, player] of room.players) {
-        io.to(player.socketId).emit("spectator_count", { count: room.spectators.size });
-      }
-    }
+  socket.on("leave_spectate", () => {
+    // No-op : spectate désactivé.
   });
 
   // ─── Leave room ───
-  socket.on("leave_room", ({ roomCode, userId, reason }) => {
+  socket.on("leave_room", ({ roomCode, reason } = {}) => {
+    const userId = authedUserId(socket);
+    if (!userId) return;
     const room = rooms.get(roomCode);
     if (room) {
       room.players.delete(userId);
