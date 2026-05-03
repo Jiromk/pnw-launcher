@@ -577,10 +577,17 @@ export default function BattleTowerView({
         // Si pas de token reçu (crash, opponent_left sans battle_end côté serveur),
         // demander au serveur de signer le résultat maintenant. En mode strict,
         // sans token l'enregistrement échoue → user qui crash ne perd jamais.
+        // endType propage la vraie raison (forfeit/crash/game_end) à l'adversaire
+        // pour que sa bannière s'affiche correctement.
+        const endTypeForRecord: "forfeit" | "crash" | "game_end" =
+          endReason === "forfeit" ? "forfeit"
+          : endReason === "crash" ? "crash"
+          : "game_end";
         const recordToken = matchTokenRef.current ?? await emitBattleEndAndAwaitToken(
           st.roomCode,
           result as "win" | "loss" | "draw",
           matchTypeForRecord,
+          endTypeForRecord,
         );
         const rankedResult = await recordBattleResult(
           session.user.id,
@@ -1161,10 +1168,13 @@ export default function BattleTowerView({
         // Demander au serveur de signer le résultat du forfeit.
         // Sans ça, en mode HMAC strict, l'enregistrement échouerait : un user
         // pourrait alors abandonner sans perdre de MMR. Le helper attend max 2s.
+        // endType "forfeit" : propage la raison à l'adversaire pour que sa
+        // bannière (launcher + jeu) affiche bien "X a abandonné le combat".
         const forfeitToken = matchTokenRef.current ?? await emitBattleEndAndAwaitToken(
           st.roomCode,
           "loss",
           matchTypeForForfeit,
+          "forfeit",
         );
         const rankedResult = await recordBattleResult(
           session.user.id,

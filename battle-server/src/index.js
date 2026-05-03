@@ -476,7 +476,7 @@ io.on("connection", (socket) => {
   // (perspective de chacun). Le client passera son token au RPC record_*_battle
   // qui vérifie la signature contre le secret du Vault Supabase. Sans token
   // valide, un attaquant ne peut plus falsifier de résultats.
-  socket.on("battle_end", ({ roomCode, result, matchType } = {}) => {
+  socket.on("battle_end", ({ roomCode, result, matchType, endType } = {}) => {
     const userId = authedUserId(socket);
     if (!userId) return;
     const room = rooms.get(roomCode);
@@ -484,6 +484,10 @@ io.on("connection", (socket) => {
     if (!room.players.has(userId)) return;
     if (!["win", "loss", "draw"].includes(result)) return;
     const safeMatchType = matchType === "ranked" || matchType === "amical" ? matchType : "amical";
+    // endType distingue abandon volontaire vs fin normale vs crash. Sans cette info,
+    // l'adversaire ne saurait pas qu'on a abandonné (le banner "X a abandonné" ne
+    // s'affiche pas pour reason=game_end). Default "game_end" pour clients legacy.
+    const safeEndType = endType === "forfeit" || endType === "crash" || endType === "game_end" ? endType : "game_end";
 
     const opponentResult = result === "win" ? "loss" : result === "loss" ? "win" : "draw";
     const opponentEntry = [...room.players.entries()].find(([uid]) => uid !== userId);
@@ -508,10 +512,10 @@ io.on("connection", (socket) => {
       }
 
       if (uid !== userId) {
-        io.to(player.socketId).emit("battle_ended", { roomCode, result: opponentResult, reason: "battle_end" });
+        io.to(player.socketId).emit("battle_ended", { roomCode, result: opponentResult, reason: safeEndType });
       }
     }
-    console.log(`[Room ${roomCode}] Battle end: ${userId} ${result} (${safeMatchType})`);
+    console.log(`[Room ${roomCode}] Battle end: ${userId} ${result} (${safeMatchType}, ${safeEndType})`);
   });
 
   // ─── Spectate room (DÉSACTIVÉ — sécurité C4) ───

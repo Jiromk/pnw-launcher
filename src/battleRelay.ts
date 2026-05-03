@@ -413,6 +413,7 @@ export function emitBattleEndAndAwaitToken(
   roomCode: string,
   result: "win" | "loss" | "draw",
   matchType: "ranked" | "amical",
+  endType: "forfeit" | "game_end" | "crash" = "game_end",
   timeoutMs = 2000,
 ): Promise<string | null> {
   return new Promise((resolve) => {
@@ -431,7 +432,7 @@ export function emitBattleEndAndAwaitToken(
       }
     };
     sock.on("match_token", onToken);
-    sock.emit("battle_end", { roomCode, result, matchType });
+    sock.emit("battle_end", { roomCode, result, matchType, endType });
     setTimeout(() => {
       if (!resolved) {
         resolved = true;
@@ -704,7 +705,8 @@ export function startRelay(
         console.log("[BattleRelay] Flushing pending battle_result before disconnect:", result);
         eventLog.push({ time: new Date().toISOString(), event: "flush_pending_battle_result", data: { result } });
         // Émettre battle_end au serveur pour récupérer un match_token signé.
-        if (socket.connected) socket.emit("battle_end", { roomCode, result, matchType });
+        // endType "game_end" : c'est le jeu qui a écrit battle_result (fin normale).
+        if (socket.connected) socket.emit("battle_end", { roomCode, result, matchType, endType: "game_end" });
         void fireBattleResult(result || "unknown");
       }
     } catch { /* ignore */ }
@@ -713,7 +715,7 @@ export function startRelay(
 
   // ─── Battle ended by opponent (result from their game) ───
   socket.on("battle_ended", (data: { roomCode?: string; result?: string; reason?: string }) => {
-    console.log("[BattleRelay] Battle ended by opponent, our result:", data.result, "selfEnded:", selfBattleResultSent);
+    console.log("[BattleRelay] Battle ended by opponent, our result:", data.result, "reason:", data.reason, "selfEnded:", selfBattleResultSent);
     eventLog.push({ time: new Date().toISOString(), event: "battle_ended", data: { ...data, selfBattleResultSent } });
     if (!disconnectFired) {
       flushPendingBattleResult();
@@ -721,9 +723,20 @@ export function startRelay(
       running = false;
       void fireBattleResult(data.result || "unknown");
       // Si NOTRE jeu a deja ecrit battle_result, le combat s'est termine normalement
-      // des deux cotes → pas besoin de signal opponent_left. Sinon, l'adversaire a
-      // quitte PENDANT qu'on jouait encore → on doit signaler au jeu.
-      onDisconnect?.(selfBattleResultSent ? "game_end" : "opponent_game_end");
+      // de notre cote → pas besoin de signal opponent_left. Sinon on regarde le
+      // endType propage par le serveur pour distinguer abandon / crash / fin normale.
+      // Legacy "battle_end" (serveurs avant le fix) ou tout reason inconnu → game_end.
+      let disconnectReason: "game_end" | "opponent_forfeit" | "opponent_game_end" | "opponent_crash";
+      if (selfBattleResultSent) {
+        disconnectReason = "game_end";
+      } else if (data.reason === "forfeit") {
+        disconnectReason = "opponent_forfeit";
+      } else if (data.reason === "crash") {
+        disconnectReason = "opponent_crash";
+      } else {
+        disconnectReason = "opponent_game_end";
+      }
+      onDisconnect?.(disconnectReason);
     }
   });
 
@@ -889,7 +902,8 @@ export function startRelay(
             selfBattleResultSent = true; // NOTRE jeu a termine — pas besoin d'opponent_left
             console.log("[BattleRelay] Battle result from game:", result);
             eventLog.push({ time: new Date().toISOString(), event: "battle_result_from_game", data: { result } });
-            socket.emit("battle_end", { roomCode, result, matchType });
+            // endType "game_end" : fin normale via battle_result du jeu.
+            socket.emit("battle_end", { roomCode, result, matchType, endType: "game_end" });
             pendingOutbox = null;
             // Stopper le relay et notifier le launcher
             if (!disconnectFired) {
