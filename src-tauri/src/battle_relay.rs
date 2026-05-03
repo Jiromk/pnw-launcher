@@ -4,7 +4,7 @@
 //! Le launcher sert de relay via Supabase entre les deux joueurs.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::app_local_dir;
 
@@ -15,6 +15,18 @@ fn battle_dir() -> Result<PathBuf, String> {
         fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     }
     Ok(dir)
+}
+
+/// Vrai si le fichier existe ET son mtime est >= `min_age_secs` secondes.
+/// Utilisé pour ne PAS toucher les .tmp en cours d'écriture par le jeu —
+/// seuls les .tmp vraiment orphelins (game crashed mid-rename) sont anciens.
+fn is_stale(path: &Path, min_age_secs: u64) -> bool {
+    fs::metadata(path)
+        .ok()
+        .and_then(|m| m.modified().ok())
+        .and_then(|mtime| mtime.elapsed().ok())
+        .map(|elapsed| elapsed.as_secs() >= min_age_secs)
+        .unwrap_or(false)
 }
 
 /// Lit et supprime `vms_outbox.json` (écrit par le jeu).
@@ -33,16 +45,8 @@ pub fn cmd_battle_read_outbox() -> Result<Option<String>, String> {
     let path = dir.join("vms_outbox.json");
     let tmp_path = dir.join("vms_outbox.json.tmp");
 
-    if tmp_path.exists() && !path.exists() {
-        let is_stale = fs::metadata(&tmp_path)
-            .ok()
-            .and_then(|m| m.modified().ok())
-            .and_then(|mtime| mtime.elapsed().ok())
-            .map(|elapsed| elapsed.as_secs() >= 1)
-            .unwrap_or(false);
-        if is_stale {
-            let _ = fs::rename(&tmp_path, &path);
-        }
+    if tmp_path.exists() && !path.exists() && is_stale(&tmp_path, 1) {
+        let _ = fs::rename(&tmp_path, &path);
     }
 
     if !path.exists() {
@@ -155,8 +159,9 @@ pub fn cmd_battle_read_live_party() -> Result<Option<String>, String> {
     let path = dir.join("vms_live_party.json");
     let tmp_path = dir.join("vms_live_party.json.tmp");
 
-    // Nettoyer les .tmp orphelins
-    if tmp_path.exists() && !path.exists() {
+    // Nettoyer les .tmp orphelins — voir cmd_battle_read_outbox pour le pourquoi
+    // du check d'âge (vs race avec le rename atomique du jeu).
+    if tmp_path.exists() && !path.exists() && is_stale(&tmp_path, 1) {
         let _ = fs::rename(&tmp_path, &path);
     }
 
@@ -171,21 +176,35 @@ pub fn cmd_battle_read_live_party() -> Result<Option<String>, String> {
 
 /// Supprime UNIQUEMENT les fichiers IPC du dossier battle/ (cleanup).
 /// Preserve vms_debug.log et le sous-dossier logs/ pour garder l'historique de debug.
+///
+/// IMPORTANT : on ne supprime PAS les `.tmp` récents. Le jeu écrit son outbox
+/// via `write(.tmp) + rename(.tmp, .json)`. Si on supprime `vms_outbox.json.tmp`
+/// pendant que le jeu est entre ces deux étapes, son rename échoue avec
+/// "No such file" → le jeu boucle en erreur et le combat reste stuck.
+/// On garde la suppression pour les `.tmp` >= 2s (vrais orphelins) seulement.
 #[tauri::command]
 pub fn cmd_battle_cleanup() -> Result<(), String> {
     let dir = battle_dir()?;
     if dir.exists() {
-        // Liste explicite des fichiers IPC a supprimer (ne touche pas au reste)
-        let ipc_files = [
+        // Fichiers finaux : suppression directe, jamais en cours d'écriture par le jeu.
+        let final_files = [
             "vms_outbox.json",
-            "vms_outbox.json.tmp",
             "vms_inbox.json",
-            "vms_inbox.json.tmp",
             "vms_trigger.json",
         ];
-        for filename in ipc_files.iter() {
+        for filename in final_files.iter() {
             let path = dir.join(filename);
             if path.exists() {
+                let _ = fs::remove_file(&path);
+            }
+        }
+
+        // Fichiers .tmp : suppression UNIQUEMENT si vraiment orphelins (>=2s).
+        // Sinon on race avec le rename atomique du jeu.
+        let tmp_files = ["vms_outbox.json.tmp", "vms_inbox.json.tmp"];
+        for filename in tmp_files.iter() {
+            let path = dir.join(filename);
+            if path.exists() && is_stale(&path, 2) {
                 let _ = fs::remove_file(&path);
             }
         }
