@@ -19,16 +19,30 @@ fn battle_dir() -> Result<PathBuf, String> {
 
 /// Lit et supprime `vms_outbox.json` (écrit par le jeu).
 /// Retourne `None` si le fichier n'existe pas.
-/// Lit le .tmp d'abord (écriture atomique côté jeu).
+///
+/// IMPORTANT — race vs l'écriture atomique du jeu :
+/// Le jeu écrit `vms_outbox.json.tmp` puis fait `rename(.tmp, .json)`. Si on
+/// "rescue" le .tmp dès qu'il existe, on vole l'opération de rename du jeu :
+/// son rename échoue avec "No such file or directory" et le jeu boucle en
+/// erreur sans jamais publier sa state → le launcher ne voit jamais
+/// `state="battle"` et le combat reste stuck. Donc on ne rescue qu'un .tmp
+/// vraiment ancien (>1s = le jeu a clairement crashé entre write et rename).
 #[tauri::command]
 pub fn cmd_battle_read_outbox() -> Result<Option<String>, String> {
     let dir = battle_dir()?;
     let path = dir.join("vms_outbox.json");
     let tmp_path = dir.join("vms_outbox.json.tmp");
 
-    // Nettoyer les .tmp orphelins (le jeu a écrit mais le rename a échoué)
     if tmp_path.exists() && !path.exists() {
-        let _ = fs::rename(&tmp_path, &path);
+        let is_stale = fs::metadata(&tmp_path)
+            .ok()
+            .and_then(|m| m.modified().ok())
+            .and_then(|mtime| mtime.elapsed().ok())
+            .map(|elapsed| elapsed.as_secs() >= 1)
+            .unwrap_or(false);
+        if is_stale {
+            let _ = fs::rename(&tmp_path, &path);
+        }
     }
 
     if !path.exists() {
