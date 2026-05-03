@@ -36,6 +36,9 @@ export interface BattleChatRankInfo {
   tier: RankTier;
   lp: number;
   mmr: number;
+  /** Total PVP wins (ranked + amical confondus) — affiché en stats compactes. */
+  wins: number;
+  losses: number;
 }
 
 /**
@@ -110,6 +113,8 @@ export async function openBattleChat(opts: OpenBattleChatOptions): Promise<() =>
               tier: (s.battle_rank_tier ?? "unranked") as RankTier,
               lp: s.battle_lp ?? 0,
               mmr: s.battle_mmr ?? 0,
+              wins: s.pvp_wins ?? 0,
+              losses: s.pvp_losses ?? 0,
             }
           : null;
       emit("chat:rank-info", {

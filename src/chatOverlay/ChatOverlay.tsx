@@ -47,6 +47,8 @@ interface RankInfo {
   tier: RankTier;
   lp: number;
   mmr: number;
+  wins: number;
+  losses: number;
 }
 
 interface RankInfoPayload {
@@ -336,33 +338,41 @@ function RankBadge({ rank, compact = false, tiny = false }: { rank: RankInfo; co
   const theme = tierTheme(rank.tier);
   const label = tierLabel(rank.tier, "fr");
   const showLp = rank.tier !== "unranked";
+  const showStats = rank.wins + rank.losses > 0;
   const iconSize = tiny ? 12 : compact ? 14 : 18;
   const fontSize = tiny ? 10 : compact ? 11 : 13;
 
   return (
-    <div
-      className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5"
-      style={{
-        background: `linear-gradient(135deg, ${theme.glow}, transparent)`,
-        boxShadow: `inset 0 0 0 1px ${theme.glow}`,
-        color: theme.accent,
-        fontSize,
-        lineHeight: 1.2,
-      }}
-    >
-      <img
-        src={tierIconUrl(rank.tier)}
-        alt=""
-        width={iconSize}
-        height={iconSize}
-        style={{ filter: `drop-shadow(0 0 4px ${theme.glow})` }}
-      />
-      <span className="font-semibold tracking-tight">{label}</span>
-      {showLp && (
-        <>
-          <span style={{ opacity: 0.4 }}>·</span>
-          <span className="tabular-nums" style={{ opacity: 0.85 }}>{rank.lp} LP</span>
-        </>
+    <div className="inline-flex items-center gap-1.5 flex-wrap" style={{ fontSize, lineHeight: 1.2 }}>
+      <div
+        className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5"
+        style={{
+          background: `linear-gradient(135deg, ${theme.glow}, transparent)`,
+          boxShadow: `inset 0 0 0 1px ${theme.glow}`,
+          color: theme.accent,
+        }}
+      >
+        <img
+          src={tierIconUrl(rank.tier)}
+          alt=""
+          width={iconSize}
+          height={iconSize}
+          style={{ filter: `drop-shadow(0 0 4px ${theme.glow})` }}
+        />
+        <span className="font-semibold tracking-tight">{label}</span>
+        {showLp && (
+          <>
+            <span style={{ opacity: 0.4 }}>·</span>
+            <span className="tabular-nums" style={{ opacity: 0.85 }}>{rank.lp} LP</span>
+          </>
+        )}
+      </div>
+      {showStats && (
+        <span className="tabular-nums" style={{ color: "rgba(255,255,255,.5)" }}>
+          <span style={{ color: "#86efac" }}>{rank.wins}W</span>
+          <span style={{ opacity: 0.4, margin: "0 4px" }}>·</span>
+          <span style={{ color: "#fca5a5" }}>{rank.losses}L</span>
+        </span>
       )}
     </div>
   );
