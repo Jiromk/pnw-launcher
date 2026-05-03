@@ -358,6 +358,138 @@ body[data-overlay="chat"]{
   animation:rank-apex-glow 2.4s ease-in-out infinite;
 }
 
+/* ───── Emote picker ───── */
+
+/* Bouton smiley dans la barre d'input */
+.chat-overlay-emote-btn{
+  background:rgba(255,255,255,.05);
+  color:rgba(255,255,255,.55);
+  border:1px solid rgba(255,255,255,.06);
+  transition:background .15s, color .15s, border-color .15s;
+}
+.chat-overlay-emote-btn:hover{
+  background:rgba(255,255,255,.09);
+  color:rgba(255,255,255,.85);
+  border-color:rgba(255,255,255,.1);
+}
+.chat-overlay-emote-btn--active{
+  background:color-mix(in srgb, var(--tier-accent, var(--accent)) 18%, transparent);
+  color:#fff;
+  border-color:color-mix(in srgb, var(--tier-accent, var(--accent)) 40%, transparent);
+  box-shadow:0 0 12px color-mix(in srgb, var(--tier-accent, var(--accent)) 25%, transparent);
+}
+
+/* Conteneur du picker — pop au-dessus de l'input row */
+@keyframes chat-emote-pop{
+  from{ opacity:0; transform:translateY(8px) scale(.98); }
+  to  { opacity:1; transform:translateY(0)   scale(1); }
+}
+.chat-emote-picker{
+  position:absolute; left:8px; right:8px; bottom:calc(100% + 4px);
+  z-index:50;
+  display:flex; flex-direction:column;
+  background:linear-gradient(180deg, rgba(18,28,48,.98), rgba(10,18,34,.99));
+  border:1px solid color-mix(in srgb, var(--tier-accent, var(--accent)) 25%, rgba(255,255,255,.08));
+  border-radius:14px;
+  box-shadow:
+    0 12px 40px rgba(0,0,0,.5),
+    0 0 24px color-mix(in srgb, var(--tier-accent, var(--accent)) 18%, transparent),
+    inset 0 1px 0 rgba(255,255,255,.06);
+  backdrop-filter:blur(14px) saturate(160%);
+  -webkit-backdrop-filter:blur(14px) saturate(160%);
+  overflow:hidden;
+  animation:chat-emote-pop .15s cubic-bezier(.22,1,.36,1);
+}
+
+/* Onglets catégories (scroll horizontal) */
+.chat-emote-tabs{
+  background:rgba(0,0,0,.2);
+  border-bottom:1px solid rgba(255,255,255,.06);
+  padding:4px;
+  scrollbar-width:none;
+}
+.chat-emote-tabs::-webkit-scrollbar{ display:none; }
+.chat-emote-tab{
+  width:30px; height:30px;
+  border-radius:8px;
+  background:transparent;
+  border:none;
+  cursor:pointer;
+  opacity:.55;
+  transition:opacity .12s, background .12s, transform .12s;
+  font-size:16px;
+  line-height:1;
+  filter:grayscale(35%);
+}
+.chat-emote-tab:hover{
+  opacity:.9;
+  background:rgba(255,255,255,.05);
+  filter:grayscale(0%);
+}
+.chat-emote-tab--active{
+  opacity:1;
+  background:color-mix(in srgb, var(--tier-accent, var(--accent)) 22%, rgba(255,255,255,.08));
+  box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--tier-accent, var(--accent)) 35%, transparent);
+  filter:grayscale(0%);
+}
+
+/* Grille emojis */
+.chat-emote-grid{
+  display:grid;
+  grid-template-columns:repeat(8, 1fr);
+  gap:2px;
+  padding:6px;
+  overflow-y:auto;
+  height:200px;
+}
+.chat-emote-cell{
+  aspect-ratio:1;
+  background:transparent;
+  border:none;
+  cursor:pointer;
+  border-radius:6px;
+  font-size:18px;
+  line-height:1;
+  display:grid; place-items:center;
+  transition:background .1s, transform .1s;
+  padding:0;
+}
+.chat-emote-cell:hover{
+  background:color-mix(in srgb, var(--tier-accent, var(--accent)) 18%, rgba(255,255,255,.08));
+  transform:scale(1.15);
+}
+.chat-emote-cell:active{ transform:scale(.95); }
+
+/* Footer : nom catégorie + close */
+.chat-emote-footer{
+  display:flex; align-items:center; justify-content:space-between;
+  padding:4px 10px;
+  background:rgba(0,0,0,.22);
+  border-top:1px solid rgba(255,255,255,.05);
+  font-size:10px;
+}
+.chat-emote-category-name{
+  color:rgba(255,255,255,.5);
+  font-weight:600;
+  letter-spacing:.04em;
+  text-transform:uppercase;
+}
+.chat-emote-close{
+  width:18px; height:18px;
+  display:grid; place-items:center;
+  border-radius:50%;
+  background:rgba(255,255,255,.05);
+  color:rgba(255,255,255,.5);
+  border:none;
+  cursor:pointer;
+  font-size:9px;
+  transition:background .12s, color .12s;
+}
+.chat-emote-close:hover{
+  background:rgba(255,255,255,.12);
+  color:#fff;
+}
+
 /* Thème sombre : harmoniser menu hamburger, logo header et boutons Thème/Avatar/Rafraîchir avec les panneaux */
 [data-theme="dark"] .pnw-sidebar-toggle{
   background:linear-gradient(145deg, rgba(12,20,38,.92) 0%, rgba(6,12,24,.95) 100%);

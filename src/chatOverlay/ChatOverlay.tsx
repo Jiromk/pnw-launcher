@@ -22,8 +22,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, emit } from "@tauri-apps/api/event";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { LogicalPosition, LogicalSize } from "@tauri-apps/api/dpi";
-import { FaPaperPlane, FaCommentDots } from "react-icons/fa6";
+import { FaPaperPlane, FaCommentDots, FaFaceSmile } from "react-icons/fa6";
 import { isApex, tierIconUrl, tierLabel, tierTheme, type RankTier } from "../ranked";
+import { EMOJI_CATEGORIES } from "./emotes";
 
 const OVERLAY_WIDTH = 340;
 const POLL_INTERVAL_MS = 200;
@@ -167,10 +168,13 @@ export default function ChatOverlay() {
   const [opponentRank, setOpponentRank] = useState<RankInfo | null>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
   const [pulseHeader, setPulseHeader] = useState(false);
+  const [emotePickerOpen, setEmotePickerOpen] = useState(false);
+  const [emoteCategory, setEmoteCategory] = useState(EMOJI_CATEGORIES[0].id);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const idCounterRef = useRef(0);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const emotePickerWrapRef = useRef<HTMLDivElement>(null);
 
   const groupPositions = useMemo(() => computeGroupPositions(messages), [messages]);
 
@@ -306,6 +310,42 @@ export default function ChatOverlay() {
     }
   };
 
+  // ─── Insère un emoji à la position du curseur (respecte MAX_MESSAGE_LEN) ───
+  const insertEmoji = (emoji: string) => {
+    const ta = inputRef.current;
+    const start = ta?.selectionStart ?? draft.length;
+    const end = ta?.selectionEnd ?? draft.length;
+    const next = (draft.slice(0, start) + emoji + draft.slice(end)).slice(0, MAX_MESSAGE_LEN);
+    setDraft(next);
+    // Restaurer focus + curseur après le caractère inséré (au prochain tick).
+    requestAnimationFrame(() => {
+      const t = inputRef.current;
+      if (!t) return;
+      t.focus();
+      const pos = Math.min(start + emoji.length, next.length);
+      try { t.setSelectionRange(pos, pos); } catch {}
+    });
+  };
+
+  // ─── Fermer le picker au click-outside et à Escape ───
+  useEffect(() => {
+    if (!emotePickerOpen) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (emotePickerWrapRef.current && !emotePickerWrapRef.current.contains(e.target as Node)) {
+        setEmotePickerOpen(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setEmotePickerOpen(false);
+    };
+    document.addEventListener("mousedown", onDocClick);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDocClick);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [emotePickerOpen]);
+
   const charsLeft = MAX_MESSAGE_LEN - draft.length;
   const showCounter = charsLeft <= 50;
 
@@ -378,38 +418,56 @@ export default function ChatOverlay() {
         <div ref={messagesEndRef} />
       </div>
 
-      {/* ───── Input ───── */}
-      <div className="chat-overlay-input-row flex items-end gap-2 px-3 py-2.5">
-        <div className="relative flex-1">
-          <textarea
-            ref={inputRef}
-            value={draft}
-            onChange={(e) => setDraft(e.target.value.slice(0, MAX_MESSAGE_LEN))}
-            onKeyDown={onKeyDown}
-            placeholder="Message…"
-            rows={1}
-            maxLength={MAX_MESSAGE_LEN}
-            className="chat-overlay-textarea w-full resize-none rounded-xl px-3 py-2 text-[13px] leading-snug outline-none"
+      {/* ───── Input + Emote picker ───── */}
+      <div ref={emotePickerWrapRef} className="relative">
+        {emotePickerOpen && (
+          <EmotePicker
+            activeId={emoteCategory}
+            onCategoryChange={setEmoteCategory}
+            onPick={insertEmoji}
+            onClose={() => setEmotePickerOpen(false)}
           />
-          {showCounter && (
-            <div
-              className={`pointer-events-none absolute bottom-1.5 right-2 text-[10px] tabular-nums ${
-                charsLeft <= 0 ? "text-red-400" : "text-white/35"
-              }`}
-            >
-              {charsLeft}
-            </div>
-          )}
+        )}
+        <div className="chat-overlay-input-row flex items-end gap-2 px-3 py-2.5">
+          <button
+            type="button"
+            onClick={() => setEmotePickerOpen((v) => !v)}
+            aria-label="Emojis"
+            className={`chat-overlay-emote-btn h-9 w-9 shrink-0 grid place-items-center rounded-xl text-base transition-all duration-150 ${emotePickerOpen ? "chat-overlay-emote-btn--active" : ""}`}
+          >
+            <FaFaceSmile />
+          </button>
+          <div className="relative flex-1">
+            <textarea
+              ref={inputRef}
+              value={draft}
+              onChange={(e) => setDraft(e.target.value.slice(0, MAX_MESSAGE_LEN))}
+              onKeyDown={onKeyDown}
+              placeholder="Message…"
+              rows={1}
+              maxLength={MAX_MESSAGE_LEN}
+              className="chat-overlay-textarea w-full resize-none rounded-xl px-3 py-2 text-[13px] leading-snug outline-none"
+            />
+            {showCounter && (
+              <div
+                className={`pointer-events-none absolute bottom-1.5 right-2 text-[10px] tabular-nums ${
+                  charsLeft <= 0 ? "text-red-400" : "text-white/35"
+                }`}
+              >
+                {charsLeft}
+              </div>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={send}
+            disabled={!draft.trim()}
+            aria-label="Envoyer"
+            className="chat-overlay-send-btn h-9 w-9 shrink-0 grid place-items-center rounded-xl text-white text-sm transition-all duration-150 disabled:opacity-40 disabled:cursor-not-allowed enabled:hover:scale-105 enabled:active:scale-90"
+          >
+            <FaPaperPlane className="translate-x-[-1px]" />
+          </button>
         </div>
-        <button
-          type="button"
-          onClick={send}
-          disabled={!draft.trim()}
-          aria-label="Envoyer"
-          className="chat-overlay-send-btn h-9 w-9 shrink-0 grid place-items-center rounded-xl text-white text-sm transition-all duration-150 disabled:opacity-40 disabled:cursor-not-allowed enabled:hover:scale-105 enabled:active:scale-90"
-        >
-          <FaPaperPlane className="translate-x-[-1px]" />
-        </button>
       </div>
 
       {/* ───── Mon rang (footer discret) ───── */}
@@ -509,6 +567,66 @@ function RankBadge({ rank, compact = false, tiny = false }: { rank: RankInfo; co
           <span style={{ color: "#fca5a5" }}>{rank.losses}L</span>
         </span>
       )}
+    </div>
+  );
+}
+
+/* ─────────────────────────── EmotePicker ─────────────────────────── */
+
+interface EmotePickerProps {
+  activeId: string;
+  onCategoryChange: (id: string) => void;
+  onPick: (emoji: string) => void;
+  onClose: () => void;
+}
+
+function EmotePicker({ activeId, onCategoryChange, onPick, onClose }: EmotePickerProps) {
+  const active = EMOJI_CATEGORIES.find((c) => c.id === activeId) ?? EMOJI_CATEGORIES[0];
+  return (
+    <div className="chat-emote-picker">
+      {/* Onglets catégories — scrollable horizontalement */}
+      <div className="chat-emote-tabs flex overflow-x-auto">
+        {EMOJI_CATEGORIES.map((c) => (
+          <button
+            key={c.id}
+            type="button"
+            onClick={() => onCategoryChange(c.id)}
+            title={c.label}
+            aria-label={c.label}
+            className={`chat-emote-tab shrink-0 grid place-items-center text-base ${activeId === c.id ? "chat-emote-tab--active" : ""}`}
+          >
+            <span aria-hidden>{c.icon}</span>
+          </button>
+        ))}
+      </div>
+
+      {/* Grille de la catégorie active */}
+      <div className="chat-emote-grid">
+        {active.emojis.map((e, idx) => (
+          <button
+            key={`${active.id}-${idx}-${e}`}
+            type="button"
+            onClick={() => onPick(e)}
+            className="chat-emote-cell"
+            aria-label={`Insérer ${e}`}
+          >
+            <span aria-hidden>{e}</span>
+          </button>
+        ))}
+      </div>
+
+      {/* Footer : nom de la catégorie + close */}
+      <div className="chat-emote-footer">
+        <span className="chat-emote-category-name">{active.label}</span>
+        <button
+          type="button"
+          onClick={onClose}
+          className="chat-emote-close"
+          aria-label="Fermer"
+        >
+          ✕
+        </button>
+      </div>
     </div>
   );
 }
