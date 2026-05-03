@@ -151,10 +151,6 @@ export async function cleanupBattleFiles(): Promise<void> {
 }
 
 export async function fullCleanup(relayCleanupRef: React.MutableRefObject<(() => void) | null>): Promise<void> {
-  // DEBUG : trace appelée AVANT le 1er await pour capturer la stack synchrone.
-  // Sans ça, console.trace dans cleanupBattleFiles ne montre que la frontière
-  // microtask et masque le vrai caller. À retirer une fois le bug d'inbox résolu.
-  console.trace("[Battle] fullCleanup called from:");
   if (relayCleanupRef.current) {
     relayCleanupRef.current();
     relayCleanupRef.current = null;

@@ -51,16 +51,19 @@ export interface BattleChatRankInfo {
  */
 export async function openBattleChat(opts: OpenBattleChatOptions): Promise<() => Promise<void>> {
   const { roomCode, opponentName, opponentAvatar = null, opponentId, myUserId } = opts;
+  console.log("[BattleChat] openBattleChat()", { roomCode, opponentName });
 
   // Cleanup d'une éventuelle fenêtre orpheline (race au reload, double-clic invite)
   const existing = await WebviewWindow.getByLabel(OVERLAY_LABEL);
   if (existing) {
+    console.log("[BattleChat] closing orphan overlay window");
     try { await existing.close(); } catch {}
   }
 
   // Création de la fenêtre. Position/taille seront écrasées par le polling
   // côté overlay (cmd_get_game_window_rect). On démarre cachée (visible:false)
   // pour éviter le flash en haut-gauche pendant la première frame.
+  console.log("[BattleChat] creating WebviewWindow");
   const win = new WebviewWindow(OVERLAY_LABEL, {
     url: "index.html#chat-overlay",
     title: "Chat",
@@ -74,16 +77,26 @@ export async function openBattleChat(opts: OpenBattleChatOptions): Promise<() =>
     focus: false,
   });
 
+  // Surveiller les erreurs de création (ACL, capability, etc.) — sinon elles
+  // sont silencieuses et l'overlay ne s'ouvre jamais sans qu'on sache pourquoi.
+  win.once("tauri://error", (e) => {
+    console.error("[BattleChat] WebviewWindow creation error:", e.payload);
+  }).catch(() => {});
+  win.once("tauri://created", () => {
+    console.log("[BattleChat] WebviewWindow created OK");
+  }).catch(() => {});
+
   // Attendre `chat:ready` de l'overlay (handshake) avant d'envoyer peer-info.
   // Garantit que les listeners sont mountés. Garde-fou : 5s max.
-  await new Promise<void>((resolve) => {
+  const handshakeStart = Date.now();
+  const ready = await new Promise<boolean>((resolve) => {
     let resolved = false;
     let unlistenFn: UnlistenFn | null = null;
     listen("chat:ready", () => {
       if (resolved) return;
       resolved = true;
       if (unlistenFn) unlistenFn();
-      resolve();
+      resolve(true);
     }).then((fn) => {
       unlistenFn = fn;
       if (resolved) fn();
@@ -92,12 +105,18 @@ export async function openBattleChat(opts: OpenBattleChatOptions): Promise<() =>
       if (resolved) return;
       resolved = true;
       if (unlistenFn) unlistenFn();
-      resolve();
+      resolve(false);
     }, 5000);
   });
+  if (ready) {
+    console.log("[BattleChat] chat:ready received in", Date.now() - handshakeStart, "ms");
+  } else {
+    console.warn("[BattleChat] chat:ready TIMEOUT after 5s — overlay may have failed to mount");
+  }
 
   // Envoyer les infos initiales à l'overlay
   await emit("chat:peer-info", { opponentName, opponentAvatar, myUserId });
+  console.log("[BattleChat] peer-info sent");
 
   // Fetch des rangs en arrière-plan (pas await — l'overlay s'affiche déjà,
   // le badge apparaît dès la réponse Supabase). Si le fetch échoue, l'overlay
