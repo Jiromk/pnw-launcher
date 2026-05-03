@@ -441,6 +441,42 @@ export function attachBattleChatListener(cb: (msg: BattleChatMessage) => void): 
   return () => { sock.off("chat_message", handler); };
 }
 
+/* ==================== In-battle emote (spam-friendly) ==================== */
+
+export interface BattleEmote {
+  roomCode: string;
+  fromUserId: string;
+  emoji: string;
+  ts: number;
+}
+
+/**
+ * Envoie un emote spammable (style "TikTok hearts") dans la room du combat.
+ * Le serveur a un rate-limit plus permissif (~12/s) que pour les messages.
+ */
+export function sendBattleEmote(roomCode: string, emoji: string): boolean {
+  const sock = battleSocket;
+  if (!sock || !sock.connected) return false;
+  if (typeof emoji !== "string" || emoji.length === 0 || emoji.length > 16) return false;
+  sock.emit("chat_emote", { roomCode, emoji });
+  return true;
+}
+
+/** Listener pour les emotes reçus de l'adversaire. Retourne cleanup. */
+export function attachBattleEmoteListener(cb: (msg: BattleEmote) => void): () => void {
+  const sock = battleSocket;
+  if (!sock) {
+    console.warn("[BattleChat] battle socket not connected — emote listener attach ignored");
+    return () => {};
+  }
+  const handler = (payload: BattleEmote) => {
+    if (!payload || typeof payload.emoji !== "string") return;
+    cb(payload);
+  };
+  sock.on("chat_emote", handler);
+  return () => { sock.off("chat_emote", handler); };
+}
+
 /**
  * Émet `battle_end` au serveur (cas où le combat se termine sans que le jeu
  * ait écrit `battle_result` dans l'outbox — forfeit volontaire, crash, etc.)

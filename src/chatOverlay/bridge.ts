@@ -16,7 +16,7 @@
  */
 import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { sendBattleChatMessage, attachBattleChatListener } from "../battleRelay";
+import { sendBattleChatMessage, attachBattleChatListener, sendBattleEmote, attachBattleEmoteListener } from "../battleRelay";
 import { fetchPvpStats } from "../leaderboard";
 import type { RankTier } from "../ranked";
 
@@ -158,10 +158,26 @@ export async function openBattleChat(opts: OpenBattleChatOptions): Promise<() =>
     }
   });
 
+  // ─── Emote spam (style TikTok hearts) ───
+  // Forward emote socket → overlay (l'animation se fait côté overlay)
+  const detachIncomingEmote = attachBattleEmoteListener((msg) => {
+    if (msg.fromUserId === myUserId) return; // pas d'echo
+    emit("chat:incoming-emote", { fromUserId: msg.fromUserId, emoji: msg.emoji, ts: msg.ts }).catch(() => {});
+  });
+  // Forward overlay click → socket
+  const unlistenSendEmote: UnlistenFn = await listen<{ emoji: string }>("chat:send-emote", (e) => {
+    const emoji = e.payload?.emoji;
+    if (typeof emoji === "string" && emoji.length > 0) {
+      sendBattleEmote(roomCode, emoji);
+    }
+  });
+
   // Cleanup function — à appeler quand le combat se termine
   return async () => {
     try { detachIncoming(); } catch {}
+    try { detachIncomingEmote(); } catch {}
     try { unlistenSend(); } catch {}
+    try { unlistenSendEmote(); } catch {}
     try { await emit("chat:battle-end", {}); } catch {}
     try {
       const w = await WebviewWindow.getByLabel(OVERLAY_LABEL);

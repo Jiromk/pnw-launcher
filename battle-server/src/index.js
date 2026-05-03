@@ -25,6 +25,8 @@ const MAX_OBJECT_DEPTH = 12;
 const MAX_TURN_NUMBER = 1000; // un combat dépasse rarement 100 tours
 const MAX_CHAT_MESSAGE_LEN = 300; // caractères max par message chat
 const CHAT_MIN_INTERVAL_MS = 500; // anti-flood : 1 message par 500ms par socket
+const MAX_EMOTE_LEN = 16;         // un emoji peut faire jusqu'à ~10 codepoints (ZWJ)
+const EMOTE_MIN_INTERVAL_MS = 80; // emote spam-friendly : ~12/s max par socket
 
 /**
  * Anti-DoS : refuse les payloads dont la profondeur d'imbrication dépasse N.
@@ -546,6 +548,35 @@ io.on("connection", (socket) => {
       roomCode,
       fromUserId: userId,
       text: trimmed,
+      ts: now,
+    });
+  });
+
+  // ─── Chat emote (in-battle, spammable, éphémère) ───
+  // Style "TikTok hearts" : un emoji floté qui drift bottom→top chez les 2
+  // joueurs. Plus permissif que chat_message (rate limit court) car c'est
+  // l'usage attendu (réactions rapides). Pas de longueur autre que celle
+  // d'un emoji simple/composé (max 16 chars pour couvrir les ZWJ sequences).
+  socket.on("chat_emote", ({ roomCode, emoji } = {}) => {
+    const userId = authedUserId(socket);
+    if (!userId) return;
+    if (!roomCode || typeof roomCode !== "string") return;
+    if (typeof emoji !== "string") return;
+    if (emoji.length === 0 || emoji.length > MAX_EMOTE_LEN) return;
+
+    const room = rooms.get(roomCode);
+    if (!room || !room.players.has(userId)) return;
+
+    // Rate limit séparé du chat (plus permissif pour le spam)
+    const now = Date.now();
+    const last = socket.data.lastEmoteAt || 0;
+    if (now - last < EMOTE_MIN_INTERVAL_MS) return;
+    socket.data.lastEmoteAt = now;
+
+    socket.to(roomCode).emit("chat_emote", {
+      roomCode,
+      fromUserId: userId,
+      emoji,
       ts: now,
     });
   });

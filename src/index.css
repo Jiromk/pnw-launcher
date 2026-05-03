@@ -490,6 +490,52 @@ body[data-overlay="chat"]{
   color:#fff;
 }
 
+/* ───── Floating emotes (style "TikTok hearts spam") ─────
+   Calque par-dessus tout le contenu, pointer-events:none pour rien bloquer.
+   Chaque emoji drift bottom→top avec léger jitter horizontal et fade. */
+.chat-floating-layer{
+  position:absolute; inset:0;
+  pointer-events:none;
+  overflow:hidden;
+  z-index:40;
+}
+.chat-floating-emote{
+  position:absolute;
+  bottom:80px;            /* part au-dessus de l'input */
+  font-size:30px;
+  line-height:1;
+  user-select:none;
+  pointer-events:none;
+  filter:drop-shadow(0 4px 10px rgba(0,0,0,.55));
+  animation-name:chat-float-rise;
+  animation-timing-function:cubic-bezier(.22,1,.36,1);
+  animation-fill-mode:forwards;
+  will-change:transform, opacity;
+  --drift:0px;
+  /* Centrer l'emoji sur la position left:X% (compense la largeur du glyph) */
+  transform:translateX(-50%);
+}
+/* Variantes par sender : très subtil tilt opposé pour séparer visuellement */
+.chat-floating-emote--me{ animation-name:chat-float-rise-me; }
+.chat-floating-emote--them{ animation-name:chat-float-rise-them; }
+
+@keyframes chat-float-rise-me{
+  0%   { opacity:0; transform:translate(-50%, 0)                     scale(.4)  rotate(-6deg); }
+  10%  { opacity:1; transform:translate(calc(-50% + var(--drift)*.1), -8vh)  scale(1.25) rotate(2deg); }
+  25%  { opacity:1; transform:translate(calc(-50% + var(--drift)*.3), -22vh) scale(1.05) rotate(-3deg); }
+  55%  { opacity:.95; transform:translate(calc(-50% + var(--drift)*.6), -52vh) scale(.95) rotate(2deg); }
+  85%  { opacity:.55; transform:translate(calc(-50% + var(--drift)*.85), -82vh) scale(.85) rotate(-1deg); }
+  100% { opacity:0; transform:translate(calc(-50% + var(--drift)),       -110vh) scale(.7)  rotate(0deg); }
+}
+@keyframes chat-float-rise-them{
+  0%   { opacity:0; transform:translate(-50%, 0)                     scale(.4)  rotate(6deg); }
+  10%  { opacity:1; transform:translate(calc(-50% + var(--drift)*.1), -8vh)  scale(1.25) rotate(-2deg); }
+  25%  { opacity:1; transform:translate(calc(-50% + var(--drift)*.3), -22vh) scale(1.05) rotate(3deg); }
+  55%  { opacity:.95; transform:translate(calc(-50% + var(--drift)*.6), -52vh) scale(.95) rotate(-2deg); }
+  85%  { opacity:.55; transform:translate(calc(-50% + var(--drift)*.85), -82vh) scale(.85) rotate(1deg); }
+  100% { opacity:0; transform:translate(calc(-50% + var(--drift)),       -110vh) scale(.7)  rotate(0deg); }
+}
+
 /* Thème sombre : harmoniser menu hamburger, logo header et boutons Thème/Avatar/Rafraîchir avec les panneaux */
 [data-theme="dark"] .pnw-sidebar-toggle{
   background:linear-gradient(145deg, rgba(12,20,38,.92) 0%, rgba(6,12,24,.95) 100%);

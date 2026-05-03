@@ -58,6 +58,21 @@ interface RankInfoPayload {
   opponent: RankInfo | null;
 }
 
+interface FloatingEmote {
+  id: number;
+  emoji: string;
+  /** % horizontal de départ (0-100), permet aux 2 sides d'avoir des positions variées. */
+  startPct: number;
+  /** Drift horizontal en px sur la durée de l'animation (-50 à +50). */
+  drift: number;
+  /** Léger jitter sur la durée pour éviter le côté "rythmé". */
+  duration: number;
+  /** "me" → spawn à droite (près du smiley btn) ; "them" → spawn côté gauche. */
+  side: "me" | "them";
+}
+
+const FLOAT_LIFETIME_MS = 2600;
+
 /* ════════════════════ Audio (Web Audio API) ════════════════════
  * Sons générés dynamiquement — zéro fichier externe → zéro souci CSP.
  * Volume volontairement bas (0.04-0.08) pour rester discret.
@@ -170,9 +185,11 @@ export default function ChatOverlay() {
   const [pulseHeader, setPulseHeader] = useState(false);
   const [emotePickerOpen, setEmotePickerOpen] = useState(false);
   const [emoteCategory, setEmoteCategory] = useState(EMOJI_CATEGORIES[0].id);
+  const [floatingEmotes, setFloatingEmotes] = useState<FloatingEmote[]>([]);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const idCounterRef = useRef(0);
+  const floatingIdRef = useRef(0);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const emotePickerWrapRef = useRef<HTMLDivElement>(null);
 
@@ -221,6 +238,10 @@ export default function ChatOverlay() {
         // Pulse header subtil pour signaler l'activité
         setPulseHeader(true);
         setTimeout(() => setPulseHeader(false), 700);
+      }),
+      listen<{ fromUserId: string; emoji: string; ts: number }>("chat:incoming-emote", (e) => {
+        // Les emotes adverses spawnent côté gauche pour se distinguer des nôtres
+        spawnFloatingEmote(e.payload.emoji, "them");
       }),
       listen("chat:battle-end", async () => {
         try { await getCurrentWebviewWindow().close(); } catch {}
@@ -310,22 +331,29 @@ export default function ChatOverlay() {
     }
   };
 
-  // ─── Insère un emoji à la position du curseur (respecte MAX_MESSAGE_LEN) ───
-  const insertEmoji = (emoji: string) => {
-    const ta = inputRef.current;
-    const start = ta?.selectionStart ?? draft.length;
-    const end = ta?.selectionEnd ?? draft.length;
-    const next = (draft.slice(0, start) + emoji + draft.slice(end)).slice(0, MAX_MESSAGE_LEN);
-    setDraft(next);
-    // Restaurer focus + curseur après le caractère inséré (au prochain tick).
-    requestAnimationFrame(() => {
-      const t = inputRef.current;
-      if (!t) return;
-      t.focus();
-      const pos = Math.min(start + emoji.length, next.length);
-      try { t.setSelectionRange(pos, pos); } catch {}
-    });
-  };
+  // ─── Spawn un emoji floté qui drift bottom→top (style TikTok hearts) ───
+  // `side` détermine le côté de départ : "me" = droite (près du smiley btn),
+  // "them" = gauche. Auto-removed du state après FLOAT_LIFETIME_MS.
+  const spawnFloatingEmote = useCallback((emoji: string, side: "me" | "them") => {
+    floatingIdRef.current += 1;
+    const id = floatingIdRef.current;
+    // Position % : "me" cluster côté droit (60-90%), "them" côté gauche (10-40%)
+    const startPct = side === "me"
+      ? 60 + Math.random() * 30
+      : 10 + Math.random() * 30;
+    const drift = (Math.random() - 0.5) * 80; // ±40px
+    const duration = FLOAT_LIFETIME_MS + (Math.random() - 0.5) * 400; // ±200ms jitter
+    setFloatingEmotes((prev) => [...prev, { id, emoji, startPct, drift, duration, side }]);
+    setTimeout(() => {
+      setFloatingEmotes((prev) => prev.filter((e) => e.id !== id));
+    }, duration + 100);
+  }, []);
+
+  // ─── Click sur emoji dans le picker = spawn local + envoi à l'adversaire ───
+  const onEmotePick = useCallback((emoji: string) => {
+    spawnFloatingEmote(emoji, "me");
+    void emit("chat:send-emote", { emoji });
+  }, [spawnFloatingEmote]);
 
   // ─── Fermer le picker au click-outside et à Escape ───
   useEffect(() => {
@@ -424,7 +452,7 @@ export default function ChatOverlay() {
           <EmotePicker
             activeId={emoteCategory}
             onCategoryChange={setEmoteCategory}
-            onPick={insertEmoji}
+            onPick={onEmotePick}
             onClose={() => setEmotePickerOpen(false)}
           />
         )}
@@ -478,6 +506,25 @@ export default function ChatOverlay() {
           <RankBadge rank={myRank} compact tiny />
         </div>
       )}
+
+      {/* ───── Layer floating emotes (TikTok hearts) ─────
+          Position absolute par-dessus tout le contenu, pointer-events:none
+          pour ne rien bloquer en dessous. */}
+      <div className="chat-floating-layer">
+        {floatingEmotes.map((em) => (
+          <span
+            key={em.id}
+            className={`chat-floating-emote chat-floating-emote--${em.side}`}
+            style={{
+              left: `${em.startPct}%`,
+              animationDuration: `${em.duration}ms`,
+              ["--drift" as any]: `${em.drift}px`,
+            }}
+          >
+            {em.emoji}
+          </span>
+        ))}
+      </div>
     </div>
   );
 }
