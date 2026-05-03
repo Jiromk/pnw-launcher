@@ -2750,6 +2750,8 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
               battleChatCleanupRef.current = await openBattleChat({
                 roomCode: code,
                 opponentName: partnerName,
+                opponentAvatar: (battleStateRef.current as any).partnerAvatar ?? null,
+                opponentId: (battleStateRef.current as any).partnerId ?? "",
                 myUserId: session?.user?.id || "",
               });
             } catch (e) { console.warn("[BattleChat] Failed to open overlay:", e); }
@@ -3680,6 +3682,8 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
           battleChatCleanupRef.current = await openBattleChat({
             roomCode: toast.roomCode,
             opponentName: toast.fromName,
+            opponentAvatar: toast.fromAvatar ?? null,
+            opponentId: (battleStateRef.current as any).partnerId ?? "",
             myUserId: session.user.id,
           });
         } catch (e) { console.warn("[BattleChat] Failed to open overlay:", e); }

@@ -120,6 +120,96 @@ body::after{
     linear-gradient(180deg, rgba(7,21,40,.55) 0%, rgba(7,21,40,.88) 55%, rgba(7,21,40,.95) 100%);
 }
 
+/* ═══════════════════════════════════════════════════════════════════════
+   Chat overlay (fenêtre PVP côté droit du jeu)
+   `data-overlay="chat"` est posé sur <body> par ChatOverlay au mount —
+   on neutralise le GIF de fond + halo (trop chargé dans une fenêtre 340px)
+   et on applique un look glass cohérent avec le reste du launcher.
+   ═══════════════════════════════════════════════════════════════════════ */
+body[data-overlay="chat"]::before,
+body[data-overlay="chat"]::after { display:none; }
+
+.chat-overlay-root{
+  background:
+    radial-gradient(800px 500px at 50% -20%,
+      color-mix(in srgb, var(--accent) 20%, transparent), transparent 65%),
+    linear-gradient(180deg, rgba(10,18,34,.97), rgba(7,14,26,.98));
+  border-left:1px solid color-mix(in srgb, var(--accent) 18%, rgba(255,255,255,.06));
+}
+[data-theme="light"] .chat-overlay-root{
+  background:
+    radial-gradient(800px 500px at 50% -20%,
+      color-mix(in srgb, var(--accent) 18%, transparent), transparent 65%),
+    linear-gradient(180deg, rgba(20,38,68,.96), rgba(14,28,52,.98));
+}
+
+.chat-overlay-header{
+  background:linear-gradient(180deg,
+    color-mix(in srgb, var(--accent) 14%, rgba(255,255,255,.04)),
+    color-mix(in srgb, var(--accent) 6%, rgba(255,255,255,.02)));
+  border-bottom:1px solid color-mix(in srgb, var(--accent) 18%, rgba(255,255,255,.06));
+  backdrop-filter:blur(8px) saturate(140%);
+  -webkit-app-region:drag;        /* permet de drag la fenêtre par le header */
+}
+.chat-overlay-header *{ -webkit-app-region:no-drag; }
+
+.chat-overlay-input-row{
+  background:linear-gradient(180deg, rgba(255,255,255,.02), rgba(0,0,0,.18));
+  border-top:1px solid rgba(255,255,255,.06);
+}
+.chat-overlay-textarea{
+  background:rgba(255,255,255,.05);
+  color:var(--text);
+  border:1px solid rgba(255,255,255,.08);
+  transition:border-color .15s, box-shadow .15s, background .15s;
+  max-height:120px;
+}
+.chat-overlay-textarea:focus{
+  background:rgba(255,255,255,.07);
+  border-color:color-mix(in srgb, var(--accent) 45%, transparent);
+  box-shadow:0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+.chat-overlay-textarea::placeholder{ color:rgba(255,255,255,.3); }
+
+.chat-overlay-send-btn:not(:disabled){
+  background:linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 70%, #000));
+  box-shadow:0 4px 14px color-mix(in srgb, var(--accent) 30%, transparent),
+             inset 0 1px 0 rgba(255,255,255,.18);
+}
+.chat-overlay-send-btn:disabled{
+  background:rgba(255,255,255,.06);
+  color:rgba(255,255,255,.3);
+}
+
+/* Bulles ─ apparition douce */
+@keyframes chat-bubble-in{
+  from{ opacity:0; transform:translateY(6px) scale(.96); }
+  to  { opacity:1; transform:translateY(0)   scale(1); }
+}
+.chat-bubble{
+  animation:chat-bubble-in .18s ease-out;
+  border-radius:14px;
+}
+.chat-bubble--me{
+  background:linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 75%, #000));
+  color:#fff;
+  border-bottom-right-radius:5px;
+  box-shadow:0 2px 10px color-mix(in srgb, var(--accent) 22%, transparent),
+             inset 0 1px 0 rgba(255,255,255,.12);
+}
+.chat-bubble--them{
+  background:rgba(255,255,255,.06);
+  color:var(--text);
+  border:1px solid rgba(255,255,255,.08);
+  border-bottom-left-radius:5px;
+}
+
+/* Footer "Toi · Tier" sous l'input */
+.chat-overlay-myrank{
+  background:rgba(0,0,0,.18);
+  border-top:1px solid rgba(255,255,255,.04);
+}
+
 /* Thème sombre : harmoniser menu hamburger, logo header et boutons Thème/Avatar/Rafraîchir avec les panneaux */
 [data-theme="dark"] .pnw-sidebar-toggle{
   background:linear-gradient(145deg, rgba(12,20,38,.92) 0%, rgba(6,12,24,.95) 100%);

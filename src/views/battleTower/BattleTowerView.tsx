@@ -326,6 +326,8 @@ export default function BattleTowerView({
               battleChatCleanupRef.current = await openBattleChat({
                 roomCode: payload.roomCode,
                 opponentName: payload.opponent.name,
+                opponentAvatar: null, // ranked queue ne fournit pas d'avatar
+                opponentId: payload.opponent.id,
                 myUserId: session.user.id,
               });
             } catch (e) { console.warn("[BattleChat] Failed to open overlay (ranked):", e); }
@@ -929,6 +931,8 @@ export default function BattleTowerView({
           battleChatCleanupRef.current = await openBattleChat({
             roomCode: st.roomCode,
             opponentName: st.partnerName,
+            opponentAvatar: (st as any).partnerAvatar ?? null,
+            opponentId: st.partnerId ?? "",
             myUserId: session.user.id,
           });
         } catch (e) { console.warn("[BattleChat] Failed to open overlay (bet):", e); }
@@ -1099,6 +1103,8 @@ export default function BattleTowerView({
           battleChatCleanupRef.current = await openBattleChat({
             roomCode: st.roomCode,
             opponentName: st.partnerName,
+            opponentAvatar: (st as any).partnerAvatar ?? null,
+            opponentId: st.partnerId ?? "",
             myUserId: session.user.id,
           });
         } catch (e) { console.warn("[BattleChat] Failed to open overlay (amical accept):", e); }

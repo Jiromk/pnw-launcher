@@ -17,13 +17,25 @@
 import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { sendBattleChatMessage, attachBattleChatListener } from "../battleRelay";
+import { fetchPvpStats } from "../leaderboard";
+import type { RankTier } from "../ranked";
 
 const OVERLAY_LABEL = "chat-overlay";
 
 interface OpenBattleChatOptions {
   roomCode: string;
   opponentName: string;
+  /** URL d'avatar adversaire — optionnel. Fallback initiale dans l'overlay. */
+  opponentAvatar?: string | null;
+  /** Supabase user id de l'adversaire — utilisé pour fetch son rang. */
+  opponentId: string;
   myUserId: string;
+}
+
+export interface BattleChatRankInfo {
+  tier: RankTier;
+  lp: number;
+  mmr: number;
 }
 
 /**
@@ -35,7 +47,7 @@ interface OpenBattleChatOptions {
  * pas nettoyé), elle est fermée d'abord.
  */
 export async function openBattleChat(opts: OpenBattleChatOptions): Promise<() => Promise<void>> {
-  const { roomCode, opponentName, myUserId } = opts;
+  const { roomCode, opponentName, opponentAvatar = null, opponentId, myUserId } = opts;
 
   // Cleanup d'une éventuelle fenêtre orpheline (race au reload, double-clic invite)
   const existing = await WebviewWindow.getByLabel(OVERLAY_LABEL);
@@ -82,7 +94,29 @@ export async function openBattleChat(opts: OpenBattleChatOptions): Promise<() =>
   });
 
   // Envoyer les infos initiales à l'overlay
-  await emit("chat:peer-info", { opponentName, myUserId });
+  await emit("chat:peer-info", { opponentName, opponentAvatar, myUserId });
+
+  // Fetch des rangs en arrière-plan (pas await — l'overlay s'affiche déjà,
+  // le badge apparaît dès la réponse Supabase). Si le fetch échoue, l'overlay
+  // continue sans rang affiché — pas de blocage.
+  Promise.all([
+    fetchPvpStats(myUserId).catch(() => null),
+    opponentId ? fetchPvpStats(opponentId).catch(() => null) : Promise.resolve(null),
+  ])
+    .then(([mine, theirs]) => {
+      const toRank = (s: Awaited<ReturnType<typeof fetchPvpStats>> | null): BattleChatRankInfo | null =>
+        s
+          ? {
+              tier: (s.battle_rank_tier ?? "unranked") as RankTier,
+              lp: s.battle_lp ?? 0,
+              mmr: s.battle_mmr ?? 0,
+            }
+          : null;
+      emit("chat:rank-info", {
+        mine: toRank(mine),
+        opponent: toRank(theirs),
+      }).catch(() => {});
+    });
 
   // ─── Bridge : socket battle → overlay ───
   const detachIncoming = attachBattleChatListener((msg) => {
