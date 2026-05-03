@@ -433,6 +433,38 @@ body[data-overlay="chat"]{
   filter:grayscale(0%);
 }
 
+/* Onglet favoris : étoile dorée par défaut, plus visible */
+.chat-emote-tab--favorites{
+  color:#fbbf24;
+  filter:drop-shadow(0 0 4px rgba(251,191,36,.35));
+  opacity:.85;
+}
+.chat-emote-tab--favorites:hover{ opacity:1; }
+.chat-emote-tab--favorites.chat-emote-tab--active{
+  color:#fde68a;
+  background:linear-gradient(135deg, rgba(251,191,36,.22), rgba(251,191,36,.08));
+  box-shadow:inset 0 0 0 1px rgba(251,191,36,.45),
+             0 0 8px rgba(251,191,36,.25);
+}
+
+/* Petit séparateur visuel entre Favoris et le reste */
+.chat-emote-tabs-sep{
+  width:1px; height:18px; align-self:center;
+  margin:0 4px;
+  background:rgba(255,255,255,.1);
+  flex-shrink:0;
+}
+
+/* Empty state pour Favoris vides */
+.chat-emote-empty{
+  height:200px;
+  display:flex; flex-direction:column;
+  align-items:center; justify-content:center;
+  text-align:center;
+  color:rgba(255,255,255,.4);
+  padding:0 16px;
+}
+
 /* Grille emojis */
 .chat-emote-grid{
   display:grid;

@@ -22,9 +22,40 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, emit } from "@tauri-apps/api/event";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { LogicalPosition, LogicalSize } from "@tauri-apps/api/dpi";
-import { FaPaperPlane, FaCommentDots, FaFaceSmile } from "react-icons/fa6";
+import { FaPaperPlane, FaCommentDots, FaFaceSmile, FaStar } from "react-icons/fa6";
 import { isApex, tierIconUrl, tierLabel, tierTheme, type RankTier } from "../ranked";
 import { EMOJI_CATEGORIES } from "./emotes";
+
+/* ════════════════════ Favoris (auto-tracked) ════════════════════
+ * Frequently-used emojis : on tracke le compteur + dernière utilisation
+ * dans localStorage, puis on les expose en première catégorie du picker.
+ * Tri : count DESC, puis lastUsed DESC (en cas d'égalité).
+ */
+const FAVORITES_STORAGE_KEY = "chatOverlay.favorites.v1";
+const MAX_FAVORITES_DISPLAY = 32;
+
+type FavoritesMap = Record<string, { count: number; lastUsed: number }>;
+
+function loadFavorites(): FavoritesMap {
+  try {
+    const raw = localStorage.getItem(FAVORITES_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return typeof parsed === "object" && parsed !== null ? parsed : {};
+  } catch { return {}; }
+}
+
+function saveFavorites(map: FavoritesMap) {
+  try { localStorage.setItem(FAVORITES_STORAGE_KEY, JSON.stringify(map)); } catch {}
+}
+
+/** Top N emojis triés par fréquence puis recence. */
+function topFavorites(map: FavoritesMap, limit = MAX_FAVORITES_DISPLAY): string[] {
+  return Object.entries(map)
+    .sort(([, a], [, b]) => b.count - a.count || b.lastUsed - a.lastUsed)
+    .slice(0, limit)
+    .map(([emoji]) => emoji);
+}
 
 const OVERLAY_WIDTH = 340;
 const POLL_INTERVAL_MS = 200;
@@ -184,7 +215,12 @@ export default function ChatOverlay() {
   const [isAtBottom, setIsAtBottom] = useState(true);
   const [pulseHeader, setPulseHeader] = useState(false);
   const [emotePickerOpen, setEmotePickerOpen] = useState(false);
-  const [emoteCategory, setEmoteCategory] = useState(EMOJI_CATEGORIES[0].id);
+  const [favorites, setFavorites] = useState<FavoritesMap>(() => loadFavorites());
+  const favoriteList = useMemo(() => topFavorites(favorites), [favorites]);
+  // Catégorie par défaut : "favorites" si on en a, sinon le 1er pack normal.
+  const [emoteCategory, setEmoteCategory] = useState<string>(() => {
+    return Object.keys(loadFavorites()).length > 0 ? "favorites" : EMOJI_CATEGORIES[0].id;
+  });
   const [floatingEmotes, setFloatingEmotes] = useState<FloatingEmote[]>([]);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -349,10 +385,17 @@ export default function ChatOverlay() {
     }, duration + 100);
   }, []);
 
-  // ─── Click sur emoji dans le picker = spawn local + envoi à l'adversaire ───
+  // ─── Click sur emoji dans le picker = spawn local + envoi + tracking favoris ───
   const onEmotePick = useCallback((emoji: string) => {
     spawnFloatingEmote(emoji, "me");
     void emit("chat:send-emote", { emoji });
+    // Bump le compteur de favoris (count++ + lastUsed = now), persiste en localStorage.
+    setFavorites((prev) => {
+      const cur = prev[emoji] ?? { count: 0, lastUsed: 0 };
+      const next = { ...prev, [emoji]: { count: cur.count + 1, lastUsed: Date.now() } };
+      saveFavorites(next);
+      return next;
+    });
   }, [spawnFloatingEmote]);
 
   // ─── Fermer le picker au click-outside et à Escape ───
@@ -454,6 +497,7 @@ export default function ChatOverlay() {
             onCategoryChange={setEmoteCategory}
             onPick={onEmotePick}
             onClose={() => setEmotePickerOpen(false)}
+            favorites={favoriteList}
           />
         )}
         <div className="chat-overlay-input-row flex items-end gap-2 px-3 py-2.5">
@@ -625,14 +669,34 @@ interface EmotePickerProps {
   onCategoryChange: (id: string) => void;
   onPick: (emoji: string) => void;
   onClose: () => void;
+  /** Liste dynamique des emojis favoris (auto-tracked, top N). */
+  favorites: string[];
 }
 
-function EmotePicker({ activeId, onCategoryChange, onPick, onClose }: EmotePickerProps) {
-  const active = EMOJI_CATEGORIES.find((c) => c.id === activeId) ?? EMOJI_CATEGORIES[0];
+const FAVORITES_TAB = { id: "favorites", label: "Favoris", icon: "⭐" };
+
+function EmotePicker({ activeId, onCategoryChange, onPick, onClose, favorites }: EmotePickerProps) {
+  // L'onglet Favoris apparaît toujours en premier — même vide il guide l'utilisateur.
+  const isFavorites = activeId === FAVORITES_TAB.id;
+  const activeStandard = EMOJI_CATEGORIES.find((c) => c.id === activeId) ?? EMOJI_CATEGORIES[0];
+  const displayed = isFavorites ? favorites : activeStandard.emojis;
+  const categoryLabel = isFavorites ? FAVORITES_TAB.label : activeStandard.label;
+
   return (
     <div className="chat-emote-picker">
-      {/* Onglets catégories — scrollable horizontalement */}
+      {/* Onglets catégories — scrollable horizontalement, Favoris en tête */}
       <div className="chat-emote-tabs flex overflow-x-auto">
+        <button
+          key={FAVORITES_TAB.id}
+          type="button"
+          onClick={() => onCategoryChange(FAVORITES_TAB.id)}
+          title={FAVORITES_TAB.label}
+          aria-label={FAVORITES_TAB.label}
+          className={`chat-emote-tab chat-emote-tab--favorites shrink-0 grid place-items-center ${isFavorites ? "chat-emote-tab--active" : ""}`}
+        >
+          <FaStar className="text-[13px]" />
+        </button>
+        <span className="chat-emote-tabs-sep" aria-hidden />
         {EMOJI_CATEGORIES.map((c) => (
           <button
             key={c.id}
@@ -647,24 +711,34 @@ function EmotePicker({ activeId, onCategoryChange, onPick, onClose }: EmotePicke
         ))}
       </div>
 
-      {/* Grille de la catégorie active */}
-      <div className="chat-emote-grid">
-        {active.emojis.map((e, idx) => (
-          <button
-            key={`${active.id}-${idx}-${e}`}
-            type="button"
-            onClick={() => onPick(e)}
-            className="chat-emote-cell"
-            aria-label={`Insérer ${e}`}
-          >
-            <span aria-hidden>{e}</span>
-          </button>
-        ))}
-      </div>
+      {/* Grille de la catégorie active (ou empty state pour favoris vides) */}
+      {isFavorites && displayed.length === 0 ? (
+        <div className="chat-emote-empty">
+          <FaStar className="text-2xl opacity-30 mb-2" />
+          <div className="text-[12px] font-medium text-white/55">Aucun favori</div>
+          <div className="text-[10px] mt-1 text-white/35 leading-relaxed">
+            Les emojis que tu utilises<br />apparaîtront ici automatiquement
+          </div>
+        </div>
+      ) : (
+        <div className="chat-emote-grid">
+          {displayed.map((e, idx) => (
+            <button
+              key={`${activeId}-${idx}-${e}`}
+              type="button"
+              onClick={() => onPick(e)}
+              className="chat-emote-cell"
+              aria-label={`Envoyer ${e}`}
+            >
+              <span aria-hidden>{e}</span>
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Footer : nom de la catégorie + close */}
       <div className="chat-emote-footer">
-        <span className="chat-emote-category-name">{active.label}</span>
+        <span className="chat-emote-category-name">{categoryLabel}</span>
         <button
           type="button"
           onClick={onClose}
