@@ -32,6 +32,7 @@ use zip::ZipArchive;
 
 mod psdk_data2;
 mod battle_relay;
+mod game_window;
 
 /* ============== Modèles ============== */
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -3502,6 +3503,7 @@ fn main() {
             cmd_get_shiny_sprite,
             cmd_get_alt_shiny_sprite,
             cmd_is_game_running,
+            game_window::cmd_get_game_window_rect,
             cmd_write_save_blob,
             cmd_gts_upload_pokemon,
             cmd_gts_has_pokemon_uploaded,

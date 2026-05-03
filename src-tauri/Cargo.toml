@@ -1,6 +1,6 @@
 [package]
 name = "pnw-launcher"
-version = "1.9.5"
+version = "1.9.6"
 edition = "2021"
 
 [dependencies]
@@ -41,6 +41,14 @@ discord-presence = "3.2"
 open = "5"
 urlencoding = "2"
 tauri-plugin-updater = "2"
+
+# Win32 APIs — détection fenêtre du jeu (chat overlay PVP)
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+  "Win32_Foundation",
+  "Win32_UI_WindowsAndMessaging",
+  "Win32_Graphics_Gdi",
+] }
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

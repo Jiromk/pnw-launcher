@@ -70,6 +70,7 @@ import {
   _currentBattleEventLog,
   _currentBattleTurnLog,
 } from "../../battleRelay";
+import { openBattleChat } from "../../chatOverlay/bridge";
 import { invoke } from "@tauri-apps/api/core";
 import { supabase } from "../../supabaseClient";
 import { extractBetPokemon, sendBetTransfer, saveBetToSupabase, completeBet, pollBetDone } from "../../betTransfer";
@@ -118,6 +119,9 @@ interface Props {
   battleState: BattleRoomState;
   setBattleState: React.Dispatch<React.SetStateAction<BattleRoomState>>;
   battleRelayCleanupRef: React.MutableRefObject<(() => void) | null>;
+  /** Cleanup de la fenêtre overlay chat (PVP). Partagé avec ChatView pour
+   *  garantir qu'un seul chat existe à la fois quel que soit le flow. */
+  battleChatCleanupRef: React.MutableRefObject<(() => Promise<void>) | null>;
   battleTimeoutRef: React.MutableRefObject<ReturnType<typeof setTimeout> | null>;
   uiLang?: UiLang;
   onBack: () => void;
@@ -143,6 +147,7 @@ export default function BattleTowerView({
   battleState,
   setBattleState,
   battleRelayCleanupRef,
+  battleChatCleanupRef,
   battleTimeoutRef,
   uiLang,
   onBack,
@@ -310,13 +315,23 @@ export default function BattleTowerView({
         const cleanupRelay = startRelay(
           payload.roomCode,
           session.user.id,
-          () =>
+          async () => {
             setBattleState((prev) =>
               (prev as any).roomCode === payload.roomCode
                 ? ({ ...prev, phase: "relaying" } as any)
                 : prev,
-            ),
+            );
+            try {
+              if (battleChatCleanupRef.current) { await battleChatCleanupRef.current(); battleChatCleanupRef.current = null; }
+              battleChatCleanupRef.current = await openBattleChat({
+                roomCode: payload.roomCode,
+                opponentName: payload.opponent.name,
+                myUserId: session.user.id,
+              });
+            } catch (e) { console.warn("[BattleChat] Failed to open overlay (ranked):", e); }
+          },
           (reason) => {
+            if (battleChatCleanupRef.current) { battleChatCleanupRef.current().catch(() => {}); battleChatCleanupRef.current = null; }
             // Détermine le résultat en étant prudent quand on n'a pas la vérité
             // (ni battle_result local, ni battle_ended serveur) : on préfère "draw"
             // plutôt qu'une fausse "win" via fallback d'heuristique.
@@ -907,8 +922,19 @@ export default function BattleTowerView({
     const cleanup = startRelay(
       st.roomCode,
       session.user.id,
-      () => setBattleState((prev) => (prev as any).roomCode === st.roomCode ? ({ ...prev, phase: "relaying" } as any) : prev),
+      async () => {
+        setBattleState((prev) => (prev as any).roomCode === st.roomCode ? ({ ...prev, phase: "relaying" } as any) : prev);
+        try {
+          if (battleChatCleanupRef.current) { await battleChatCleanupRef.current(); battleChatCleanupRef.current = null; }
+          battleChatCleanupRef.current = await openBattleChat({
+            roomCode: st.roomCode,
+            opponentName: st.partnerName,
+            myUserId: session.user.id,
+          });
+        } catch (e) { console.warn("[BattleChat] Failed to open overlay (bet):", e); }
+      },
       (reason) => {
+        if (battleChatCleanupRef.current) { battleChatCleanupRef.current().catch(() => {}); battleChatCleanupRef.current = null; }
         const result =
           reason === "opponent_forfeit" || reason === "opponent_game_end"
             ? battleResultRef.current || "win"
@@ -946,7 +972,7 @@ export default function BattleTowerView({
       "amical",
     );
     battleRelayCleanupRef.current = cleanup;
-  }, [battleState, session.user.id, setBattleState, battleRelayCleanupRef]);
+  }, [battleState, session.user.id, setBattleState, battleRelayCleanupRef, battleChatCleanupRef]);
 
   // ── Auto-start relay quand les deux ont choisi ──
   useEffect(() => {
@@ -1062,13 +1088,23 @@ export default function BattleTowerView({
     const cleanup = startRelay(
       st.roomCode,
       session.user.id,
-      () =>
+      async () => {
         setBattleState((prev) =>
           (prev as any).roomCode === st.roomCode
             ? ({ ...prev, phase: "relaying" } as any)
             : prev,
-        ),
+        );
+        try {
+          if (battleChatCleanupRef.current) { await battleChatCleanupRef.current(); battleChatCleanupRef.current = null; }
+          battleChatCleanupRef.current = await openBattleChat({
+            roomCode: st.roomCode,
+            opponentName: st.partnerName,
+            myUserId: session.user.id,
+          });
+        } catch (e) { console.warn("[BattleChat] Failed to open overlay (amical accept):", e); }
+      },
       (reason) => {
+        if (battleChatCleanupRef.current) { battleChatCleanupRef.current().catch(() => {}); battleChatCleanupRef.current = null; }
         const result =
           reason === "opponent_forfeit" || reason === "opponent_game_end"
             ? battleResultRef.current || "win" // Adversaire a quitte → resultat du serveur (generalement win)
@@ -1135,7 +1171,7 @@ export default function BattleTowerView({
       (st.matchType as "amical" | "ranked") ?? "amical",
     );
     battleRelayCleanupRef.current = cleanup;
-  }, [battleState, session, profile, setBattleState, battleRelayCleanupRef, ui.errors.gameNotRunningAccept, refreshBattleTeam, checkBanlistOrShowError, checkStatsOrShowError]);
+  }, [battleState, session, profile, setBattleState, battleRelayCleanupRef, battleChatCleanupRef, ui.errors.gameNotRunningAccept, refreshBattleTeam, checkBanlistOrShowError, checkStatsOrShowError]);
 
   const cancelBattle = useCallback(async () => {
     const st = battleState as any;
@@ -1199,9 +1235,10 @@ export default function BattleTowerView({
         }
       })().catch((err) => console.warn("[Battle] recordBattleResult (forfeit) failed:", err));
     }
+    if (battleChatCleanupRef.current) { battleChatCleanupRef.current().catch(() => {}); battleChatCleanupRef.current = null; }
     await fullCleanup(battleRelayCleanupRef);
     setBattleState({ phase: "idle" });
-  }, [battleState, session, setBattleState, battleRelayCleanupRef, battleTimeoutRef, getFreshTeam]);
+  }, [battleState, session, setBattleState, battleRelayCleanupRef, battleChatCleanupRef, battleTimeoutRef, getFreshTeam]);
 
   const closeBattle = useCallback(async () => {
     await cleanupBattleFiles();

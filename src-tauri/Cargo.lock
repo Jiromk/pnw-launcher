@@ -2612,7 +2612,7 @@ dependencies = [
 
 [[package]]
 name = "pnw-launcher"
-version = "1.9.5"
+version = "1.9.6"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2630,6 +2630,7 @@ dependencies = [
  "tauri-plugin-updater",
  "urlencoding",
  "walkdir",
+ "windows-sys 0.59.0",
  "zip 0.6.6",
 ]
 

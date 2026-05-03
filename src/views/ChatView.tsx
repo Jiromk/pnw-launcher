@@ -33,6 +33,7 @@ import {
 } from "../chatAuth";
 import type { ChatChannel, ChatMessage, ChatProfile, ChatMute, ChatBan, ChatFriend, PlayerProfile, GameLiveState, GameLivePlayer, GameActivityShareData, TradeState, TradeSelection, TradeSelectionPreview, TradeMessageData, BattleRoomState } from "../types";
 import { generateRoomCode, writeBattleTrigger, writeStopTrigger, startRelay, cleanupBattleFiles, fullCleanup, isGameRunning, BATTLE_INVITE_TIMEOUT, connectLobby, sendBattleInvite, sendBattleAccept, sendBattleDecline, sendBattleCancel, playTurnSound, saveBattleLog, _currentBattleTurnLog, _currentBattleEventLog, writeOpponentLeft } from "../battleRelay";
+import { openBattleChat } from "../chatOverlay/bridge";
 import BattleTowerView from "./battleTower/BattleTowerView";
 import { validateTeamForBattle } from "../banlist";
 import { validateTeamStats, reportCheatToServer } from "../statsValidator";
@@ -1548,6 +1549,9 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
   const battleStateRef = useRef<BattleRoomState>({ phase: "idle" });
   const battleTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const battleRelayCleanupRef = useRef<(() => void) | null>(null);
+  // Cleanup de la fenêtre overlay chat (PVP) — ouverte au battle_started,
+  // fermée au disconnect ou en cleanup défensif (cancel, error).
+  const battleChatCleanupRef = useRef<(() => Promise<void>) | null>(null);
   const battleResultRef = useRef<string>("");
   const battleTurnCountRef = useRef(0);
   /** Cible pre-selectionnee pour Combat Amical depuis la card de profil
@@ -1601,6 +1605,7 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
     if (st.phase !== "idle" && st.phase !== "complete" && st.phase !== "error") {
       sendBattleCancel((st as any).roomCode, (st as any).partnerId, session?.user?.id || "");
     }
+    if (battleChatCleanupRef.current) { battleChatCleanupRef.current().catch(() => {}); battleChatCleanupRef.current = null; }
     await fullCleanup(battleRelayCleanupRef);
     setBattleState(reason ? { phase: "error", roomCode: (st as any).roomCode ?? "", partnerId: (st as any).partnerId ?? "", partnerName: (st as any).partnerName ?? "", message: reason } : { phase: "idle" });
   }, [battleState, session?.user?.id, clearBattleTimeout]);
@@ -2728,6 +2733,7 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
           phase: "waiting_game",
         } as any));
         if (battleRelayCleanupRef.current) { battleRelayCleanupRef.current(); battleRelayCleanupRef.current = null; }
+        if (battleChatCleanupRef.current) { battleChatCleanupRef.current().catch(() => {}); battleChatCleanupRef.current = null; }
         await cleanupBattleFiles();
         // Petit delai pour laisser le filesystem flush avant d'ecrire le nouveau trigger
         await new Promise(r => setTimeout(r, 50));
@@ -2737,8 +2743,19 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
         battleStartedAtRef.current = new Date().toISOString();
         const relayCleanup = startRelay(
           code, session?.user?.id || "",
-          () => setBattleState((prev) => (prev as any).roomCode === code ? { ...prev, phase: "relaying" } as any : prev),
+          async () => {
+            setBattleState((prev) => (prev as any).roomCode === code ? { ...prev, phase: "relaying" } as any : prev);
+            try {
+              if (battleChatCleanupRef.current) { await battleChatCleanupRef.current(); battleChatCleanupRef.current = null; }
+              battleChatCleanupRef.current = await openBattleChat({
+                roomCode: code,
+                opponentName: partnerName,
+                myUserId: session?.user?.id || "",
+              });
+            } catch (e) { console.warn("[BattleChat] Failed to open overlay:", e); }
+          },
           (reason) => {
+            if (battleChatCleanupRef.current) { battleChatCleanupRef.current().catch(() => {}); battleChatCleanupRef.current = null; }
             const prev = battleStateRef.current;
             // opponent_forfeit = adversaire abandon → win
             // opponent_crash = crash adverse → draw
@@ -2781,6 +2798,7 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
       onCancelled: (p) => {
         if ((battleStateRef.current as any).roomCode !== p.roomCode) return;
         if (battleRelayCleanupRef.current) { battleRelayCleanupRef.current(); battleRelayCleanupRef.current = null; }
+        if (battleChatCleanupRef.current) { battleChatCleanupRef.current().catch(() => {}); battleChatCleanupRef.current = null; }
         if (battleTimeoutRef.current) { clearTimeout(battleTimeoutRef.current); battleTimeoutRef.current = null; }
         writeStopTrigger().catch(() => {});
         cleanupBattleFiles().catch(() => {});
@@ -3546,6 +3564,7 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
         battleState={battleState}
         setBattleState={setBattleState}
         battleRelayCleanupRef={battleRelayCleanupRef}
+        battleChatCleanupRef={battleChatCleanupRef}
         battleTimeoutRef={battleTimeoutRef}
         onBack={onBack}
         pendingBattleTarget={pendingBattleTarget}
@@ -3636,6 +3655,7 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
     setChallengeToast(null);
     if (challengeToastTimerRef.current) { clearTimeout(challengeToastTimerRef.current); challengeToastTimerRef.current = null; }
 
+    if (battleChatCleanupRef.current) { battleChatCleanupRef.current().catch(() => {}); battleChatCleanupRef.current = null; }
     await fullCleanup(battleRelayCleanupRef);
     sendBattleAccept({ roomCode: toast.roomCode, fromId: (battleStateRef.current as any).partnerId || "", acceptedBy: session.user.id, partnerName: profile?.display_name || profile?.username || "Joueur" });
     setBattleState((prev) => ({ ...(prev as any), phase: "waiting_game" } as any));
@@ -3653,8 +3673,19 @@ export default function ChatView({ siteUrl, onBack, onUnreadChange, visible = tr
     const cleanup = startRelay(
       toast.roomCode,
       session.user.id,
-      () => setBattleState((prev) => (prev as any).roomCode === toast.roomCode ? { ...(prev as any), phase: "relaying" } as any : prev),
+      async () => {
+        setBattleState((prev) => (prev as any).roomCode === toast.roomCode ? { ...(prev as any), phase: "relaying" } as any : prev);
+        try {
+          if (battleChatCleanupRef.current) { await battleChatCleanupRef.current(); battleChatCleanupRef.current = null; }
+          battleChatCleanupRef.current = await openBattleChat({
+            roomCode: toast.roomCode,
+            opponentName: toast.fromName,
+            myUserId: session.user.id,
+          });
+        } catch (e) { console.warn("[BattleChat] Failed to open overlay:", e); }
+      },
       (reason) => {
+        if (battleChatCleanupRef.current) { battleChatCleanupRef.current().catch(() => {}); battleChatCleanupRef.current = null; }
         const prev = battleStateRef.current as any;
         // opponent_forfeit = adversaire abandon → win
         // opponent_crash = crash adverse → draw

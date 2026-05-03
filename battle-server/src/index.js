@@ -23,6 +23,8 @@ const MAX_PLAYER_DATA_BYTES = 256 * 1024; // 256 KB par payload (~50 KB suffit n
 const MAX_PARTY_SIZE = 6;
 const MAX_OBJECT_DEPTH = 12;
 const MAX_TURN_NUMBER = 1000; // un combat dépasse rarement 100 tours
+const MAX_CHAT_MESSAGE_LEN = 300; // caractères max par message chat
+const CHAT_MIN_INTERVAL_MS = 500; // anti-flood : 1 message par 500ms par socket
 
 /**
  * Anti-DoS : refuse les payloads dont la profondeur d'imbrication dépasse N.
@@ -516,6 +518,36 @@ io.on("connection", (socket) => {
       }
     }
     console.log(`[Room ${roomCode}] Battle end: ${userId} ${result} (${safeMatchType}, ${safeEndType})`);
+  });
+
+  // ─── Chat message (in-battle) ───
+  // Relay un message texte entre les 2 joueurs d'une room. Le serveur ne stocke
+  // RIEN — purement éphémère. Auth requise (userId vérifié via JWT), rate-limit
+  // anti-flood, longueur capée. Sender forcé depuis le socket authed.
+  socket.on("chat_message", ({ roomCode, text } = {}) => {
+    const userId = authedUserId(socket);
+    if (!userId) return;
+    if (!roomCode || typeof roomCode !== "string") return;
+    if (typeof text !== "string") return;
+    const trimmed = text.trim();
+    if (trimmed.length === 0 || trimmed.length > MAX_CHAT_MESSAGE_LEN) return;
+
+    const room = rooms.get(roomCode);
+    if (!room || !room.players.has(userId)) return;
+
+    // Rate limit per-socket
+    const now = Date.now();
+    const last = socket.data.lastChatAt || 0;
+    if (now - last < CHAT_MIN_INTERVAL_MS) return;
+    socket.data.lastChatAt = now;
+
+    // Broadcast aux autres joueurs de la room (pas d'echo au sender)
+    socket.to(roomCode).emit("chat_message", {
+      roomCode,
+      fromUserId: userId,
+      text: trimmed,
+      ts: now,
+    });
   });
 
   // ─── Spectate room (DÉSACTIVÉ — sécurité C4) ───
