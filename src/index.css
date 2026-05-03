@@ -125,89 +125,237 @@ body::after{
    `data-overlay="chat"` est posé sur <body> par ChatOverlay au mount —
    on neutralise le GIF de fond + halo (trop chargé dans une fenêtre 340px)
    et on applique un look glass cohérent avec le reste du launcher.
+
+   --tier-accent / --tier-glow sont injectées par ChatOverlay pour teinter
+   subtilement l'overlay avec la couleur du rang adversaire (fallback --accent).
    ═══════════════════════════════════════════════════════════════════════ */
 body[data-overlay="chat"]::before,
 body[data-overlay="chat"]::after { display:none; }
+body[data-overlay="chat"]{
+  background:#06101e;
+}
 
 .chat-overlay-root{
+  --tier-accent: var(--accent);
+  --tier-glow: color-mix(in srgb, var(--accent) 22%, transparent);
   background:
-    radial-gradient(800px 500px at 50% -20%,
-      color-mix(in srgb, var(--accent) 20%, transparent), transparent 65%),
-    linear-gradient(180deg, rgba(10,18,34,.97), rgba(7,14,26,.98));
-  border-left:1px solid color-mix(in srgb, var(--accent) 18%, rgba(255,255,255,.06));
+    radial-gradient(900px 600px at 50% -25%,
+      color-mix(in srgb, var(--tier-accent) 18%, transparent), transparent 65%),
+    radial-gradient(600px 400px at 100% 100%,
+      color-mix(in srgb, var(--tier-accent) 8%, transparent), transparent 70%),
+    linear-gradient(180deg, rgba(11,20,38,.98), rgba(6,12,24,.99));
+  border-left:1px solid color-mix(in srgb, var(--tier-accent) 22%, rgba(255,255,255,.06));
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.03);
 }
 [data-theme="light"] .chat-overlay-root{
   background:
-    radial-gradient(800px 500px at 50% -20%,
-      color-mix(in srgb, var(--accent) 18%, transparent), transparent 65%),
-    linear-gradient(180deg, rgba(20,38,68,.96), rgba(14,28,52,.98));
+    radial-gradient(900px 600px at 50% -25%,
+      color-mix(in srgb, var(--tier-accent) 18%, transparent), transparent 65%),
+    linear-gradient(180deg, rgba(22,40,72,.97), rgba(14,28,52,.98));
 }
 
+/* ───── Header ───── */
 .chat-overlay-header{
+  position:relative;
   background:linear-gradient(180deg,
-    color-mix(in srgb, var(--accent) 14%, rgba(255,255,255,.04)),
-    color-mix(in srgb, var(--accent) 6%, rgba(255,255,255,.02)));
-  border-bottom:1px solid color-mix(in srgb, var(--accent) 18%, rgba(255,255,255,.06));
-  backdrop-filter:blur(8px) saturate(140%);
-  -webkit-app-region:drag;        /* permet de drag la fenêtre par le header */
+    color-mix(in srgb, var(--tier-accent) 16%, rgba(255,255,255,.04)),
+    color-mix(in srgb, var(--tier-accent) 6%, rgba(255,255,255,.02)));
+  border-bottom:1px solid color-mix(in srgb, var(--tier-accent) 22%, rgba(255,255,255,.06));
+  backdrop-filter:blur(12px) saturate(150%);
+  -webkit-backdrop-filter:blur(12px) saturate(150%);
+  -webkit-app-region:drag;
+  transition:box-shadow .25s ease;
 }
 .chat-overlay-header *{ -webkit-app-region:no-drag; }
+.chat-overlay-header::after{
+  content:""; position:absolute; left:0; right:0; bottom:-1px; height:1px;
+  background:linear-gradient(90deg,
+    transparent,
+    color-mix(in srgb, var(--tier-accent) 60%, transparent),
+    transparent);
+  opacity:.6;
+}
+@keyframes chat-header-pulse{
+  0%   { box-shadow:inset 0 0 0 0 transparent; }
+  40%  { box-shadow:inset 0 -2px 24px color-mix(in srgb, var(--tier-accent) 35%, transparent); }
+  100% { box-shadow:inset 0 0 0 0 transparent; }
+}
+.chat-overlay-header--pulse{ animation:chat-header-pulse .7s ease-out; }
 
-.chat-overlay-input-row{
-  background:linear-gradient(180deg, rgba(255,255,255,.02), rgba(0,0,0,.18));
-  border-top:1px solid rgba(255,255,255,.06);
+/* Avatar ─ ring glow tier-coloré */
+.chat-avatar{
+  box-shadow:
+    0 0 0 2px rgba(0,0,0,.4),
+    0 0 0 3px color-mix(in srgb, var(--tier-accent) 35%, rgba(255,255,255,.18)),
+    0 4px 12px color-mix(in srgb, var(--tier-accent) 22%, transparent);
 }
-.chat-overlay-textarea{
-  background:rgba(255,255,255,.05);
-  color:var(--text);
-  border:1px solid rgba(255,255,255,.08);
-  transition:border-color .15s, box-shadow .15s, background .15s;
-  max-height:120px;
-}
-.chat-overlay-textarea:focus{
-  background:rgba(255,255,255,.07);
-  border-color:color-mix(in srgb, var(--accent) 45%, transparent);
-  box-shadow:0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
-}
-.chat-overlay-textarea::placeholder{ color:rgba(255,255,255,.3); }
-
-.chat-overlay-send-btn:not(:disabled){
-  background:linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 70%, #000));
-  box-shadow:0 4px 14px color-mix(in srgb, var(--accent) 30%, transparent),
-             inset 0 1px 0 rgba(255,255,255,.18);
-}
-.chat-overlay-send-btn:disabled{
-  background:rgba(255,255,255,.06);
-  color:rgba(255,255,255,.3);
+.chat-avatar--fallback{
+  letter-spacing:-.02em;
+  text-shadow:0 1px 2px rgba(0,0,0,.5);
 }
 
-/* Bulles ─ apparition douce */
+/* Status dot (pulsing) pour quand on n'a pas encore le rang */
+.chat-status-dot{
+  display:inline-block; width:7px; height:7px; border-radius:50%;
+  background:#22c55e;
+  box-shadow:0 0 6px rgba(34,197,94,.7);
+  animation:chat-dot-pulse 1.6s ease-in-out infinite;
+}
+@keyframes chat-dot-pulse{
+  0%,100% { opacity:1; transform:scale(1); }
+  50%     { opacity:.6; transform:scale(.85); }
+}
+
+/* ───── Messages ───── */
+.chat-overlay-messages{
+  scroll-behavior:smooth;
+  /* Scrollbar plus discrète scoped overlay */
+  scrollbar-color:rgba(255,255,255,.08) transparent;
+}
+
+/* Spacing entre groupes : grand espace avant le premier d'un nouveau groupe */
+.chat-bubble-row{ margin-top:2px; }
+.chat-bubble-row--first,
+.chat-bubble-row--single{ margin-top:10px; }
+.chat-bubble-row:first-child{ margin-top:0; }
+
 @keyframes chat-bubble-in{
   from{ opacity:0; transform:translateY(6px) scale(.96); }
   to  { opacity:1; transform:translateY(0)   scale(1); }
 }
 .chat-bubble{
-  animation:chat-bubble-in .18s ease-out;
-  border-radius:14px;
+  animation:chat-bubble-in .2s cubic-bezier(.22,1,.36,1);
+  border-radius:16px;
+  position:relative;
 }
+/* Coins selon position dans le groupe (look chat moderne)
+   me   : tail = bas-droite ; them : tail = bas-gauche */
+.chat-bubble--me.chat-bubble--single  { border-bottom-right-radius:5px; }
+.chat-bubble--me.chat-bubble--first   { border-bottom-right-radius:5px; }
+.chat-bubble--me.chat-bubble--middle  { border-bottom-right-radius:5px; border-top-right-radius:5px; }
+.chat-bubble--me.chat-bubble--last    { border-top-right-radius:5px; }
+
+.chat-bubble--them.chat-bubble--single { border-bottom-left-radius:5px; }
+.chat-bubble--them.chat-bubble--first  { border-bottom-left-radius:5px; }
+.chat-bubble--them.chat-bubble--middle { border-bottom-left-radius:5px; border-top-left-radius:5px; }
+.chat-bubble--them.chat-bubble--last   { border-top-left-radius:5px; }
+
 .chat-bubble--me{
-  background:linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 75%, #000));
+  background:linear-gradient(135deg,
+    color-mix(in srgb, var(--accent) 95%, #fff 5%),
+    color-mix(in srgb, var(--accent) 70%, #000 15%));
   color:#fff;
-  border-bottom-right-radius:5px;
-  box-shadow:0 2px 10px color-mix(in srgb, var(--accent) 22%, transparent),
-             inset 0 1px 0 rgba(255,255,255,.12);
+  box-shadow:
+    0 2px 12px color-mix(in srgb, var(--accent) 28%, transparent),
+    0 1px 0 rgba(255,255,255,.08) inset,
+    0 -1px 0 rgba(0,0,0,.15) inset;
 }
 .chat-bubble--them{
-  background:rgba(255,255,255,.06);
+  background:linear-gradient(180deg, rgba(255,255,255,.07), rgba(255,255,255,.04));
   color:var(--text);
   border:1px solid rgba(255,255,255,.08);
-  border-bottom-left-radius:5px;
+  box-shadow:0 1px 6px rgba(0,0,0,.2);
+  backdrop-filter:blur(4px);
 }
 
-/* Footer "Toi · Tier" sous l'input */
+.chat-bubble-time{
+  color:rgba(255,255,255,.32);
+  font-variant-numeric:tabular-nums;
+  letter-spacing:.02em;
+  animation:chat-bubble-in .25s ease-out;
+}
+
+/* ───── Empty state ───── */
+.chat-empty-icon{
+  background:
+    radial-gradient(circle at 30% 30%, color-mix(in srgb, var(--tier-accent) 25%, transparent), transparent 70%),
+    color-mix(in srgb, var(--tier-accent) 12%, rgba(255,255,255,.04));
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--tier-accent) 25%, transparent),
+    0 4px 16px color-mix(in srgb, var(--tier-accent) 15%, transparent);
+}
+.chat-kbd{
+  display:inline-block;
+  padding:1px 5px;
+  margin:0 1px;
+  border-radius:4px;
+  background:rgba(255,255,255,.06);
+  border:1px solid rgba(255,255,255,.1);
+  border-bottom-width:2px;
+  font-family:ui-monospace, "SFMono-Regular", Menlo, monospace;
+  font-size:9px;
+  color:rgba(255,255,255,.55);
+}
+
+/* ───── Input ───── */
+.chat-overlay-input-row{
+  background:linear-gradient(180deg, rgba(255,255,255,.02), rgba(0,0,0,.22));
+  border-top:1px solid rgba(255,255,255,.06);
+  backdrop-filter:blur(8px);
+}
+.chat-overlay-textarea{
+  background:rgba(255,255,255,.05);
+  color:var(--text);
+  border:1px solid rgba(255,255,255,.08);
+  transition:border-color .18s, box-shadow .18s, background .18s;
+  max-height:120px;
+  font-family:inherit;
+}
+.chat-overlay-textarea:focus{
+  background:rgba(255,255,255,.08);
+  border-color:color-mix(in srgb, var(--tier-accent) 50%, transparent);
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--tier-accent) 18%, transparent),
+    0 0 18px color-mix(in srgb, var(--tier-accent) 14%, transparent);
+}
+.chat-overlay-textarea::placeholder{
+  color:rgba(255,255,255,.28);
+  font-style:italic;
+}
+
+.chat-overlay-send-btn{
+  position:relative;
+}
+.chat-overlay-send-btn:not(:disabled){
+  background:linear-gradient(135deg,
+    color-mix(in srgb, var(--accent) 100%, transparent),
+    color-mix(in srgb, var(--accent) 70%, #000));
+  box-shadow:
+    0 4px 14px color-mix(in srgb, var(--accent) 35%, transparent),
+    0 1px 0 rgba(255,255,255,.18) inset,
+    0 -1px 0 rgba(0,0,0,.15) inset;
+}
+.chat-overlay-send-btn:not(:disabled):hover{
+  box-shadow:
+    0 6px 20px color-mix(in srgb, var(--accent) 45%, transparent),
+    0 1px 0 rgba(255,255,255,.22) inset,
+    0 -1px 0 rgba(0,0,0,.18) inset;
+}
+.chat-overlay-send-btn:disabled{
+  background:rgba(255,255,255,.05);
+  color:rgba(255,255,255,.3);
+  border:1px solid rgba(255,255,255,.06);
+}
+
+/* ───── Footer "Toi" ───── */
 .chat-overlay-myrank{
-  background:rgba(0,0,0,.18);
+  background:linear-gradient(180deg, rgba(0,0,0,.15), rgba(0,0,0,.28));
   border-top:1px solid rgba(255,255,255,.04);
+  color:rgba(255,255,255,.6);
+}
+
+/* ───── Rank badge — apex tiers (Master/GM/Challenger) ont un glow pulsant ───── */
+@keyframes rank-apex-glow{
+  0%,100% {
+    box-shadow:inset 0 0 0 1px var(--rank-glow), 0 0 8px var(--rank-glow);
+  }
+  50% {
+    box-shadow:inset 0 0 0 1px var(--rank-glow-strong, var(--rank-glow)),
+               0 0 16px var(--rank-glow-strong, var(--rank-glow));
+  }
+}
+.rank-badge--apex{
+  animation:rank-apex-glow 2.4s ease-in-out infinite;
 }
 
 /* Thème sombre : harmoniser menu hamburger, logo header et boutons Thème/Avatar/Rafraîchir avec les panneaux */

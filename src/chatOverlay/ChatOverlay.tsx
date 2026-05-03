@@ -17,18 +17,19 @@
  * les 200ms. Si trouvée et !isFullscreen, on se positionne à droite. Sinon,
  * on se cache.
  */
-import React, { useEffect, useRef, useState, useCallback } from "react";
+import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, emit } from "@tauri-apps/api/event";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { LogicalPosition, LogicalSize } from "@tauri-apps/api/dpi";
-import { FaPaperPlane, FaCommentDots, FaCircle } from "react-icons/fa6";
-import { tierIconUrl, tierLabel, tierTheme, type RankTier } from "../ranked";
+import { FaPaperPlane, FaCommentDots } from "react-icons/fa6";
+import { isApex, tierIconUrl, tierLabel, tierTheme, type RankTier } from "../ranked";
 
 const OVERLAY_WIDTH = 340;
 const POLL_INTERVAL_MS = 200;
 const MAX_MESSAGE_LEN = 300;
 const TEXTAREA_MAX_ROWS = 4;
+const GROUP_THRESHOLD_MS = 60_000; // bulles consécutives mêmes sender < 60s = même groupe
 
 interface ChatLine {
   id: number;
@@ -56,19 +57,106 @@ interface RankInfoPayload {
   opponent: RankInfo | null;
 }
 
+/* ════════════════════ Audio (Web Audio API) ════════════════════
+ * Sons générés dynamiquement — zéro fichier externe → zéro souci CSP.
+ * Volume volontairement bas (0.04-0.08) pour rester discret.
+ */
+let _audioCtx: AudioContext | null = null;
+function getAudioCtx(): AudioContext | null {
+  try {
+    if (!_audioCtx || _audioCtx.state === "closed") {
+      const Ctor = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!Ctor) return null;
+      _audioCtx = new Ctor();
+    }
+    return _audioCtx;
+  } catch { return null; }
+}
+
+/** Ding doux à 2 tons (descendant) pour les messages reçus. */
+function playReceiveSound() {
+  const ctx = getAudioCtx();
+  if (!ctx) return;
+  try {
+    if (ctx.state === "suspended") void ctx.resume();
+    const now = ctx.currentTime;
+    // Tone 1 — sin 880Hz, attaque rapide puis decay exponentiel
+    const o1 = ctx.createOscillator(); const g1 = ctx.createGain();
+    o1.type = "sine"; o1.frequency.value = 880;
+    g1.gain.setValueAtTime(0, now);
+    g1.gain.linearRampToValueAtTime(0.07, now + 0.005);
+    g1.gain.exponentialRampToValueAtTime(0.0001, now + 0.18);
+    o1.connect(g1); g1.connect(ctx.destination);
+    o1.start(now); o1.stop(now + 0.2);
+    // Tone 2 — overlap court, plus aigu, donne le côté "chime"
+    const o2 = ctx.createOscillator(); const g2 = ctx.createGain();
+    o2.type = "sine"; o2.frequency.value = 1175; // ~D6
+    g2.gain.setValueAtTime(0, now + 0.02);
+    g2.gain.linearRampToValueAtTime(0.04, now + 0.025);
+    g2.gain.exponentialRampToValueAtTime(0.0001, now + 0.15);
+    o2.connect(g2); g2.connect(ctx.destination);
+    o2.start(now + 0.02); o2.stop(now + 0.17);
+  } catch {}
+}
+
+/** Swoosh court (montant) pour confirmation d'envoi. */
+function playSendSound() {
+  const ctx = getAudioCtx();
+  if (!ctx) return;
+  try {
+    if (ctx.state === "suspended") void ctx.resume();
+    const now = ctx.currentTime;
+    const o = ctx.createOscillator(); const g = ctx.createGain();
+    o.type = "sine";
+    o.frequency.setValueAtTime(540, now);
+    o.frequency.exponentialRampToValueAtTime(820, now + 0.07);
+    g.gain.setValueAtTime(0, now);
+    g.gain.linearRampToValueAtTime(0.04, now + 0.005);
+    g.gain.exponentialRampToValueAtTime(0.0001, now + 0.08);
+    o.connect(g); g.connect(ctx.destination);
+    o.start(now); o.stop(now + 0.09);
+  } catch {}
+}
+
 /** Initiale en majuscule pour le fallback avatar (1er char alphanum). */
 function initialOf(name: string): string {
   const m = name.match(/[\p{L}\p{N}]/u);
   return m ? m[0].toUpperCase() : "?";
 }
 
-/** Format minute:seconde locale pour le hover des messages. */
+/** Hash stable d'un nom → angle 0-360 pour la teinte du gradient avatar. */
+function hueFromName(name: string): number {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) {
+    h = (h * 31 + name.charCodeAt(i)) >>> 0;
+  }
+  return h % 360;
+}
+
+/** Format HH:MM locale (utilisé en timestamp visible et en title). */
 function formatTime(ts: number): string {
   try {
     return new Date(ts).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
-  } catch {
-    return "";
-  }
+  } catch { return ""; }
+}
+
+/**
+ * Calcule des positions de groupage : pour chaque message, indique s'il est
+ * le début, fin, ou milieu d'un groupe (même sender, < 60s du précédent).
+ * Permet d'ajuster spacing et coins arrondis pour un look "chat moderne".
+ */
+type GroupPos = "single" | "first" | "middle" | "last";
+function computeGroupPositions(msgs: ChatLine[]): GroupPos[] {
+  return msgs.map((m, i) => {
+    const prev = msgs[i - 1];
+    const next = msgs[i + 1];
+    const sameAsPrev = prev && prev.fromMe === m.fromMe && m.ts - prev.ts < GROUP_THRESHOLD_MS;
+    const sameAsNext = next && next.fromMe === m.fromMe && next.ts - m.ts < GROUP_THRESHOLD_MS;
+    if (!sameAsPrev && !sameAsNext) return "single";
+    if (!sameAsPrev) return "first";
+    if (!sameAsNext) return "last";
+    return "middle";
+  });
 }
 
 export default function ChatOverlay() {
@@ -78,12 +166,15 @@ export default function ChatOverlay() {
   const [myRank, setMyRank] = useState<RankInfo | null>(null);
   const [opponentRank, setOpponentRank] = useState<RankInfo | null>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
+  const [pulseHeader, setPulseHeader] = useState(false);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const idCounterRef = useRef(0);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  // ─── Marquer le body pour scoper les overrides CSS (cacher le GIF de fond) ───
+  const groupPositions = useMemo(() => computeGroupPositions(messages), [messages]);
+
+  // ─── Marquer le body pour scoper les overrides CSS ───
   useEffect(() => {
     document.body.dataset.overlay = "chat";
     return () => { delete document.body.dataset.overlay; };
@@ -96,7 +187,6 @@ export default function ChatOverlay() {
     }
   }, [messages, isAtBottom]);
 
-  // Détecte si l'utilisateur a scrollé manuellement vers le haut
   const onScroll = useCallback(() => {
     const el = messagesContainerRef.current;
     if (!el) return;
@@ -123,6 +213,10 @@ export default function ChatOverlay() {
           ...prev,
           { id: idCounterRef.current, fromMe: false, text: e.payload.text, ts: e.payload.ts },
         ]);
+        playReceiveSound();
+        // Pulse header subtil pour signaler l'activité
+        setPulseHeader(true);
+        setTimeout(() => setPulseHeader(false), 700);
       }),
       listen("chat:battle-end", async () => {
         try { await getCurrentWebviewWindow().close(); } catch {}
@@ -130,7 +224,6 @@ export default function ChatOverlay() {
     ]).then(async (fns) => {
       if (cancelled) { fns.forEach((fn) => fn()); return; }
       fns.forEach((fn) => unlistens.push(fn));
-      // Handshake : signaler au launcher que l'overlay est prêt
       await emit("chat:ready", {});
     });
 
@@ -167,7 +260,6 @@ export default function ChatOverlay() {
           if (lastVisible !== true) { await win.show(); lastVisible = true; }
         }
       } catch (e) {
-        // eslint-disable-next-line no-console
         console.warn("[ChatOverlay] poll error", e);
       }
     };
@@ -183,7 +275,7 @@ export default function ChatOverlay() {
     if (!ta) return;
     ta.style.height = "auto";
     const lineHeight = parseFloat(getComputedStyle(ta).lineHeight) || 18;
-    const maxHeight = lineHeight * TEXTAREA_MAX_ROWS + 16; // +padding
+    const maxHeight = lineHeight * TEXTAREA_MAX_ROWS + 16;
     ta.style.height = `${Math.min(ta.scrollHeight, maxHeight)}px`;
   }, [draft]);
 
@@ -200,9 +292,9 @@ export default function ChatOverlay() {
       ]);
       setDraft("");
       setIsAtBottom(true);
+      playSendSound();
       inputRef.current?.focus();
     } catch (e) {
-      // eslint-disable-next-line no-console
       console.warn("[ChatOverlay] send error", e);
     }
   };
@@ -217,32 +309,25 @@ export default function ChatOverlay() {
   const charsLeft = MAX_MESSAGE_LEN - draft.length;
   const showCounter = charsLeft <= 50;
 
+  // Couleur tier de l'adversaire pour teinter subtilement le chat (header glow, etc.)
+  const opponentTierColor = opponentRank ? tierTheme(opponentRank.tier).accent : null;
+  const opponentTierGlow = opponentRank ? tierTheme(opponentRank.tier).glow : null;
+
   return (
-    <div className="chat-overlay-root flex h-screen w-screen flex-col overflow-hidden">
+    <div
+      className="chat-overlay-root flex h-screen w-screen flex-col overflow-hidden"
+      style={opponentTierColor ? { ["--tier-accent" as any]: opponentTierColor, ["--tier-glow" as any]: opponentTierGlow } : undefined}
+    >
       {/* ───── Header ───── */}
-      <div className="chat-overlay-header flex items-center gap-3 px-3 py-2.5">
-        {peer.opponentAvatar ? (
-          <img
-            src={peer.opponentAvatar}
-            alt=""
-            className="h-9 w-9 shrink-0 rounded-full object-cover ring-2 ring-white/20"
-            onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
-          />
-        ) : (
-          <div
-            className="h-9 w-9 shrink-0 rounded-full grid place-items-center font-bold text-white text-sm ring-2 ring-white/15"
-            style={{ background: "linear-gradient(135deg, color-mix(in srgb, var(--accent) 80%, #000), color-mix(in srgb, var(--accent) 55%, #000))" }}
-          >
-            {initialOf(peer.opponentName)}
-          </div>
-        )}
+      <div className={`chat-overlay-header flex items-center gap-3 px-3 py-2.5 ${pulseHeader ? "chat-overlay-header--pulse" : ""}`}>
+        <Avatar name={peer.opponentName} url={peer.opponentAvatar ?? null} />
         <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-semibold text-white">{peer.opponentName}</div>
+          <div className="truncate text-sm font-semibold text-white tracking-tight">{peer.opponentName}</div>
           {opponentRank ? (
             <RankBadge rank={opponentRank} compact />
           ) : (
-            <div className="flex items-center gap-1.5 text-[11px] text-white/55">
-              <FaCircle className="text-[6px] text-emerald-400" />
+            <div className="flex items-center gap-1.5 text-[11px] text-white/55 mt-0.5">
+              <span className="chat-status-dot" />
               <span>combat en cours</span>
             </div>
           )}
@@ -253,35 +338,42 @@ export default function ChatOverlay() {
       <div
         ref={messagesContainerRef}
         onScroll={onScroll}
-        className="flex-1 overflow-y-auto px-3 py-3 flex flex-col gap-1.5"
+        className="chat-overlay-messages flex-1 overflow-y-auto px-3 py-3 flex flex-col"
       >
         {messages.length === 0 ? (
-          <div className="m-auto flex flex-col items-center text-center text-white/40 select-none">
-            <div
-              className="grid place-items-center w-12 h-12 rounded-full mb-3"
-              style={{ background: "color-mix(in srgb, var(--accent) 15%, transparent)" }}
-            >
-              <FaCommentDots className="text-xl" style={{ color: "var(--accent)" }} />
-            </div>
-            <div className="text-xs font-medium">Aucun message</div>
-            <div className="text-[11px] mt-1 text-white/30">Tapez pour envoyer</div>
-          </div>
+          <EmptyState />
         ) : (
-          messages.map((m) => (
-            <div
-              key={m.id}
-              className={`chat-bubble-row flex ${m.fromMe ? "justify-end" : "justify-start"}`}
-            >
+          messages.map((m, i) => {
+            const pos = groupPositions[i];
+            const isGroupEnd = pos === "single" || pos === "last";
+            const isGroupStart = pos === "single" || pos === "first";
+            return (
               <div
-                className={`chat-bubble max-w-[78%] px-3 py-2 text-sm leading-snug whitespace-pre-wrap break-words ${
-                  m.fromMe ? "chat-bubble--me" : "chat-bubble--them"
+                key={m.id}
+                className={`chat-bubble-row flex chat-bubble-row--${pos} ${
+                  m.fromMe ? "justify-end" : "justify-start"
                 }`}
-                title={formatTime(m.ts)}
               >
-                {m.text}
+                <div className="flex flex-col max-w-[80%]" style={{ alignItems: m.fromMe ? "flex-end" : "flex-start" }}>
+                  <div
+                    className={`chat-bubble px-3 py-2 text-[13px] leading-snug whitespace-pre-wrap break-words ${
+                      m.fromMe ? "chat-bubble--me" : "chat-bubble--them"
+                    } chat-bubble--${pos}`}
+                    title={formatTime(m.ts)}
+                  >
+                    {m.text}
+                  </div>
+                  {isGroupEnd && (
+                    <div className={`chat-bubble-time text-[10px] mt-0.5 px-1 ${m.fromMe ? "text-right" : "text-left"}`}>
+                      {formatTime(m.ts)}
+                    </div>
+                  )}
+                </div>
+                {/* Réserver une marge subtile pour les groupes (premier de groupe = espace au-dessus) */}
+                <span className="sr-only">{isGroupStart ? "" : ""}</span>
               </div>
-            </div>
-          ))
+            );
+          })
         )}
         <div ref={messagesEndRef} />
       </div>
@@ -297,11 +389,11 @@ export default function ChatOverlay() {
             placeholder="Message…"
             rows={1}
             maxLength={MAX_MESSAGE_LEN}
-            className="chat-overlay-textarea w-full resize-none rounded-xl px-3 py-2 text-sm leading-snug outline-none"
+            className="chat-overlay-textarea w-full resize-none rounded-xl px-3 py-2 text-[13px] leading-snug outline-none"
           />
           {showCounter && (
             <div
-              className={`pointer-events-none absolute bottom-1 right-2 text-[10px] tabular-nums ${
+              className={`pointer-events-none absolute bottom-1.5 right-2 text-[10px] tabular-nums ${
                 charsLeft <= 0 ? "text-red-400" : "text-white/35"
               }`}
             >
@@ -314,17 +406,17 @@ export default function ChatOverlay() {
           onClick={send}
           disabled={!draft.trim()}
           aria-label="Envoyer"
-          className="chat-overlay-send-btn h-9 w-9 shrink-0 grid place-items-center rounded-xl text-white text-sm transition-all duration-150 disabled:opacity-40 disabled:cursor-not-allowed enabled:hover:scale-105 enabled:active:scale-95"
+          className="chat-overlay-send-btn h-9 w-9 shrink-0 grid place-items-center rounded-xl text-white text-sm transition-all duration-150 disabled:opacity-40 disabled:cursor-not-allowed enabled:hover:scale-105 enabled:active:scale-90"
         >
-          <FaPaperPlane />
+          <FaPaperPlane className="translate-x-[-1px]" />
         </button>
       </div>
 
       {/* ───── Mon rang (footer discret) ───── */}
       {myRank && (
-        <div className="chat-overlay-myrank flex items-center gap-1.5 px-3 py-1.5 text-[10px] text-white/45">
-          <span className="font-medium text-white/55">Toi</span>
-          <span className="text-white/25">·</span>
+        <div className="chat-overlay-myrank flex items-center gap-1.5 px-3 py-1.5 text-[10px]">
+          <span className="font-semibold text-white/55 tracking-wide uppercase text-[9px]">Toi</span>
+          <span className="text-white/20">·</span>
           <RankBadge rank={myRank} compact tiny />
         </div>
       )}
@@ -332,24 +424,67 @@ export default function ChatOverlay() {
   );
 }
 
-/* ─────────────────────────── RankBadge ─────────────────────────── */
+/* ─────────────────────────── Sub-components ─────────────────────────── */
+
+function Avatar({ name, url }: { name: string; url: string | null }) {
+  const [errored, setErrored] = useState(false);
+  if (url && !errored) {
+    return (
+      <img
+        src={url}
+        alt=""
+        className="chat-avatar h-10 w-10 shrink-0 rounded-full object-cover"
+        onError={() => setErrored(true)}
+      />
+    );
+  }
+  const hue = hueFromName(name);
+  // Gradient unique par nom → 2 personnes différentes ne se confondent pas visuellement.
+  const bg = `linear-gradient(135deg, hsl(${hue}, 65%, 55%), hsl(${(hue + 40) % 360}, 70%, 35%))`;
+  return (
+    <div
+      className="chat-avatar chat-avatar--fallback h-10 w-10 shrink-0 rounded-full grid place-items-center font-bold text-white text-base"
+      style={{ background: bg }}
+    >
+      {initialOf(name)}
+    </div>
+  );
+}
+
+function EmptyState() {
+  return (
+    <div className="m-auto flex flex-col items-center text-center select-none chat-empty-state">
+      <div className="chat-empty-icon grid place-items-center w-14 h-14 rounded-2xl mb-3">
+        <FaCommentDots className="text-2xl" style={{ color: "var(--tier-accent, var(--accent))" }} />
+      </div>
+      <div className="text-[13px] font-medium text-white/60">Personne n'a encore parlé</div>
+      <div className="text-[11px] mt-1 text-white/30 leading-relaxed">
+        <kbd className="chat-kbd">Entrée</kbd> pour envoyer<br />
+        <kbd className="chat-kbd">Maj</kbd> + <kbd className="chat-kbd">Entrée</kbd> nouvelle ligne
+      </div>
+    </div>
+  );
+}
 
 function RankBadge({ rank, compact = false, tiny = false }: { rank: RankInfo; compact?: boolean; tiny?: boolean }) {
   const theme = tierTheme(rank.tier);
   const label = tierLabel(rank.tier, "fr");
   const showLp = rank.tier !== "unranked";
   const showStats = rank.wins + rank.losses > 0;
+  const apex = isApex(rank.tier);
   const iconSize = tiny ? 12 : compact ? 14 : 18;
   const fontSize = tiny ? 10 : compact ? 11 : 13;
 
   return (
     <div className="inline-flex items-center gap-1.5 flex-wrap" style={{ fontSize, lineHeight: 1.2 }}>
       <div
-        className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5"
+        className={`rank-badge inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 ${apex ? "rank-badge--apex" : ""}`}
         style={{
           background: `linear-gradient(135deg, ${theme.glow}, transparent)`,
           boxShadow: `inset 0 0 0 1px ${theme.glow}`,
           color: theme.accent,
+          ["--rank-glow" as any]: theme.glow,
+          ["--rank-glow-strong" as any]: theme.glowStrong,
         }}
       >
         <img
