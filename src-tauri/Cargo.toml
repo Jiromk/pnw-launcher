@@ -1,6 +1,6 @@
 [package]
 name = "pnw-launcher"
-version = "1.9.2"
+version = "1.9.4"
 edition = "2021"
 
 [dependencies]

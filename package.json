@@ -36,5 +36,5 @@
     "tauri:dev": "cross-env CARGO_TARGET_DIR=target tauri dev"
   },
   "type": "module",
-  "version": "1.9.2"
+  "version": "1.9.4"
 }

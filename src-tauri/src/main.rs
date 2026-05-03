@@ -776,7 +776,7 @@ fn cmd_gts_search(
     gender: i32,
 ) -> Result<String, String> {
     let handle = thread::spawn(move || -> Result<String, String> {
-        let base_url = format!("https://gts.kawasemi.de/api.php?i={}", game_id);
+        let base_url = format!("http://gts.kawasemi.de/api.php?i={}", game_id);
         let client = Client::builder()
             .timeout(Duration::from_secs(15))
             .build()
@@ -856,7 +856,7 @@ fn cmd_gts_search(
 #[tauri::command]
 fn cmd_gts_download_pokemon(game_id: u32, online_id: String) -> Result<String, String> {
     let handle = thread::spawn(move || -> Result<String, String> {
-        let base_url = format!("https://gts.kawasemi.de/api.php?i={}", game_id);
+        let base_url = format!("http://gts.kawasemi.de/api.php?i={}", game_id);
         let client = Client::builder()
             .timeout(Duration::from_secs(12))
             .build()
@@ -885,7 +885,7 @@ async fn cmd_gts_browse_all(
     tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
         use std::sync::{Arc, Mutex};
 
-        let base_url = format!("https://gts.kawasemi.de/api.php?i={}", game_id);
+        let base_url = format!("http://gts.kawasemi.de/api.php?i={}", game_id);
         let client = Client::builder()
             .timeout(Duration::from_secs(5))
             .build()
@@ -3272,7 +3272,7 @@ fn cmd_gts_upload_pokemon(
     wanted_gender: i32,
 ) -> Result<String, String> {
     let handle = thread::spawn(move || -> Result<String, String> {
-        let base_url = format!("https://gts.kawasemi.de/api.php?i={}", game_id);
+        let base_url = format!("http://gts.kawasemi.de/api.php?i={}", game_id);
         let client = Client::builder()
             .timeout(Duration::from_secs(15))
             .build()
@@ -3303,7 +3303,7 @@ fn cmd_gts_upload_pokemon(
 #[tauri::command]
 fn cmd_gts_has_pokemon_uploaded(game_id: u32, online_id: u32) -> Result<bool, String> {
     let handle = thread::spawn(move || -> Result<bool, String> {
-        let base_url = format!("https://gts.kawasemi.de/api.php?i={}", game_id);
+        let base_url = format!("http://gts.kawasemi.de/api.php?i={}", game_id);
         let client = Client::builder()
             .timeout(Duration::from_secs(10))
             .build()
@@ -3327,7 +3327,7 @@ fn cmd_gts_has_pokemon_uploaded(game_id: u32, online_id: u32) -> Result<bool, St
 #[tauri::command]
 fn cmd_gts_download_wanted_data(game_id: u32, online_id: u32) -> Result<String, String> {
     let handle = thread::spawn(move || -> Result<String, String> {
-        let base_url = format!("https://gts.kawasemi.de/api.php?i={}", game_id);
+        let base_url = format!("http://gts.kawasemi.de/api.php?i={}", game_id);
         let client = Client::builder()
             .timeout(Duration::from_secs(10))
             .build()
@@ -3351,7 +3351,7 @@ fn cmd_gts_download_wanted_data(game_id: u32, online_id: u32) -> Result<String, 
 #[tauri::command]
 fn cmd_gts_delete_pokemon(game_id: u32, online_id: u32, withdraw: bool) -> Result<bool, String> {
     let handle = thread::spawn(move || -> Result<bool, String> {
-        let base_url = format!("https://gts.kawasemi.de/api.php?i={}", game_id);
+        let base_url = format!("http://gts.kawasemi.de/api.php?i={}", game_id);
         let client = Client::builder()
             .timeout(Duration::from_secs(10))
             .build()
@@ -3376,7 +3376,7 @@ fn cmd_gts_delete_pokemon(game_id: u32, online_id: u32, withdraw: bool) -> Resul
 #[tauri::command]
 fn cmd_gts_is_taken(game_id: u32, online_id: u32) -> Result<bool, String> {
     let handle = thread::spawn(move || -> Result<bool, String> {
-        let base_url = format!("https://gts.kawasemi.de/api.php?i={}", game_id);
+        let base_url = format!("http://gts.kawasemi.de/api.php?i={}", game_id);
         let client = Client::builder()
             .timeout(Duration::from_secs(10))
             .build()
@@ -3399,7 +3399,7 @@ fn cmd_gts_is_taken(game_id: u32, online_id: u32) -> Result<bool, String> {
 #[tauri::command]
 fn cmd_gts_take_pokemon(game_id: u32, online_id: u32) -> Result<bool, String> {
     let handle = thread::spawn(move || -> Result<bool, String> {
-        let base_url = format!("https://gts.kawasemi.de/api.php?i={}", game_id);
+        let base_url = format!("http://gts.kawasemi.de/api.php?i={}", game_id);
         let client = Client::builder()
             .timeout(Duration::from_secs(10))
             .build()
@@ -3422,7 +3422,7 @@ fn cmd_gts_take_pokemon(game_id: u32, online_id: u32) -> Result<bool, String> {
 #[tauri::command]
 fn cmd_gts_upload_new_pokemon(game_id: u32, online_id: u32, pokemon_b64: String) -> Result<bool, String> {
     let handle = thread::spawn(move || -> Result<bool, String> {
-        let base_url = format!("https://gts.kawasemi.de/api.php?i={}", game_id);
+        let base_url = format!("http://gts.kawasemi.de/api.php?i={}", game_id);
         let client = Client::builder()
             .timeout(Duration::from_secs(15))
             .build()
