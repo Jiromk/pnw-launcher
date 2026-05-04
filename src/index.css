@@ -189,38 +189,40 @@ body[data-overlay="chat"]{
   will-change:transform;
 }
 .chat-bg-aurora--1{
-  width:300px; height:300px;
-  top:-120px; left:-100px;
+  width:280px; height:280px;
+  top:-130px; left:-110px;
   background:color-mix(in srgb, var(--tier-accent) 70%, #6366f1);
-  opacity:.6;
+  opacity:.45;
   animation:chat-aurora-drift-1 18s ease-in-out infinite;
 }
 .chat-bg-aurora--2{
-  width:360px; height:360px;
-  bottom:-140px; right:-120px;
-  background:color-mix(in srgb, var(--tier-accent) 50%, #ec4899);
-  opacity:.5;
+  width:280px; height:280px;
+  bottom:-160px; right:-150px;
+  background:color-mix(in srgb, var(--tier-accent) 60%, #6366f1);
+  opacity:.28;
   animation:chat-aurora-drift-2 22s ease-in-out infinite;
 }
 .chat-bg-aurora--3{
-  width:260px; height:260px;
-  top:55%; left:35%;
-  background:color-mix(in srgb, var(--tier-accent) 60%, #8b5cf6);
-  opacity:.4;
+  width:220px; height:220px;
+  top:60%; left:-80px;
+  background:color-mix(in srgb, var(--tier-accent) 55%, #8b5cf6);
+  opacity:.22;
   animation:chat-aurora-drift-3 26s ease-in-out infinite;
 }
 
-/* Logo PNW — petit, en bas à droite, vraiment discret.
-   Style "stamp" / signature plutôt que watermark central agressif.
-   Pas de brightness boost ni de blend mode (qui amplifiaient avant). */
+/* Logo PNW — bien visible mais pas envahissant.
+   Centré horizontalement, ~30% du haut, ~60% de la largeur du chat.
+   Léger drop-shadow pour décollement du fond. */
 .chat-bg-logo{
   position:absolute;
-  bottom:60px;            /* au-dessus de l'input row */
-  right:12px;
-  width:70px;
+  top:35%;
+  left:50%;
+  width:65%;
+  max-width:230px;
   height:auto;
-  opacity:.08;
-  filter:grayscale(100%);
+  transform:translate(-50%, -50%);
+  opacity:.11;
+  filter:grayscale(100%) contrast(1.15) drop-shadow(0 2px 8px rgba(0,0,0,.4));
   user-select:none;
   pointer-events:none;
 }
