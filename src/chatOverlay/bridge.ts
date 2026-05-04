@@ -73,6 +73,12 @@ export async function openBattleChat(opts: OpenBattleChatOptions): Promise<() =>
     alwaysOnTop: true,
     skipTaskbar: true,
     resizable: false,
+    // IMPORTANT : sans maximizable:false, Windows intercepte le double-clic
+    // sur la zone draggable du header et tente de maximize la fenêtre — ce
+    // qui collerait l'overlay en plein écran et casserait le model "à côté
+    // du jeu". On désactive aussi minimizable (le bouton custom gère ça).
+    maximizable: false,
+    minimizable: false,
     visible: false,
     focus: false,
   });
