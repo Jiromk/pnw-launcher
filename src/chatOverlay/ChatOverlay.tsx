@@ -429,6 +429,16 @@ export default function ChatOverlay() {
       className="chat-overlay-root flex h-screen w-screen flex-col overflow-hidden"
       style={opponentTierColor ? { ["--tier-accent" as any]: opponentTierColor, ["--tier-glow" as any]: opponentTierGlow } : undefined}
     >
+      {/* ───── Background layers (aurora + logo watermark + grain) ───── */}
+      <div className="chat-bg" aria-hidden>
+        <div className="chat-bg-aurora chat-bg-aurora--1" />
+        <div className="chat-bg-aurora chat-bg-aurora--2" />
+        <div className="chat-bg-aurora chat-bg-aurora--3" />
+        <img src="/logo.png" alt="" className="chat-bg-logo" draggable={false} />
+        <div className="chat-bg-grain" />
+        <div className="chat-bg-vignette" />
+      </div>
+
       {/* ───── Header ───── */}
       <div className={`chat-overlay-header flex items-center gap-3 px-3 py-2.5 ${pulseHeader ? "chat-overlay-header--pulse" : ""}`}>
         <Avatar name={peer.opponentName} url={peer.opponentAvatar ?? null} />

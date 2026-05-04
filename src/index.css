@@ -138,20 +138,102 @@ body[data-overlay="chat"]{
 .chat-overlay-root{
   --tier-accent: var(--accent);
   --tier-glow: color-mix(in srgb, var(--accent) 22%, transparent);
-  background:
-    radial-gradient(900px 600px at 50% -25%,
-      color-mix(in srgb, var(--tier-accent) 18%, transparent), transparent 65%),
-    radial-gradient(600px 400px at 100% 100%,
-      color-mix(in srgb, var(--tier-accent) 8%, transparent), transparent 70%),
-    linear-gradient(180deg, rgba(11,20,38,.98), rgba(6,12,24,.99));
+  position:relative;
+  background:linear-gradient(180deg, #0c1426 0%, #06101e 60%, #04091a 100%);
   border-left:1px solid color-mix(in srgb, var(--tier-accent) 22%, rgba(255,255,255,.06));
   box-shadow:inset 0 0 0 1px rgba(255,255,255,.03);
 }
 [data-theme="light"] .chat-overlay-root{
-  background:
-    radial-gradient(900px 600px at 50% -25%,
-      color-mix(in srgb, var(--tier-accent) 18%, transparent), transparent 65%),
-    linear-gradient(180deg, rgba(22,40,72,.97), rgba(14,28,52,.98));
+  background:linear-gradient(180deg, #162a4a 0%, #0e1c34 60%, #0a1626 100%);
+}
+
+/* Empile tous les enfants directs au-dessus du fond (.chat-bg z-index 0). */
+.chat-overlay-root > *{ position:relative; z-index:1; }
+.chat-overlay-root > .chat-bg{ z-index:0; }
+.chat-overlay-root > .chat-floating-layer{ z-index:40; }
+
+/* ═══════ Background — aurora + logo watermark + grain ═══════
+   Inspiré des UI modernes (Linear, Vercel, Apple) : 3 blobs colorés
+   floues en mouvement lent, watermark logo PNW au centre, et film
+   grain SVG par-dessus pour un fini "premium / not flat".
+*/
+.chat-bg{
+  position:absolute; inset:0;
+  overflow:hidden;
+  pointer-events:none;
+}
+
+/* Aurora blobs — 3 cercles flous animés en lent drift */
+@keyframes chat-aurora-drift-1{
+  0%,100% { transform:translate(0,0) scale(1); }
+  33%     { transform:translate(40px,-20px) scale(1.1); }
+  66%     { transform:translate(-30px,30px) scale(.95); }
+}
+@keyframes chat-aurora-drift-2{
+  0%,100% { transform:translate(0,0) scale(1); }
+  50%     { transform:translate(-50px,-40px) scale(1.15); }
+}
+@keyframes chat-aurora-drift-3{
+  0%,100% { transform:translate(0,0) scale(1); }
+  40%     { transform:translate(30px,40px) scale(.9); }
+  80%     { transform:translate(-40px,-30px) scale(1.1); }
+}
+.chat-bg-aurora{
+  position:absolute;
+  border-radius:50%;
+  filter:blur(70px);
+  will-change:transform;
+}
+.chat-bg-aurora--1{
+  width:280px; height:280px;
+  top:-100px; left:-90px;
+  background:color-mix(in srgb, var(--tier-accent) 70%, #6366f1);
+  opacity:.55;
+  animation:chat-aurora-drift-1 18s ease-in-out infinite;
+}
+.chat-bg-aurora--2{
+  width:340px; height:340px;
+  bottom:-130px; right:-110px;
+  background:color-mix(in srgb, var(--tier-accent) 50%, #ec4899);
+  opacity:.45;
+  animation:chat-aurora-drift-2 22s ease-in-out infinite;
+}
+.chat-bg-aurora--3{
+  width:240px; height:240px;
+  top:50%; left:30%;
+  background:color-mix(in srgb, var(--tier-accent) 60%, #8b5cf6);
+  opacity:.35;
+  animation:chat-aurora-drift-3 26s ease-in-out infinite;
+}
+
+/* Logo PNW en watermark central, très discret */
+.chat-bg-logo{
+  position:absolute;
+  top:50%; left:50%;
+  width:75%;
+  max-width:280px;
+  transform:translate(-50%,-50%);
+  opacity:.04;
+  filter:grayscale(100%) brightness(2.2) contrast(1.1);
+  user-select:none;
+  pointer-events:none;
+  mix-blend-mode:screen;
+}
+
+/* Film grain SVG inline (data URI feTurbulence) — finition premium */
+.chat-bg-grain{
+  position:absolute; inset:0;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 0.6 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+  opacity:.07;
+  mix-blend-mode:overlay;
+  pointer-events:none;
+}
+
+/* Vignette douce dans les coins → focus naturel sur le contenu */
+.chat-bg-vignette{
+  position:absolute; inset:0;
+  background:radial-gradient(ellipse 80% 60% at 50% 40%, transparent 50%, rgba(0,0,0,.35) 100%);
+  pointer-events:none;
 }
 
 /* ───── Header ───── */
