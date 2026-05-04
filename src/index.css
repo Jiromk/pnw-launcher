@@ -152,15 +152,19 @@ body[data-overlay="chat"]{
 .chat-overlay-root > .chat-bg{ z-index:0; }
 .chat-overlay-root > .chat-floating-layer{ z-index:40; }
 
-/* ═══════ Background — aurora + logo watermark + grain ═══════
-   Inspiré des UI modernes (Linear, Vercel, Apple) : 3 blobs colorés
-   floues en mouvement lent, watermark logo PNW au centre, et film
-   grain SVG par-dessus pour un fini "premium / not flat".
+/* ═══════ Background — aurora + dot pattern + logo discret ═══════
+   Inspiré des UI modernes (Linear, Vercel) : aurora en couches floues,
+   pattern de points pour la texture, logo PNW en watermark vraiment
+   subtil au bas du chat (effet "stage backdrop" qui s'estompe).
 */
 .chat-bg{
   position:absolute; inset:0;
   overflow:hidden;
   pointer-events:none;
+  /* Pattern de points (style Linear/Vercel) — texture sous-jacente */
+  background-image:radial-gradient(circle, rgba(255,255,255,.045) 1px, transparent 1px);
+  background-size:18px 18px;
+  background-position:0 0;
 }
 
 /* Aurora blobs — 3 cercles flous animés en lent drift */
@@ -181,50 +185,51 @@ body[data-overlay="chat"]{
 .chat-bg-aurora{
   position:absolute;
   border-radius:50%;
-  filter:blur(70px);
+  filter:blur(80px);
   will-change:transform;
 }
 .chat-bg-aurora--1{
-  width:280px; height:280px;
-  top:-100px; left:-90px;
+  width:300px; height:300px;
+  top:-120px; left:-100px;
   background:color-mix(in srgb, var(--tier-accent) 70%, #6366f1);
-  opacity:.55;
+  opacity:.6;
   animation:chat-aurora-drift-1 18s ease-in-out infinite;
 }
 .chat-bg-aurora--2{
-  width:340px; height:340px;
-  bottom:-130px; right:-110px;
+  width:360px; height:360px;
+  bottom:-140px; right:-120px;
   background:color-mix(in srgb, var(--tier-accent) 50%, #ec4899);
-  opacity:.45;
+  opacity:.5;
   animation:chat-aurora-drift-2 22s ease-in-out infinite;
 }
 .chat-bg-aurora--3{
-  width:240px; height:240px;
-  top:50%; left:30%;
+  width:260px; height:260px;
+  top:55%; left:35%;
   background:color-mix(in srgb, var(--tier-accent) 60%, #8b5cf6);
-  opacity:.35;
+  opacity:.4;
   animation:chat-aurora-drift-3 26s ease-in-out infinite;
 }
 
-/* Logo PNW en watermark central, très discret */
+/* Logo PNW — petit, en bas à droite, vraiment discret.
+   Style "stamp" / signature plutôt que watermark central agressif.
+   Pas de brightness boost ni de blend mode (qui amplifiaient avant). */
 .chat-bg-logo{
   position:absolute;
-  top:50%; left:50%;
-  width:75%;
-  max-width:280px;
-  transform:translate(-50%,-50%);
-  opacity:.04;
-  filter:grayscale(100%) brightness(2.2) contrast(1.1);
+  bottom:60px;            /* au-dessus de l'input row */
+  right:12px;
+  width:70px;
+  height:auto;
+  opacity:.08;
+  filter:grayscale(100%);
   user-select:none;
   pointer-events:none;
-  mix-blend-mode:screen;
 }
 
 /* Film grain SVG inline (data URI feTurbulence) — finition premium */
 .chat-bg-grain{
   position:absolute; inset:0;
   background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 0.6 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
-  opacity:.07;
+  opacity:.06;
   mix-blend-mode:overlay;
   pointer-events:none;
 }
@@ -232,7 +237,7 @@ body[data-overlay="chat"]{
 /* Vignette douce dans les coins → focus naturel sur le contenu */
 .chat-bg-vignette{
   position:absolute; inset:0;
-  background:radial-gradient(ellipse 80% 60% at 50% 40%, transparent 50%, rgba(0,0,0,.35) 100%);
+  background:radial-gradient(ellipse 90% 70% at 50% 40%, transparent 55%, rgba(0,0,0,.45) 100%);
   pointer-events:none;
 }
 
