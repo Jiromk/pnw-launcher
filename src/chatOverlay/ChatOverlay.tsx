@@ -22,7 +22,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, emit } from "@tauri-apps/api/event";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { LogicalPosition, LogicalSize } from "@tauri-apps/api/dpi";
-import { FaPaperPlane, FaCommentDots, FaFaceSmile, FaStar } from "react-icons/fa6";
+import { FaPaperPlane, FaCommentDots, FaFaceSmile, FaStar, FaMinus, FaXmark, FaChevronUp } from "react-icons/fa6";
 import { isApex, tierIconUrl, tierLabel, tierTheme, type RankTier } from "../ranked";
 import { EMOJI_CATEGORIES } from "./emotes";
 
@@ -62,6 +62,7 @@ const POLL_INTERVAL_MS = 200;
 const MAX_MESSAGE_LEN = 300;
 const TEXTAREA_MAX_ROWS = 4;
 const GROUP_THRESHOLD_MS = 60_000; // bulles consécutives mêmes sender < 60s = même groupe
+const MINIMIZED_HEIGHT = 56;       // hauteur du header seul (en mode réduit)
 
 interface ChatLine {
   id: number;
@@ -215,6 +216,9 @@ export default function ChatOverlay() {
   const [isAtBottom, setIsAtBottom] = useState(true);
   const [pulseHeader, setPulseHeader] = useState(false);
   const [emotePickerOpen, setEmotePickerOpen] = useState(false);
+  const [isMinimized, setIsMinimized] = useState(false);
+  const isMinimizedRef = useRef(false);
+  useEffect(() => { isMinimizedRef.current = isMinimized; }, [isMinimized]);
   const [favorites, setFavorites] = useState<FavoritesMap>(() => loadFavorites());
   const favoriteList = useMemo(() => topFavorites(favorites), [favorites]);
   // Catégorie par défaut : "favorites" si on en a, sinon le 1er pack normal.
@@ -309,7 +313,9 @@ export default function ChatOverlay() {
         } else {
           const targetX = rect.x + rect.width;
           const targetY = rect.y;
-          const targetH = rect.height;
+          // Si réduit, on force une petite hauteur (juste le header).
+          // Sinon on suit la hauteur de la fenêtre du jeu.
+          const targetH = isMinimizedRef.current ? MINIMIZED_HEIGHT : rect.height;
           if (targetX !== lastX || targetY !== lastY) {
             await win.setPosition(new LogicalPosition(targetX, targetY));
             lastX = targetX; lastY = targetY;
@@ -328,6 +334,32 @@ export default function ChatOverlay() {
     const interval = setInterval(tick, POLL_INTERVAL_MS);
     tick();
     return () => { cancelled = true; clearInterval(interval); };
+  }, []);
+
+  // ─── Toggle réduit/agrandi : force un setSize immédiat (sans attendre le poll) ───
+  // Sinon il y a un délai jusqu'à 200ms avant que la fenêtre ne change de taille,
+  // ce qui rend le clic peu réactif.
+  useEffect(() => {
+    const win = getCurrentWebviewWindow();
+    (async () => {
+      try {
+        const rect = await invoke<{
+          x: number; y: number; width: number; height: number; is_fullscreen: boolean;
+        } | null>("cmd_get_game_window_rect");
+        if (!rect) return;
+        const h = isMinimized ? MINIMIZED_HEIGHT : rect.height;
+        await win.setSize(new LogicalSize(OVERLAY_WIDTH, h));
+      } catch {}
+    })();
+  }, [isMinimized]);
+
+  // ─── Handlers fermer / réduire ───
+  const closeWindow = useCallback(async () => {
+    try { await getCurrentWebviewWindow().close(); } catch {}
+  }, []);
+  const toggleMinimize = useCallback(() => {
+    setIsMinimized((v) => !v);
+    setEmotePickerOpen(false); // ferme le picker s'il était ouvert
   }, []);
 
   // ─── Auto-resize textarea ───
@@ -426,7 +458,7 @@ export default function ChatOverlay() {
 
   return (
     <div
-      className="chat-overlay-root flex h-screen w-screen flex-col overflow-hidden"
+      className={`chat-overlay-root flex h-screen w-screen flex-col overflow-hidden ${isMinimized ? "chat-overlay-root--minimized" : ""}`}
       style={opponentTierColor ? { ["--tier-accent" as any]: opponentTierColor, ["--tier-glow" as any]: opponentTierGlow } : undefined}
     >
       {/* ───── Background layers (aurora + logo watermark + grain) ───── */}
@@ -440,7 +472,11 @@ export default function ChatOverlay() {
       </div>
 
       {/* ───── Header ───── */}
-      <div className={`chat-overlay-header flex items-center gap-3 px-3 py-2.5 ${pulseHeader ? "chat-overlay-header--pulse" : ""}`}>
+      <div
+        className={`chat-overlay-header flex items-center gap-3 px-3 py-2.5 ${pulseHeader ? "chat-overlay-header--pulse" : ""} ${isMinimized ? "chat-overlay-header--minimized" : ""}`}
+        onDoubleClick={toggleMinimize}
+        title={isMinimized ? "Double-clic pour agrandir" : undefined}
+      >
         <Avatar name={peer.opponentName} url={peer.opponentAvatar ?? null} />
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-semibold text-white tracking-tight">{peer.opponentName}</div>
@@ -452,6 +488,26 @@ export default function ChatOverlay() {
               <span>combat en cours</span>
             </div>
           )}
+        </div>
+        <div className="chat-overlay-header-actions flex items-center gap-1">
+          <button
+            type="button"
+            onClick={toggleMinimize}
+            aria-label={isMinimized ? "Agrandir" : "Réduire"}
+            title={isMinimized ? "Agrandir" : "Réduire"}
+            className="chat-overlay-window-btn"
+          >
+            {isMinimized ? <FaChevronUp /> : <FaMinus />}
+          </button>
+          <button
+            type="button"
+            onClick={closeWindow}
+            aria-label="Fermer"
+            title="Fermer le chat"
+            className="chat-overlay-window-btn chat-overlay-window-btn--close"
+          >
+            <FaXmark />
+          </button>
         </div>
       </div>
 
